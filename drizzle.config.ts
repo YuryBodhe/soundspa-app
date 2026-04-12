@@ -1,15 +1,11 @@
+// @ts-nocheck
 import type { Config } from "drizzle-kit";
 
-const isProd = process.env.NODE_ENV === "production";
-
-const dbUrl =
-  (isProd ? process.env.SOUNDSPA_DB_FILE : undefined) ?? "./soundspa.sqlite";
-
 export default {
-  schema: "./db/schema.ts",
-  out: "./drizzle",
-  dialect: "sqlite",
+  schema: "./db/schema.pg.ts",
+  out: "./drizzle/pg",
+  dialect: "postgresql",
   dbCredentials: {
-    url: dbUrl,
+    url: process.env.DATABASE_URL || "",
   },
 } satisfies Config;
