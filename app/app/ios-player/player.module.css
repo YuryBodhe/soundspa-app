@@ -238,6 +238,8 @@
   display: block;
   opacity: 0;
   transition: opacity 0.9s ease;
+  margin: 0 auto; 
+  width: 100%;
 }
 .waveCanvasVisible { opacity: 1; }
 
