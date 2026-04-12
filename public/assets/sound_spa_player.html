@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sound Spa — Player</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Jost:wght@200;300;400&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#060608;font-family:'Jost',sans-serif;font-weight:300;color:#c8c0b0;min-height:100vh;}
+
+/* ── PHONE SHELL ── */
+.phone{
+  max-width:390px;margin:0 auto;
+  background:#07070a;
+  min-height:100vh;
+  display:flex;flex-direction:column;
+  position:relative;overflow:hidden;
+}
+
+/* Lotus background */
+.lotus-bg{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  pointer-events:none;z-index:0;
+  top:-60px;
+}
+.lotus-svg{animation:lb 9s ease-in-out infinite;}
+@keyframes lb{0%,100%{opacity:0.055}50%{opacity:0.095}}
+
+/* ── HEADER ── */
+.header{
+  position:relative;z-index:10;
+  padding:20px 22px 16px;
+  display:flex;justify-content:space-between;align-items:flex-start;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+}
+.salon-name{
+  font-family:'Cormorant Garamond',serif;
+  font-size:20px;font-weight:400;
+  letter-spacing:0.04em;color:#d8d0c0;line-height:1.1;
+}
+.platform-tag{
+  font-size:8px;letter-spacing:0.32em;text-transform:uppercase;
+  color:#3a3530;margin-top:4px;
+}
+.header-right{display:flex;flex-direction:column;align-items:flex-end;gap:7px;}
+.sub-badge{
+  font-size:8px;letter-spacing:0.14em;text-transform:uppercase;
+  padding:4px 10px;border-radius:20px;
+  background:rgba(80,160,110,0.08);color:#4a8a68;
+  border:1px solid rgba(80,160,110,0.18);
+}
+.sub-badge.warn{background:rgba(180,100,60,0.08);color:#b07050;border-color:rgba(180,100,60,0.2);}
+.help-btn{
+  font-size:8px;letter-spacing:0.18em;text-transform:uppercase;
+  background:transparent;border:1px solid rgba(255,255,255,0.07);
+  border-radius:20px;padding:4px 10px;cursor:pointer;
+  color:#2e2e2e;font-family:'Jost',sans-serif;transition:all 0.2s;
+}
+.help-btn:hover{border-color:rgba(255,255,255,0.14);color:#555;}
+
+/* ── PLAYER ZONE ── */
+.player-zone{
+  position:relative;z-index:10;
+  padding:32px 22px 20px;
+  display:flex;flex-direction:column;align-items:center;
+  flex-shrink:0;
+}
+.now-playing-label{
+  font-size:8px;letter-spacing:0.38em;text-transform:uppercase;
+  color:#252520;margin-bottom:6px;
+}
+.channel-name{
+  font-family:'Cormorant Garamond',serif;
+  font-size:26px;font-weight:300;letter-spacing:0.07em;
+  color:#c8c0b0;text-align:center;line-height:1.2;margin-bottom:6px;
+}
+.channel-mood{
+  font-size:8px;letter-spacing:0.28em;text-transform:uppercase;
+  color:#2a2820;margin-bottom:36px;
+}
+
+/* ── YIN YANG BUTTON ── */
+.yy-wrap{
+  position:relative;width:170px;height:170px;
+  cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+}
+.halo{position:absolute;border-radius:50%;pointer-events:none;opacity:0;transition:opacity 0.8s;}
+.h1{inset:-22px;border:1px solid rgba(170,195,220,0.07);}
+.h2{inset:-11px;border:1px solid rgba(170,195,220,0.13);}
+.h3{inset:-3px; border:1px solid rgba(170,195,220,0.2);}
+.ambient{position:absolute;inset:-40px;border-radius:50%;background:radial-gradient(circle,rgba(140,175,210,0.07) 0%,transparent 70%);opacity:0;transition:opacity 1s;pointer-events:none;}
+.playing .h1{opacity:1;animation:hp 4.5s ease-in-out infinite;}
+.playing .h2{opacity:1;animation:hp 4.5s ease-in-out infinite 0.7s;}
+.playing .h3{opacity:1;animation:hp 3.2s ease-in-out infinite 1.4s;}
+.playing .ambient{opacity:1;animation:ap 3s ease-in-out infinite;}
+@keyframes hp{0%,100%{transform:scale(1);opacity:0.5}50%{transform:scale(1.06);opacity:1}}
+@keyframes ap{0%,100%{opacity:0.6}50%{opacity:1}}
+
+.yy-svg{
+  width:170px;height:170px;border-radius:50%;
+  filter:drop-shadow(0 0 10px rgba(150,185,215,0.1));
+  transition:filter 0.6s;position:relative;z-index:2;
+}
+.playing .yy-svg{
+  animation:spin 12s linear infinite;
+  filter:drop-shadow(0 0 20px rgba(150,185,215,0.22));
+}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+/*
+  NOTE FOR DEVELOPER:
+  In production, replace the SVG below with a raster PNG:
+    <img src="yin-yang.png" class="yy-svg" />
+  The PNG should have a transparent background.
+  Rotation is handled entirely by the .playing .yy-svg CSS animation above.
+*/
+
+/* ── WAVE ── */
+.wave-zone{
+  width:100%;max-width:280px;height:60px;
+  margin-top:28px;overflow:hidden;
+  position:relative;
+}
+#waveCanvas{
+  display:block;
+  opacity:0;
+  transition:opacity 0.9s ease;
+}
+.playing-ui #waveCanvas{
+  opacity:1;
+}
+
+/* ── STATUS LINE ── */
+.status-line{
+  display:flex;align-items:center;gap:7px;
+  margin-top:10px;height:14px;
+}
+.sdot{width:5px;height:5px;border-radius:50%;background:#1a1a18;transition:background 0.5s;flex-shrink:0;}
+.playing-ui .sdot{background:#4a9a70;animation:dp 2s ease-in-out infinite;}
+@keyframes dp{0%,100%{opacity:0.5}50%{opacity:1}}
+.stxt{font-size:8px;letter-spacing:0.22em;text-transform:uppercase;color:#1e1e1c;transition:color 0.5s;}
+.playing-ui .stxt{color:#3a6a50;}
+
+/* ── CAROUSEL ── */
+.carousel-section{position:relative;z-index:10;flex:1;display:flex;flex-direction:column;}
+.section-header{
+  padding:18px 22px 10px;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.section-label{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;color:#252520;}
+.section-count{font-size:8px;letter-spacing:0.1em;color:#1e1e1a;}
+
+.carousel{
+  display:flex;gap:11px;
+  padding:0 22px 24px;
+  overflow-x:auto;scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+}
+.carousel::-webkit-scrollbar{display:none;}
+
+/* ── CHANNEL CARD ── */
+.ch-card{
+  flex-shrink:0;width:140px;
+  border-radius:16px;overflow:hidden;
+  background:#0c0c0f;border:1px solid rgba(255,255,255,0.05);
+  cursor:pointer;transition:all 0.35s cubic-bezier(0.23,1,0.32,1);
+  position:relative;
+}
+.ch-card:hover{transform:translateY(-3px);border-color:rgba(255,255,255,0.1);}
+.ch-card.active{border-color:rgba(155,185,215,0.28);background:#0d0e12;}
+
+.card-img{
+  width:100%;height:96px;
+  position:relative;overflow:hidden;
+  background:#111115;
+  /* In production: set background-image via inline style or data attribute */
+  background-size:cover;background-position:center;
+}
+.card-img-inner{
+  width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:36px;
+}
+.card-img-overlay{
+  position:absolute;inset:0;
+  background:linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(7,7,10,0.75) 100%);
+}
+.card-badge{
+  position:absolute;top:7px;left:7px;
+  font-size:7px;letter-spacing:0.18em;text-transform:uppercase;
+  padding:2px 7px;border-radius:10px;
+  background:rgba(155,185,215,0.1);color:#7090a8;
+  border:1px solid rgba(155,185,215,0.18);
+}
+.playing-indicator{
+  position:absolute;bottom:7px;right:7px;
+  width:20px;height:20px;border-radius:50%;
+  background:rgba(155,185,215,0.15);
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity 0.3s;
+}
+.ch-card.active .playing-indicator{opacity:1;}
+
+.card-body{padding:10px 11px 12px;}
+.card-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:14px;font-weight:400;letter-spacing:0.03em;
+  color:#b8b0a2;line-height:1.2;margin-bottom:3px;
+}
+.card-mood{font-size:8px;letter-spacing:0.2em;text-transform:uppercase;color:#2e2c28;}
+
+/* ── PROMO / INFO CARD ── */
+.promo-card{
+  flex-shrink:0;width:130px;
+  border-radius:16px;overflow:hidden;
+  background:#0a0a0c;border:1px solid rgba(255,255,255,0.04);
+  cursor:pointer;transition:all 0.35s cubic-bezier(0.23,1,0.32,1);
+  padding:14px 13px 14px;
+  display:flex;flex-direction:column;
+  min-height:168px;
+}
+.promo-card:hover{transform:translateY(-3px);border-color:rgba(255,255,255,0.08);}
+.promo-tag{
+  font-size:7px;letter-spacing:0.2em;text-transform:uppercase;
+  padding:2px 8px;border-radius:10px;width:fit-content;margin-bottom:10px;
+}
+.tag-promo{background:rgba(100,115,180,0.09);color:#5060a0;border:1px solid rgba(100,115,180,0.15);}
+.tag-update{background:rgba(80,160,110,0.08);color:#3a7050;border:1px solid rgba(80,160,110,0.14);}
+.tag-tech{background:rgba(180,100,60,0.08);color:#8a5038;border:1px solid rgba(180,100,60,0.14);}
+.tag-offline{background:rgba(90,90,130,0.08);color:#505070;border:1px solid rgba(90,90,130,0.14);}
+
+.promo-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:15px;font-weight:400;
+  color:#a0988a;line-height:1.3;margin-bottom:6px;
+}
+.promo-desc{font-size:9px;color:#2c2c28;line-height:1.6;flex:1;}
+.promo-link{
+  font-size:8px;letter-spacing:0.18em;text-transform:uppercase;
+  color:#303028;margin-top:10px;display:flex;align-items:center;gap:4px;
+  transition:color 0.2s;
+}
+.promo-card:hover .promo-link{color:#504e46;}
+
+/* ── SUBSCRIPTION BLOCK ── */
+.sub-block{
+  position:relative;z-index:10;
+  margin:0 16px 20px;
+  border-radius:14px;
+  background:#09090c;border:1px solid rgba(255,255,255,0.04);
+  padding:13px 16px;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.sub-status-label{font-size:8px;letter-spacing:0.2em;text-transform:uppercase;color:#2a2a26;margin-bottom:4px;}
+.sub-date{font-family:'Cormorant Garamond',serif;font-size:15px;color:#7a7268;}
+.sub-cta{
+  font-size:8px;letter-spacing:0.15em;text-transform:uppercase;
+  background:transparent;border:1px solid rgba(255,255,255,0.08);
+  border-radius:20px;padding:6px 13px;cursor:pointer;
+  color:#303028;font-family:'Jost',sans-serif;transition:all 0.2s;
+}
+.sub-cta:hover{border-color:rgba(255,255,255,0.16);color:#555;}
+
+/* ── ACCENT TOGGLE (demo only, remove in production) ── */
+.demo-toggle{
+  position:relative;z-index:10;
+  display:flex;justify-content:center;gap:0;
+  margin:0 22px 20px;
+  border:1px solid #141412;border-radius:30px;overflow:hidden;
+}
+.dt{
+  flex:1;padding:8px;font-family:'Jost',sans-serif;
+  font-size:8px;letter-spacing:0.2em;text-transform:uppercase;
+  background:transparent;border:none;cursor:pointer;color:#282824;transition:all 0.25s;
+}
+.dt.on-gold{background:#0e0b00;color:#C9A84C;}
+.dt.on-plat{background:#0b0b10;color:#9090b0;}
+.dt.on-cool{background:#080c10;color:#5080a0;}
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+
+  <!-- ── LOTUS BACKGROUND ── -->
+  <div class="lotus-bg">
+    <svg class="lotus-svg" id="lotusSvg" width="500" height="500" viewBox="0 0 300 300" fill="none">
+      <circle cx="150" cy="150" r="130" stroke="#7a9ab0" stroke-width="0.4"/>
+      <circle cx="150" cy="150" r="90"  stroke="#7a9ab0" stroke-width="0.35"/>
+      <circle cx="150" cy="150" r="50"  stroke="#7a9ab0" stroke-width="0.3"/>
+      <path d="M150,20 C122,65 105,100 105,150 C105,200 122,235 150,280 C178,235 195,200 195,150 C195,100 178,65 150,20Z" stroke="#7a9ab0" stroke-width="0.5" fill="none"/>
+      <path d="M20,150 C65,122 100,105 150,105 C200,105 235,122 280,150 C235,178 200,195 150,195 C100,195 65,178 20,150Z" stroke="#7a9ab0" stroke-width="0.5" fill="none"/>
+      <path d="M150,20 C115,55 95,85 82,118 C118,108 138,95 150,68 C162,95 182,108 218,118 C205,85 185,55 150,20Z" stroke="#7a9ab0" stroke-width="0.4" fill="none"/>
+      <path d="M150,280 C115,245 95,215 82,182 C118,192 138,205 150,232 C162,205 182,192 218,182 C205,215 185,245 150,280Z" stroke="#7a9ab0" stroke-width="0.4" fill="none"/>
+      <path d="M20,150 C55,115 85,95 118,82 C108,118 95,138 68,150 C95,162 108,182 118,218 C85,205 55,185 20,150Z" stroke="#7a9ab0" stroke-width="0.4" fill="none"/>
+      <path d="M280,150 C245,115 215,95 182,82 C192,118 205,138 232,150 C205,162 192,182 182,218 C215,205 245,185 280,150Z" stroke="#7a9ab0" stroke-width="0.4" fill="none"/>
+      <circle cx="150" cy="150" r="4" stroke="#7a9ab0" stroke-width="0.5" fill="none"/>
+      <line x1="150" y1="20"  x2="150" y2="280" stroke="#7a9ab0" stroke-width="0.22" opacity="0.4"/>
+      <line x1="20"  y1="150" x2="280" y2="150" stroke="#7a9ab0" stroke-width="0.22" opacity="0.4"/>
+      <line x1="56"  y1="56"  x2="244" y2="244" stroke="#7a9ab0" stroke-width="0.18" opacity="0.25"/>
+      <line x1="244" y1="56"  x2="56"  y2="244" stroke="#7a9ab0" stroke-width="0.18" opacity="0.25"/>
+    </svg>
+  </div>
+
+  <!-- ── HEADER ── -->
+  <div class="header">
+    <div class="brand-left">
+      <div class="salon-name">Spaquatoria</div>
+      <div class="platform-tag" id="platformTag">Sound Spa</div>
+    </div>
+    <div class="header-right">
+      <div class="sub-badge" id="subBadge">Active · 12 Apr</div>
+      <button class="help-btn">Help</button>
+    </div>
+  </div>
+
+  <!-- ── PLAYER ZONE ── -->
+  <div class="player-zone">
+    <div class="now-playing-label">Now playing</div>
+    <div class="channel-name" id="chName">Deep Relax Mix</div>
+    <div class="channel-mood" id="chMood">Relaxing · Live</div>
+
+    <!-- Yin Yang Button -->
+    <div class="yy-wrap" id="yyWrap" onclick="togglePlay()">
+      <div class="ambient"></div>
+      <div class="halo h1"></div>
+      <div class="halo h2"></div>
+      <div class="halo h3"></div>
+
+      <img src="yin-yang.png" class="yy-svg" id="yySvg" />
+    </div>
+
+    <!-- Wave visualization -->
+    <div class="wave-zone" id="waveZone">
+      <canvas id="waveCanvas" width="280" height="60"></canvas>
+    </div>
+
+    <!-- Status -->
+    <div class="status-line" id="statusLine">
+      <div class="sdot"></div>
+      <div class="stxt" id="stxt">Tap to play</div>
+    </div>
+  </div>
+
+  <!-- ── CAROUSEL ── -->
+  <div class="carousel-section">
+    <div class="section-header">
+      <div class="section-label">Channels &amp; Updates</div>
+      <div class="section-count">3 channels</div>
+    </div>
+
+    <div class="carousel" id="carousel">
+
+      <!-- Channel 1 — active by default -->
+      <div class="ch-card active" onclick="switchChannel('Deep Relax Mix','Relaxing · Live',this)">
+        <div class="card-img">
+          <img src="channel-1.jpg" style="width:100%;height:100%;object-fit:cover">
+          <div class="card-img-overlay"></div>
+          <div class="playing-indicator">
+            <svg width="8" height="8" viewBox="0 0 8 8">
+              <rect x="0"   y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+              <rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-title">Deep Relax</div>
+          <div class="card-mood">Relaxing</div>
+        </div>
+      </div>
+
+      <!-- Channel 2 -->
+      <div class="ch-card" onclick="switchChannel('Healing Mix','Deep · Live',this)">
+        <div class="card-img">
+          <img src="channel-2.jpg" style="width:100%;height:100%;object-fit:cover">
+          <div class="card-img-overlay"></div>
+          <div class="card-badge">New</div>
+          <div class="playing-indicator">
+            <svg width="8" height="8" viewBox="0 0 8 8">
+              <rect x="0"   y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+              <rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-title">Healing Mix</div>
+          <div class="card-mood">Deep</div>
+        </div>
+      </div>
+
+      <!-- Channel 3 -->
+      <div class="ch-card" onclick="switchChannel('Dynamic Spa Mix','Energizing · Live',this)">
+        <div class="card-img">
+          <img src="channel-3.jpg" style="width:100%;height:100%;object-fit:cover">
+          <div class="card-img-overlay"></div>
+          <div class="playing-indicator">
+            <svg width="8" height="8" viewBox="0 0 8 8">
+              <rect x="0"   y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+              <rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-title">Dynamic Spa</div>
+          <div class="card-mood">Energizing</div>
+        </div>
+      </div>
+
+      <!-- Promo card -->
+      <div class="promo-card">
+        <div class="promo-tag tag-promo">Promo</div>
+        <div class="promo-title">Summer Package</div>
+        <div class="promo-desc">New seasonal collection available now for your clients</div>
+        <div class="promo-link">Learn more →</div>
+      </div>
+
+      <!-- Update card -->
+      <div class="promo-card">
+        <div class="promo-tag tag-update">Update</div>
+        <div class="promo-title">2 new mixes added</div>
+        <div class="promo-desc">Evening Ritual &amp; Morning Flow are now live</div>
+        <div class="promo-link">Details →</div>
+      </div>
+
+      <!-- Offline fallback card -->
+      <div class="promo-card">
+        <div class="promo-tag tag-offline">Offline</div>
+        <div class="promo-title">Local Mix</div>
+        <div class="promo-desc">Available without internet connection</div>
+        <div class="promo-link">Enable →</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── SUBSCRIPTION BLOCK ── -->
+  <div class="sub-block">
+    <div class="sub-info">
+      <div class="sub-status-label">Subscription active</div>
+      <div class="sub-date">Until 12 April 2026</div>
+    </div>
+    <button class="sub-cta">Renew</button>
+  </div>
+
+  <!-- ── ACCENT TOGGLE — DEMO ONLY, remove in production ── -->
+  <div class="demo-toggle">
+    <button class="dt on-gold" id="dg" onclick="setAccent('gold')">◈ Gold</button>
+    <button class="dt"         id="dp" onclick="setAccent('plat')">◇ Platinum</button>
+    <button class="dt"         id="dc" onclick="setAccent('cool')">◉ Lunar</button>
+  </div>
+
+</div>
+
+<script>
+/* ── STATE ── */
+let playing = false;
+
+/* ── PLAY / PAUSE ── */
+/* ── WAVE CANVAS ── */
+(function(){
+  const canvas = document.getElementById('waveCanvas');
+  const ctx    = canvas.getContext('2d');
+  const W = 280, H = 60;
+  canvas.width = W; canvas.height = H;
+
+  const BAR_COUNT = 46;
+  const GAP       = 2;
+  const BAR_W     = (W - (BAR_COUNT - 1) * GAP) / BAR_COUNT;
+
+  // Базовая амплитуда каждого столбика
+  const baseAmp = [];
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const x = i / (BAR_COUNT - 1);
+    // Форма огибающей: выше к центру
+    const env = Math.sin(x * Math.PI) * 0.75 + 0.25;
+    // Случайная вариация
+    baseAmp.push(env * (0.55 + Math.random() * 0.45));
+  }
+
+  let animId = null;
+  let t = 0;
+  let isPlaying = false;
+  let currentAmp = new Array(BAR_COUNT).fill(0);
+  let targetAmp  = new Array(BAR_COUNT).fill(0);
+
+  // Акцентный цвет (синий по умолчанию, совместим с setAccent)
+  let barColor = { r:100, g:190, b:255 };
+
+  function setWaveColor(r,g,b){ barColor = {r,g,b}; }
+  window.setWaveColor = setWaveColor;
+
+  function drawFrame() {
+    ctx.clearRect(0, 0, W, H);
+    const midY = H / 2;
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      // Плавно догоняем целевую амплитуду
+      currentAmp[i] += (targetAmp[i] - currentAmp[i]) * 0.12;
+
+      const amp = currentAmp[i];
+      const halfH = amp * (H * 0.44);
+      const x = i * (BAR_W + GAP);
+      const y = midY - halfH;
+      const h = halfH * 2;
+
+      if (h < 0.5) continue;
+
+      // Градиент столбика
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0,   `rgba(${barColor.r},${barColor.g},${barColor.b},0.05)`);
+      grad.addColorStop(0.3, `rgba(${barColor.r},${barColor.g},${barColor.b},0.7)`);
+      grad.addColorStop(0.5, `rgba(${barColor.r},${barColor.g},${barColor.b},1.0)`);
+      grad.addColorStop(0.7, `rgba(${barColor.r},${barColor.g},${barColor.b},0.7)`);
+      grad.addColorStop(1,   `rgba(${barColor.r},${barColor.g},${barColor.b},0.05)`);
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(x, y, BAR_W, h, BAR_W / 2);
+      ctx.fill();
+
+      // Свечение (glow)
+      ctx.shadowColor = `rgba(${barColor.r},${barColor.g},${barColor.b},0.35)`;
+      ctx.shadowBlur  = 6;
+      ctx.fillStyle   = grad;
+      ctx.beginPath();
+      ctx.roundRect(x, y, BAR_W, h, BAR_W / 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  function updateTargets() {
+    t += 0.04;
+    for (let i = 0; i < BAR_COUNT; i++) {
+      if (!isPlaying) {
+        targetAmp[i] = 0;
+        continue;
+      }
+      // Несколько синусоид с разными частотами создают органичное движение
+      const wave =
+        Math.sin(t * 1.3  + i * 0.38) * 0.35 +
+        Math.sin(t * 2.1  + i * 0.22) * 0.25 +
+        Math.sin(t * 0.7  + i * 0.55) * 0.20 +
+        Math.sin(t * 3.5  + i * 0.15) * 0.10 +
+        Math.sin(t * 0.45 + i * 0.70) * 0.10;
+      // Нормализуем [-1..1] → [0..1]
+      const norm = (wave + 1) / 2;
+      targetAmp[i] = baseAmp[i] * (0.3 + norm * 0.7);
+    }
+  }
+
+  function loop() {
+    updateTargets();
+    drawFrame();
+    animId = requestAnimationFrame(loop);
+  }
+
+  // Публичный API
+  window.waveStart = function() {
+    isPlaying = true;
+    if (!animId) loop();
+  };
+  window.waveStop = function() {
+    isPlaying = false;
+    // анимация продолжается (столбики плавно уйдут в 0), потом останавливается
+    setTimeout(() => {
+      if (!isPlaying) {
+        cancelAnimationFrame(animId);
+        animId = null;
+        ctx.clearRect(0,0,W,H);
+      }
+    }, 1500);
+  };
+
+  // Запуск холостого цикла чтобы fade-in при первом нажатии был плавным
+  loop();
+})();
+
+/* ── PLAY / PAUSE (обновлённая версия) ── */
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('yyWrap').classList.toggle('playing', playing);
+  document.getElementById('statusLine').classList.toggle('playing-ui', playing);
+  document.getElementById('waveZone').classList.toggle('playing-ui', playing);
+  document.getElementById('stxt').textContent = playing ? 'Streaming · AzuraCast' : 'Paused · Tap to play';
+  if (playing) { window.waveStart(); } else { window.waveStop(); }
+}
+
+/* ── SWITCH CHANNEL ── */
+function switchChannel(name, mood, card) {
+  document.querySelectorAll('.ch-card').forEach(c => c.classList.remove('active'));
+  card.classList.add('active');
+  document.getElementById('chName').textContent = name;
+  document.getElementById('chMood').textContent = mood;
+  if (!playing) togglePlay();
+}
+
+/* ── ACCENT COLOR ── */
+const accents = {
+  gold: { h:['rgba(201,168,76,0.07)','rgba(201,168,76,0.14)','rgba(201,168,76,0.22)'], w1:'rgba(201,168,76,0.65)', w2:'rgba(201,168,76,0.2)', pt:'#6a5818', lt:'#8a7828' },
+  plat: { h:['rgba(192,192,215,0.07)','rgba(192,192,215,0.14)','rgba(192,192,215,0.22)'], w1:'rgba(192,192,215,0.65)', w2:'rgba(192,192,215,0.2)', pt:'#4a4a5e', lt:'#8888a8' },
+  cool: { h:['rgba(140,175,215,0.07)','rgba(140,175,215,0.13)','rgba(140,175,215,0.2)'],  w1:'rgba(140,175,210,0.65)', w2:'rgba(140,175,210,0.2)',  pt:'#384858', lt:'#7a9ab0' }
+};
+
+function setAccent(a) {
+  const ac = accents[a];
+  document.querySelectorAll('.halo').forEach((h,i) => h.style.borderColor = ac.h[i]);
+  document.querySelector('.ambient').style.background =
+    `radial-gradient(circle, ${ac.h[0]} 0%, transparent 70%)`;
+  document.getElementById('wv1').setAttribute('stroke', ac.w1);
+  document.getElementById('wv2').setAttribute('stroke', ac.w2);
+  document.getElementById('platformTag').style.color = ac.pt;
+  document.querySelectorAll('#lotusSvg *').forEach(el => {
+    if (el.getAttribute('stroke') && el.getAttribute('stroke') !== 'none')
+      el.setAttribute('stroke', ac.lt);
+  });
+  ['dg','dp','dc'].forEach(id => document.getElementById(id).className = 'dt');
+  document.getElementById({gold:'dg',plat:'dp',cool:'dc'}[a]).className = `dt on-${a}`;
+}
+</script>
+</body>
+</html>

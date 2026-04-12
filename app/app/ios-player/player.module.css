@@ -1,0 +1,830 @@
+/* ─────────────────────────────────────────────
+   Sound Spa iOS Player — styles
+   Источник: sound_spa_player.html (утверждённый макет)
+   ───────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=Jost:wght@200;300;400&display=swap');
+
+/* ── RESET ── */
+.phone * {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ── PHONE SHELL ── */
+.phone {
+  max-width: 390px;
+  margin: 0 auto;
+  background: #07070a;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  font-family: 'Jost', sans-serif;
+  font-weight: 300;
+  color: #c8c0b0;
+}
+
+/* ── LOTUS BACKGROUND ── */
+.lotusBg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+  top: -60px;
+}
+.lotusSvg {
+  animation: lb 9s ease-in-out infinite;
+}
+@keyframes lb {
+  0%, 100% { opacity: 0.055; }
+  50%       { opacity: 0.095; }
+}
+
+/* ── HEADER ── */
+.header {
+  position: relative;
+  z-index: 10;
+  padding: 12px 22px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.salonName {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #d8d0c0;
+  line-height: 1.1;
+}
+.platformTag {
+  font-size: 8px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: #3a3530;
+  margin-top: 4px;
+}
+.headerRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.subBadge {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(80, 160, 110, 0.08);
+  color: #4a8a68;
+  border: 1px solid rgba(80, 160, 110, 0.18);
+}
+.subBadgeWarn {
+  background: rgba(180, 100, 60, 0.08);
+  color: #b07050;
+  border-color: rgba(180, 100, 60, 0.2);
+}
+.helpBtn {
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: #2e2e2e;
+  font-family: 'Jost', sans-serif;
+  transition: all 0.2s;
+}
+.helpBtn:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #555;
+}
+
+/* ── PLAYER ZONE ── */
+.playerZone {
+  position: relative;
+  z-index: 10;
+  padding: 16px 22px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+.nowPlayingLabel {
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: #7a7670;
+  margin-bottom: 10px;
+}
+.channelName {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 26px;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  color: #d4c9b0;
+  text-align: center;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+.channelMood {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #8a9e82;
+  margin-bottom: 24px;
+}
+
+/* ── YIN YANG BUTTON ── */
+.yyWrap {
+  position: relative;
+  width: 170px;
+  height: 170px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.halo {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.8s;
+}
+.h1 { inset: -22px; border: 1px solid rgba(170, 195, 220, 0.07); }
+.h2 { inset: -11px; border: 1px solid rgba(170, 195, 220, 0.13); }
+.h3 { inset: -3px;  border: 1px solid rgba(170, 195, 220, 0.2);  }
+
+.ambient {
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(140, 175, 210, 0.07) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 1s;
+  pointer-events: none;
+}
+
+/* playing state — triggered by .yyWrapPlaying class */
+.yyWrapPlaying .h1 { opacity: 1; animation: hp 4.5s ease-in-out infinite; }
+.yyWrapPlaying .h2 { opacity: 1; animation: hp 4.5s ease-in-out infinite 0.7s; }
+.yyWrapPlaying .h3 { opacity: 1; animation: hp 3.2s ease-in-out infinite 1.4s; }
+.yyWrapPlaying .ambient { opacity: 1; animation: ap 3s ease-in-out infinite; }
+
+@keyframes hp {
+  0%, 100% { transform: scale(1);    opacity: 0.5; }
+  50%       { transform: scale(1.06); opacity: 1;   }
+}
+@keyframes ap {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1;   }
+}
+
+.yyImage {
+  width: 170px;
+  height: 170px;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 10px rgba(150, 185, 215, 0.1));
+  transition: filter 0.6s;
+  position: relative;
+  z-index: 2;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.yyImagePlaying {
+  animation: spin 12s linear infinite;
+  filter: drop-shadow(0 0 20px rgba(150, 185, 215, 0.22));
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* iOS hint */
+.iosHint {
+  margin-top: 8px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #b07050;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.4s;
+  height: 14px;
+}
+.iosHintVisible { opacity: 1; }
+
+/* ── WAVE CANVAS ── */
+.waveZone {
+  width: 100%;
+  max-width: 280px;
+  height: 60px;
+  margin: 14px auto 0;
+  overflow: hidden;
+  position: relative;
+}
+.waveCanvas {
+  display: block;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+.waveCanvasVisible { opacity: 1; }
+
+/* ── STATUS LINE ── */
+.statusLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  height: 16px;
+}
+.sdot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8a9e82;
+  transition: background 0.5s;
+  flex-shrink: 0;
+}
+.sdotPlaying {
+  background: #8a9e82;
+  animation: dp 2s ease-in-out infinite;
+}
+@keyframes dp {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+.stxt {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7a7670;
+  transition: color 0.5s;
+}
+.stxtPlaying { color: #8a9e82; }
+
+/* ── CAROUSEL ── */
+.carouselSection {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ambient noise block is visually closer to player */
+.noiseSection {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+/* Desktop slider width */
+.desktopMain .noiseSliderWrap .sliderTrackWrap {
+  width: 59%;
+  margin: 0 auto;
+}
+
+.noiseSliderWrap {
+  padding: 4px 22px 16px;
+}
+
+.noiseCarousel {
+  display: flex;
+  gap: 10px;
+  padding: 0 22px 18px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.sectionHeader {
+  padding: 10px 22px 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sectionLabel {
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: #7a7670;
+}
+.sectionCount {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #7a7670;
+}
+.carousel {
+  display: flex;
+  gap: 11px;
+  padding: 0 22px 18px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.carousel::-webkit-scrollbar { display: none; }
+
+/* ── AMBIENT NOISE ─ */
+.noiseSection {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+/* Desktop slider width */
+.desktopMain .noiseSliderWrap .sliderTrackWrap {
+  width: 59%;
+  margin: 0 auto;
+}
+
+.noiseSliderWrap {
+  padding: 0 22px 10px;
+}
+
+.noiseSliderHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.noiseLabel {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 16px;
+  font-weight: 300;
+  color: #d4c9b0;
+}
+
+.noiseValue {
+  font-size: 10px;
+  color: #8a9e82;
+  letter-spacing: 0.06em;
+}
+
+.sliderTrackWrap {
+  position: relative;
+  height: 24px;
+
+  display: flex;
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sliderTrackBg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(138, 158, 130, 0.25);
+  border-radius: 1px;
+}
+
+.sliderTrackFill {
+  position: absolute;
+  left: 0;
+  height: 1px;
+  background: #8a9e82;
+  border-radius: 1px;
+  transition: width 0.08s ease-out;
+}
+
+.sliderThumb {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #161714;
+  border: 1px solid #8a9e82;
+  transform: translateX(-50%);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 0.05s linear;
+  will-change: left;
+}
+
+.thumbDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8a9e82;
+}
+
+.noiseRange {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 24px;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+  touch-action: none;
+}
+
+.noiseCarousel {
+  display: flex;
+  gap: 10px;
+  padding: 0 22px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.noiseCarousel::-webkit-scrollbar { display: none; }
+
+.noiseCard {
+  /* используем базовый вид .chCard через JSX; здесь можно добавить тюнинг при необходимости */
+}
+
+.noiseCardActive {
+  /* дополнительный акцент для активного шума, если нужно */
+}
+
+.noisePlayButton {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle, rgba(0, 0, 0, 0.45), rgba(0, 0, 0, 0.0));
+  cursor: pointer;
+  padding: 0;
+}
+
+.noisePlayButton svg {
+  display: block;
+}
+
+/* ── CHANNEL CARD ── */
+.chCard {
+  flex-shrink: 0;
+  width: 140px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0c0c0f;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+}
+.chCard:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.chCardActive {
+  border-color: rgba(155, 185, 215, 0.28);
+  background: #0d0e12;
+}
+.cardImg {
+  width: 100%;
+  height: 96px;
+  position: relative;
+  overflow: hidden;
+  background: #111115;
+}
+.cardImgPhoto {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cardImgOverlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.1) 0%, rgba(7, 7, 10, 0.75) 100%);
+}
+.cardBadge {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  font-size: 7px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(155, 185, 215, 0.1);
+  color: #7090a8;
+  border: 1px solid rgba(155, 185, 215, 0.18);
+}
+.playingIndicator {
+  position: absolute;
+  bottom: 7px;
+  right: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(155, 185, 215, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.playingIndicatorVisible { opacity: 1; }
+
+.cardBody { padding: 10px 11px 12px; }
+.cardTitle {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  color: #b8b0a2;
+  line-height: 1.2;
+  margin-bottom: 3px;
+}
+.cardMood {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8a9e82;
+}
+
+/* ── PROMO CARD ── */
+.promoCard {
+  flex-shrink: 0;
+  width: 130px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0a0a0c;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+  padding: 14px 13px;
+  display: flex;
+  flex-direction: column;
+  min-height: 168px;
+}
+.promoCard:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.promoTag {
+  font-size: 7px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 10px;
+  width: fit-content;
+  margin-bottom: 10px;
+}
+.tagPromo  { background: rgba(100,115,180,0.09); color: #5060a0; border: 1px solid rgba(100,115,180,0.15); }
+.tagUpdate { background: rgba(80,160,110,0.08);  color: #3a7050; border: 1px solid rgba(80,160,110,0.14);  }
+.tagTech   { background: rgba(180,100,60,0.08);  color: #8a5038; border: 1px solid rgba(180,100,60,0.14);  }
+.tagOffline{ background: rgba(90,90,130,0.08);   color: #505070; border: 1px solid rgba(90,90,130,0.14);   }
+
+.promoTitle {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 15px;
+  font-weight: 400;
+  color: #a0988a;
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+.promoDesc {
+  font-size: 9px;
+  color: #2c2c28;
+  line-height: 1.6;
+  flex: 1;
+}
+.promoLink {
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #303028;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.2s;
+  text-decoration: none;
+}
+.promoCard:hover .promoLink { color: #504e46; }
+
+/* ── SUBSCRIPTION BLOCK ── */
+.subBlock {
+  position: relative;
+  z-index: 10;
+  margin: 4px 16px 14px;
+  border-radius: 14px;
+  background: #09090c;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 11px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.subStatusLabel {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7a7670;
+  margin-bottom: 4px;
+}
+.subDate {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 14px;
+  color: #d4c9b0;
+}
+.subCta {
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 6px 13px;
+  cursor: pointer;
+  color: #303028;
+  font-family: 'Jost', sans-serif;
+  transition: all 0.2s;
+}
+.subCta:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #555;
+}
+
+/* ─────────────────────────────────────────────
+   DESKTOP ADDITIONS — player.module.css
+   ───────────────────────────────────────────── */
+
+/* ── DESKTOP SHELL ───────────────────────────
+   Занимает весь экран, тёмный фон, flex column */
+.desktopShell {
+  min-height: 100vh;
+  background: #07070a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  font-family: 'Jost', sans-serif;
+  font-weight: 300;
+  color: #c8c0b0;
+}
+
+/* Сбрасываем box-sizing для всего внутри */
+.desktopShell * {
+  box-sizing: border-box;
+}
+
+/* ── LOTUS — крупнее, по центру экрана ───────*/
+.desktopLotusBg {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── HEADER ──────────────────────────────────*/
+.desktopHeader {
+  position: relative;
+  z-index: 10;
+  padding: 16px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  max-width: 700px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ── MAIN COLUMN ─────────────────────────────*/
+.desktopMain {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 24px 32px 32px;
+  max-width: 700px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+
+/* (desktopLeft/desktopRight больше не используются в новой вертикальной раскладке) */
+
+/* ── SECTION ─────────────────────────────────*/
+.desktopSection {
+  position: relative;
+}
+
+/* ── CHANNEL CARDS ROW ───────────────────────
+   Flex-wrap: карточки переносятся на новую строку
+   если не влезают, а не уходят в горизонтальный скролл */
+.desktopCardsRow {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  justify-content: flex-start;
+  padding: 4px 8px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Десктопная карточка канала — чуть шире */
+.chCardDesktop {
+  width: 160px; /* same as channel cards */
+}
+
+/* Десктопная promo-карточка */
+.promoCardDesktop {
+  width: 160px;
+  min-height: 160px;
+}
+
+/* ── NOISE CARDS ROW ─────────────────────────*/
+.desktopNoiseRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+
+/* Десктопная noise-карточка — чуть шире */
+.noiseCardDesktop {
+  width: 160px; /* same as channel cards */
+}
+
+/* ── YY BUTTON — DESKTOP SIZE (240px) ────────*/
+.yyWrapDesktop {
+  width: 240px;
+  height: 240px;
+}
+
+/* Переопределяем размер halos для 240px кнопки */
+.yyWrapDesktop .h1 { inset: -30px; }
+.yyWrapDesktop .h2 { inset: -15px; }
+.yyWrapDesktop .h3 { inset: -4px;  }
+.yyWrapDesktop .ambient { inset: -55px; }
+
+.yyImageDesktop {
+  width: 240px !important;
+  height: 240px !important;
+}
+
+/* ── FOOTER ──────────────────────────────────*/
+.desktopFooter {
+  position: relative;
+  z-index: 10;
+  margin: 0 auto;
+  max-width: 700px;
+  width: 100%;
+  padding: 16px 32px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+
+/* ── DAILY MESSAGE ── */
+.dailyMessageBlock {
+  text-align: center;
+  margin-bottom: 12px;
+}
+.dailyMessageLabel {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #7a7670;
+  margin-bottom: 4px;
+}
+.dailyMessage {
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-size: 14px;
+  color: rgba(212, 201, 176, 0.92);
+}

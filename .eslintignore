@@ -1,0 +1,6 @@
+app/_legacy
+demo
+scripts/*.js
+create-test-user.js
+seed-spaquatoria.js
+extend-tenant.js
