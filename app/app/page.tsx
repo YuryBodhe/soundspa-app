@@ -86,36 +86,62 @@ function DesktopAppPage() {
 export default function AppPage() {
   const [isIOS, setIsIOS] = useState(false);
   const [detected, setDetected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Надежная детекция iOS устройств
-    const userAgent = navigator.userAgent || '';
-    const platform = navigator.platform || '';
-    
-    // Проверяем разные признаки iOS
-    const isIPhone = /iPhone/i.test(userAgent);
-    const isIPad = /iPad/i.test(userAgent);
-    const isIPod = /iPod/i.test(userAgent);
-    const isIOS = isIPhone || isIPad || isIPod;
-    const isMac = /Mac/i.test(platform) && !/like Mac/i.test(userAgent);
-    
-    // Для iPad на iOS 13+ нужно дополнительная проверка
-    const isIOSDevice = isIOS || (isMac && 'maxTouchPoints' in navigator && navigator.maxTouchPoints > 1);
-    
-    console.log('📱 Platform detection:', {
-      userAgent,
-      platform,
-      isIPhone,
-      isIPad, 
-      isIPod,
-      isMac,
-      maxTouchPoints: navigator.maxTouchPoints,
-      isIOS: isIOSDevice
-    });
-    
-    setIsIOS(isIOSDevice);
-    setDetected(true);
+    async function initApp() {
+      try {
+        // 1. Сначала проверяем доступ через API
+        const response = await fetch('/api/check-app-access', { 
+          cache: 'no-store',
+          credentials: 'include' 
+        });
+        
+        if (response.status === 403) {
+          // Триал истек — редирект на страницу с ошибкой доступа
+          window.location.href = '/app-index';
+          return;
+        }
+
+        if (response.status !== 200) {
+          // Не авторизован — редирект на логин
+          window.location.href = '/login';
+          return;
+        }
+
+        // 2. Если доступ есть, запускаем твою логику детекции устройства
+        const userAgent = navigator.userAgent || '';
+        const platform = navigator.platform || '';
+        
+        const isIPhone = /iPhone/i.test(userAgent);
+        const isIPad = /iPad/i.test(userAgent);
+        const isIPod = /iPod/i.test(userAgent);
+        const isIOSBase = isIPhone || isIPad || isIPod;
+        const isMac = /Mac/i.test(platform) && !/like Mac/i.test(userAgent);
+        
+        const isIOSDevice = isIOSBase || (isMac && 'maxTouchPoints' in navigator && navigator.maxTouchPoints > 1);
+        
+        console.log('📱 Access granted. Platform detection:', { isIOS: isIOSDevice });
+        
+        setIsIOS(isIOSDevice);
+        setDetected(true);
+
+      } catch (err) {
+        console.error('Failed to init app:', err);
+        setError('Connection error');
+      }
+    }
+
+    initApp();
   }, []);
+
+  if (error) {
+    return (
+      <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#07060a", color: "white" }}>
+        <p>Ошибка подключения. Попробуйте обновить страницу.</p>
+      </main>
+    );
+  }
 
   if (!detected) {
     return (
@@ -148,7 +174,6 @@ export default function AppPage() {
   if (isIOS) {
     if (typeof window !== 'undefined') {
       const currentPath = window.location.pathname;
-      // Если уже на /app/что-то — не редиректим повторно
       if (currentPath === '/app' || currentPath === '/app/') {
         window.location.href = '/app/ios-player';
         return null;

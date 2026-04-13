@@ -8,7 +8,6 @@ export default function AppIndexPage() {
   useEffect(() => {
     async function checkAndRedirect() {
       try {
-        // Проверяем доступ к /app через fetch
         const response = await fetch('/api/check-app-access', {
           credentials: 'include',
           headers: {
@@ -17,12 +16,14 @@ export default function AppIndexPage() {
           }
         });
         
-        console.log('Check response:', response.status);
+        console.log('Check response status:', response.status);
         
         if (response.status === 200) {
-          // Если доступ есть, редирект на /app с кеш-бастером
           const timestamp = Date.now();
           window.location.href = `/app?t=${timestamp}`;
+        } else if (response.status === 403) {
+          // Наш новый случай — доступ ограничен по времени
+          setStatus('expired');
         } else {
           setStatus('no-access');
         }
@@ -35,6 +36,7 @@ export default function AppIndexPage() {
     checkAndRedirect();
   }, []);
 
+  // Состояние загрузки (оставляем без изменений)
   if (status === 'loading') {
     return (
       <main style={{
@@ -47,27 +49,23 @@ export default function AppIndexPage() {
         fontFamily: "sans-serif",
         color: "white"
       }}>
-        <h1 style={{ fontSize: "20px", marginBottom: "20px" }}>
-          🎵 Sound Spa
-        </h1>
-        <div style={{
-          width: "40px",
-          height: "40px",
-          border: "3px solid rgba(255,255,255,0.3)",
-          borderTop: "3px solid white",
-          borderRadius: "50%",
-          animation: "spin 1s linear infinite"
-        }} />
+        <h1 style={{ fontSize: "20px", marginBottom: "20px" }}>🎵 Sound Spa</h1>
+        <div className="spinner" />
         <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+          .spinner {
+            width: 40px; height: 40px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
           }
+          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         `}</style>
       </main>
     );
   }
 
+  // Отрисовка ошибок
   return (
     <main style={{
       minHeight: "100vh",
@@ -76,27 +74,36 @@ export default function AppIndexPage() {
       justifyContent: "center",
       backgroundColor: "#07060a",
       fontFamily: "sans-serif",
-      color: "white"
+      color: "white",
+      padding: "20px"
     }}>
-      <div style={{ textAlign: 'center' }}>
-        <h1 style={{ fontSize: "20px", marginBottom: "10px" }}>
-          Access Error
+      <div style={{ textAlign: 'center', maxWidth: "400px" }}>
+        <h1 style={{ fontSize: "24px", marginBottom: "16px" }}>
+          {status === 'expired' ? '⏱️ Срок доступа истек' : 'Ошибка доступа'}
         </h1>
-        <p style={{ opacity: 0.7, marginBottom: "20px" }}>
-          {status === 'no-access' ? 'Please log in first' : 'Connection error'}
+        
+        <p style={{ opacity: 0.8, marginBottom: "30px", lineHeight: "1.5" }}>
+          {status === 'expired' 
+            ? 'Ваш бесплатный период (30 дней) или оплаченная подписка закончились. Чтобы продолжить пользоваться Sound Spa, пожалуйста, свяжитесь с нами.' 
+            : status === 'no-access' 
+              ? 'Похоже, вы не авторизованы или сессия истекла.' 
+              : 'Произошла ошибка при подключении к серверу.'}
         </p>
+
         <button
-          onClick={() => window.location.href = '/login'}
+          onClick={() => window.location.href = status === 'expired' ? 'https://t.me/yury_bodhe' : '/login'}
           style={{
-            padding: "10px 20px",
-            background: "#007AFF",
+            padding: "12px 24px",
+            background: status === 'expired' ? "#34C759" : "#007AFF",
             color: "white",
             border: "none",
-            borderRadius: "6px",
-            fontSize: "14px"
+            borderRadius: "8px",
+            fontSize: "16px",
+            fontWeight: "bold",
+            cursor: "pointer"
           }}
         >
-          Go to Login
+          {status === 'expired' ? 'Связаться в Telegram' : 'Перейти к логину'}
         </button>
       </div>
     </main>

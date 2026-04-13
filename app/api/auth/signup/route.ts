@@ -5,7 +5,7 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { sendMagicLinkEmail } from "@/lib/agentmail";
 
-const TRIAL_DAYS = 10;
+const TRIAL_DAYS = 30;
 const DEFAULT_CHANNEL_CODES = [
   "deep_relax",
   "spaquatoria_healing",
