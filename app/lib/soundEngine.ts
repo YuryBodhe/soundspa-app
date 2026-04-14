@@ -31,24 +31,19 @@ const clampVolume = (value: number) => {
 export const soundEngine: SoundEngine = {
   playChannel(id, streamUrl) {
     if (!isBrowser) return;
-
-    // Если этот же поток уже играет — ничего не трогаем
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    // 1. ПЛАВНО ОСТАНАВЛИВАЕМ ТЕКУЩИЙ КАНАЛ
+    // 1. СТАРЫЙ КАНАЛ: Просто оставляем его играть "как есть" на 5 секунд
+    // Мы не вызываем fade, так как Safari его игнорирует. 
+    // Мы просто даем ему доиграть на фоне нового.
     if (mainHowl) {
       const oldHowl = mainHowl;
-      // Используем нативный фейд Howler (как в нойзах)
-      oldHowl.fade(oldHowl.volume(), 0, FADE_DURATION);
       setTimeout(() => {
         try {
           oldHowl.stop();
           oldHowl.unload();
-        } catch (e) {
-          console.warn("[soundEngine] Old channel unload error", e);
-        }
-      }, FADE_DURATION + 100);
-      mainHowl = null;
+        } catch (e) {}
+      }, 6000); // Увеличиваем нахлест до 6 секунд
     }
 
     if (!streamUrl) return;
@@ -56,21 +51,24 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
-    // 2. ЗАПУСКАЕМ НОВЫЙ КАНАЛ
-    // html5: true позволяет Safari играть HLS (.m3u8) через нативный плеер
+    // 2. НОВЫЙ КАНАЛ: 
     mainHowl = new Howl({
       src: [streamUrl],
       html5: true, 
       format: ['mp3', 'aac', 'm4a'],
-      volume: 0,
+      volume: 0, // Начинаем с абсолютной тишины
     });
 
     try {
       mainHowl.play();
-      // Запускаем фейд нарастания
-      mainHowl.fade(0, 1, FADE_DURATION);
+      // Даем Safari 200мс осознать, что поток пошел, и только потом начинаем фейд
+      setTimeout(() => {
+        if (mainHowl) {
+          mainHowl.fade(0, 1, 5000); // Растягиваем вход нового канала
+        }
+      }, 200);
     } catch (e) {
-      console.warn("[soundEngine] Main channel play error:", e);
+      console.warn("Play error", e);
     }
   },
 
