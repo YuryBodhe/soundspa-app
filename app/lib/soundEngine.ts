@@ -13,7 +13,7 @@ interface SoundEngine {
 }
 
 const isBrowser = typeof window !== "undefined";
-const FADE_DURATION = 2000;
+const FADE_DURATION = 3000;
 
 let mainHowl: Howl | null = null;
 let mainHls: Hls | null = null;
@@ -88,8 +88,10 @@ const fadeNoiseTo = (targetVolume: number, durationMs: number) => {
 const fadeOutAndDestroy = (audio: HTMLAudioElement | null, hls: Hls | null) => {
   if (!audio) return;
   const startVol = audio.volume;
-  const interval = 50; // Шаг в 50мс
-  const step = startVol / (FADE_DURATION / interval);
+  const fadeTime = 3000; // Увеличиваем до 3 сек для мобилок
+  const interval = 100;  // Реже шаг = стабильнее на iOS
+  const steps = fadeTime / interval;
+  const step = startVol / steps;
 
   const fadeTimer = setInterval(() => {
     if (audio.volume > step) {
@@ -97,6 +99,9 @@ const fadeOutAndDestroy = (audio: HTMLAudioElement | null, hls: Hls | null) => {
     } else {
       audio.volume = 0;
       audio.pause();
+      // Важно: в Safari сначала убираем src, потом разрушаем hls
+      audio.src = ""; 
+      audio.load(); 
       hls?.destroy();
       audio.remove();
       clearInterval(fadeTimer);
@@ -105,7 +110,7 @@ const fadeOutAndDestroy = (audio: HTMLAudioElement | null, hls: Hls | null) => {
 };
 
 export const soundEngine: SoundEngine = {
-  playChannel(id, streamUrl) {
+ playChannel(id, streamUrl) {
     if (!isBrowser) return;
 
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
@@ -134,15 +139,21 @@ export const soundEngine: SoundEngine = {
       mainAudioElement = new Audio();
       mainAudioElement.volume = 0; 
 
+      // ОБНОВЛЕННАЯ ФУНКЦИЯ ВНУТРИ
       const runFadeIn = (el: HTMLAudioElement) => {
         let vol = 0;
+        const interval = 100; // Реже шаг для стабильности iOS
+        const step = 1 / (FADE_DURATION / interval);
+
         const upTimer = setInterval(() => {
-          vol += 0.05;
+          vol += step;
           if (el) {
             el.volume = Math.min(1, vol);
             if (vol >= 1) clearInterval(upTimer);
-          } else { clearInterval(upTimer); }
-        }, FADE_DURATION / 20);
+          } else { 
+            clearInterval(upTimer); 
+          }
+        }, interval);
       };
 
       if (Hls.isSupported()) {
@@ -156,6 +167,7 @@ export const soundEngine: SoundEngine = {
       }
       else if (mainAudioElement.canPlayType('application/vnd.apple.mpegurl')) {
         mainAudioElement.src = streamUrl;
+        // Для Safari на iOS добавляем небольшой запас перед воспроизведением
         mainAudioElement.play().then(() => runFadeIn(mainAudioElement!))
           .catch(e => console.warn("[soundEngine] Safari HLS error:", e));
       }
