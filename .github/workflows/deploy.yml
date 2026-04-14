@@ -3,7 +3,8 @@ name: Deploy to Hetzner
 on:
   push:
     branches:
-      - main 
+      - main # убедись, что твоя ветка называется именно main
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -11,12 +12,20 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SERVER_HOST }}     # IP твоего сервера
-          username: ${{ secrets.SERVER_USER }} # Твой логин (обычно root или dev)
-          key: ${{ secrets.SERVER_SSH_KEY }}   # Приватный SSH ключ
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /Users/bodhem3/Zavod/apps/soundspa-app # Путь к проекту на сервере
+            # Переходим в правильную папку
+            cd /opt/soundspa-app
+            
+            # Подтягиваем код
             git pull origin main
+            
+            # Устанавливаем зависимости и собираем проект
             npm install
             npm run build
-            pm2 restart all # Или имя конкретного процесса
+            
+            # Перезапускаем плеер через pm2
+            # Используем npx на случай, если pm2 не прописан в глобальных путях
+            npx pm2 restart all
