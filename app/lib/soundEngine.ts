@@ -1,5 +1,4 @@
 import { Howl } from "howler";
-import Hls from "hls.js";
 
 type ChannelId = string;
 type NoiseId = string;
@@ -15,25 +14,10 @@ interface SoundEngine {
 const isBrowser = typeof window !== "undefined";
 const FADE_DURATION = 3000;
 
-// Web Audio API контекст (синглтон)
-let audioCtx: AudioContext | null = null;
-const getAudioCtx = () => {
-  if (!audioCtx && isBrowser) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
-  return audioCtx;
-};
-
-// Хранилище для активного канала
-let mainHls: Hls | null = null;
-let mainAudioElement: HTMLAudioElement | null = null;
-let mainGainNode: GainNode | null = null;
-let mainSourceNode: MediaElementAudioSourceNode | null = null;
 let mainHowl: Howl | null = null;
 let mainChannelId: ChannelId | null = null;
 let mainStreamUrl: string | null = null;
 
-// Хранилище для шумов
 let noiseHowl: Howl | null = null;
 let noiseId: NoiseId | null = null;
 let noiseStreamUrl: string | null = null;
@@ -44,68 +28,27 @@ const clampVolume = (value: number) => {
   return Math.max(0, Math.min(1, value));
 };
 
-const destroyHowl = (howl: Howl | null) => {
-  if (!howl) return;
-  try {
-    howl.stop();
-    howl.unload();
-  } catch (error) {
-    console.warn("[soundEngine] Failed to destroy Howl", error);
-  }
-};
-
-/**
- * Плавное удаление аудио-элемента через Web Audio Gain Node
- */
-const fadeOutAndDestroy = (
-  audio: HTMLAudioElement | null, 
-  hls: Hls | null, 
-  gainNode: GainNode | null,
-  sourceNode: MediaElementAudioSourceNode | null
-) => {
-  if (!audio || !gainNode) return;
-
-  const ctx = getAudioCtx();
-  if (ctx) {
-    // Нативный фейд Web Audio - Safari его не блокирует
-    gainNode.gain.cancelScheduledValues(ctx.currentTime);
-    gainNode.gain.setValueAtTime(gainNode.gain.value, ctx.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + FADE_DURATION / 1000);
-  }
-
-  setTimeout(() => {
-    audio.pause();
-    audio.src = "";
-    audio.load();
-    hls?.destroy();
-    sourceNode?.disconnect();
-    gainNode?.disconnect();
-    audio.remove();
-  }, FADE_DURATION + 100);
-};
-
 export const soundEngine: SoundEngine = {
   playChannel(id, streamUrl) {
     if (!isBrowser) return;
+
+    // Если этот же поток уже играет — ничего не трогаем
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    const ctx = getAudioCtx();
-    if (ctx && ctx.state === 'suspended') ctx.resume();
-
-    // 1. ОСТАНОВКА СТАРОГО
+    // 1. ПЛАВНО ОСТАНАВЛИВАЕМ ТЕКУЩИЙ КАНАЛ
     if (mainHowl) {
-      mainHowl.fade(mainHowl.volume(), 0, FADE_DURATION);
       const oldHowl = mainHowl;
-      setTimeout(() => destroyHowl(oldHowl), FADE_DURATION + 100);
+      // Используем нативный фейд Howler (как в нойзах)
+      oldHowl.fade(oldHowl.volume(), 0, FADE_DURATION);
+      setTimeout(() => {
+        try {
+          oldHowl.stop();
+          oldHowl.unload();
+        } catch (e) {
+          console.warn("[soundEngine] Old channel unload error", e);
+        }
+      }, FADE_DURATION + 100);
       mainHowl = null;
-    }
-
-    if (mainAudioElement) {
-      fadeOutAndDestroy(mainAudioElement, mainHls, mainGainNode, mainSourceNode);
-      mainAudioElement = null;
-      mainHls = null;
-      mainGainNode = null;
-      mainSourceNode = null;
     }
 
     if (!streamUrl) return;
@@ -113,70 +56,40 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
-    // 2. ЗАПУСК НОВОГО
-    if (streamUrl.includes(".m3u8")) {
-      const audio = new Audio();
-      audio.crossOrigin = "anonymous";
-      // Оставляем громкость элемента на 1, управлять будем через GainNode
-      audio.volume = 1; 
-      
-      mainAudioElement = audio;
+    // 2. ЗАПУСКАЕМ НОВЫЙ КАНАЛ
+    // html5: true позволяет Safari играть HLS (.m3u8) через нативный плеер
+    mainHowl = new Howl({
+      src: [streamUrl],
+      html5: true, 
+      format: ['mp3', 'aac', 'm4a'],
+      volume: 0,
+    });
 
-      if (ctx) {
-        const gainNode = ctx.createGain();
-        gainNode.gain.setValueAtTime(0, ctx.currentTime);
-        gainNode.connect(ctx.destination);
-        
-        const source = ctx.createMediaElementSource(audio);
-        source.connect(gainNode);
-        
-        mainGainNode = gainNode;
-        mainSourceNode = source;
-      }
-
-      const runFadeIn = () => {
-        if (mainGainNode && ctx) {
-          mainGainNode.gain.cancelScheduledValues(ctx.currentTime);
-          mainGainNode.gain.setValueAtTime(0, ctx.currentTime);
-          mainGainNode.gain.linearRampToValueAtTime(1, ctx.currentTime + FADE_DURATION / 1000);
-        }
-      };
-
-      if (Hls.isSupported()) {
-        mainHls = new Hls({ liveSyncDuration: 10, maxBufferLength: 30 });
-        mainHls.loadSource(streamUrl);
-        mainHls.attachMedia(audio);
-        mainHls.on(Hls.Events.MANIFEST_PARSED, () => {
-          audio.play().then(runFadeIn).catch(e => console.warn("HLS Play error", e));
-        });
-      } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
-        audio.src = streamUrl;
-        audio.play().then(runFadeIn).catch(e => console.warn("Safari HLS error", e));
-      }
-    } else {
-      mainHowl = new Howl({ src: [streamUrl], html5: true, volume: 0 });
+    try {
       mainHowl.play();
+      // Запускаем фейд нарастания
       mainHowl.fade(0, 1, FADE_DURATION);
+    } catch (e) {
+      console.warn("[soundEngine] Main channel play error:", e);
     }
   },
 
   stopChannel() {
-    if (!isBrowser) return;
-    if (mainHowl) {
-      mainHowl.fade(mainHowl.volume(), 0, FADE_DURATION);
-      const old = mainHowl;
-      setTimeout(() => destroyHowl(old), FADE_DURATION + 100);
-      mainHowl = null;
-    }
-    if (mainAudioElement) {
-      fadeOutAndDestroy(mainAudioElement, mainHls, mainGainNode, mainSourceNode);
-      mainAudioElement = null;
-      mainHls = null;
-      mainGainNode = null;
-      mainSourceNode = null;
-    }
-    mainChannelId = null;
-    mainStreamUrl = null;
+    if (!isBrowser || !mainHowl) return;
+    const old = mainHowl;
+    old.fade(old.volume(), 0, FADE_DURATION);
+    setTimeout(() => {
+      if (mainHowl === old) {
+        mainHowl.stop();
+        mainHowl.unload();
+        mainHowl = null;
+        mainChannelId = null;
+        mainStreamUrl = null;
+      } else {
+        old.stop();
+        old.unload();
+      }
+    }, FADE_DURATION + 100);
   },
 
   setNoise(id, streamUrl) {
@@ -187,7 +100,9 @@ export const soundEngine: SoundEngine = {
     const oldHowl = noiseHowl;
     if (oldHowl) {
       oldHowl.fade(oldHowl.volume(), 0, 4000);
-      setTimeout(() => destroyHowl(oldHowl), 4100);
+      setTimeout(() => {
+        try { oldHowl.stop(); oldHowl.unload(); } catch {}
+      }, 4100);
     }
 
     if (!streamUrl) return;
@@ -208,7 +123,7 @@ export const soundEngine: SoundEngine = {
       noiseHowl.play();
       noiseHowl.fade(0, noiseVolume, 4000);
     } catch (e) {
-      console.warn("Noise play error", e);
+      console.warn("[soundEngine] noise play error:", e);
     }
   },
 
@@ -226,12 +141,14 @@ export const soundEngine: SoundEngine = {
     current.fade(current.volume(), 0, 4000);
     setTimeout(() => {
       if (noiseHowl === current) {
-        destroyHowl(noiseHowl);
+        noiseHowl.stop();
+        noiseHowl.unload();
         noiseHowl = null;
         noiseId = null;
         noiseStreamUrl = null;
       } else {
-        destroyHowl(current);
+        current.stop();
+        current.unload();
       }
     }, 4100);
   },
