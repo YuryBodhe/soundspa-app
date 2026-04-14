@@ -87,24 +87,36 @@ const fadeNoiseTo = (targetVolume: number, durationMs: number) => {
 
 const fadeOutAndDestroy = (audio: HTMLAudioElement | null, hls: Hls | null) => {
   if (!audio) return;
+  
+  const fadeTime = FADE_DURATION;
+  const interval = 150; // Еще реже шаг для iOS
   const startVol = audio.volume;
-  const fadeTime = 3000; // Увеличиваем до 3 сек для мобилок
-  const interval = 100;  // Реже шаг = стабильнее на iOS
   const steps = fadeTime / interval;
   const step = startVol / steps;
 
   const fadeTimer = setInterval(() => {
-    if (audio.volume > step) {
-      audio.volume -= step;
+    // Проверяем, существует ли еще объект аудио
+    if (!audio) {
+      clearInterval(fadeTimer);
+      return;
+    }
+
+    if (audio.volume > step + 0.01) {
+      try {
+        audio.volume -= step;
+      } catch (e) {
+        console.warn("Fade error", e);
+      }
     } else {
+      clearInterval(fadeTimer);
       audio.volume = 0;
       audio.pause();
-      // Важно: в Safari сначала убираем src, потом разрушаем hls
-      audio.src = ""; 
-      audio.load(); 
-      hls?.destroy();
-      audio.remove();
-      clearInterval(fadeTimer);
+      audio.src = "";
+      audio.load();
+      setTimeout(() => {
+        hls?.destroy();
+        audio.remove();
+      }, 100);
     }
   }, interval);
 };
@@ -141,17 +153,25 @@ export const soundEngine: SoundEngine = {
 
       // ОБНОВЛЕННАЯ ФУНКЦИЯ ВНУТРИ
       const runFadeIn = (el: HTMLAudioElement) => {
+        el.volume = 0;
         let vol = 0;
-        const interval = 100; // Реже шаг для стабильности iOS
+        const interval = 150; 
         const step = 1 / (FADE_DURATION / interval);
 
         const upTimer = setInterval(() => {
+          if (!el) {
+            clearInterval(upTimer);
+            return;
+          }
+
           vol += step;
-          if (el) {
+          try {
             el.volume = Math.min(1, vol);
-            if (vol >= 1) clearInterval(upTimer);
-          } else { 
-            clearInterval(upTimer); 
+          } catch (e) { }
+
+          if (vol >= 1) {
+            el.volume = 1;
+            clearInterval(upTimer);
           }
         }, interval);
       };
