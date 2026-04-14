@@ -1,12 +1,4 @@
 // /app/[tenantSlug] — персональный URL кабинета салона
-// Пример: /app/spaquatoria, /app/divnitsa
-//
-// Логика:
-// 1. Проверяем сессию (middleware уже гарантирует наличие для /app/**)
-// 2. Проверяем, что tenantSlug из URL совпадает с tenantSlug сессии
-// 3. Загружаем каналы и данные тенанта из DB
-// 4. Рендерим ResponsivePlayer (iOS или Desktop в зависимости от ширины экрана)
-
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getChannelsForTenant, PROMO_CARDS } from "../ios-player/channels";
@@ -14,6 +6,10 @@ import { db } from "@/lib/db.pg";
 import { eq } from "drizzle-orm";
 import { tenants } from "@/db";
 import { ResponsivePlayer } from "./ResponsivePlayer";
+
+// ОТКЛЮЧАЕМ КЭШ: чтобы правки в админке срабатывали мгновенно
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 interface TenantPageParams {
   tenantSlug: string;
@@ -29,16 +25,11 @@ export async function generateMetadata({
   params: Promise<TenantPageParams>;
 }) {
   const { tenantSlug } = await params;
-
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.slug, tenantSlug),
   });
-
   const titleBase = tenant?.brandName ?? tenant?.name ?? tenantSlug;
-
-  return {
-    title: tenant ? `${titleBase} · Sound Spa` : "Sound Spa",
-  };
+  return { title: tenant ? `${titleBase} · Sound Spa` : "Sound Spa" };
 }
 
 export default async function TenantPlayerPage({
@@ -51,7 +42,6 @@ export default async function TenantPlayerPage({
   const session = await getSession();
   if (!session && !SKIP_AUTH) redirect(`/login?from=/app/${tenantSlug}`);
 
-  // Пользователь пытается открыть чужой кабинет — редиректим на свой
   if (session && session.tenantSlug !== tenantSlug && !SKIP_AUTH) {
     redirect(`/app/${session.tenantSlug}`);
   }
@@ -63,15 +53,30 @@ export default async function TenantPlayerPage({
 
   if (!tenant) notFound();
 
+  // --- ЛОГИКА ПРОВЕРКИ ПОДПИСКИ ---
   const now = new Date();
   const paidTillDate = tenant.paidTill ? new Date(tenant.paidTill) : null;
   const trialEndsDate = tenant.trialEndsAt ? new Date(tenant.trialEndsAt) : null;
 
+  // ЛОГИ ДЛЯ ОТЛАДКИ: увидишь их в `pm2 logs`
+  console.log(`[Subscription Check] Salon: ${tenantSlug}`);
+  console.log(`- Current Time: ${now.toISOString()}`);
+  console.log(`- Paid Till: ${paidTillDate?.toISOString() || 'NULL'}`);
+  console.log(`- Trial Ends: ${trialEndsDate?.toISOString() || 'NULL'}`);
+
   let status: "trial" | "active" | "expired" = "expired";
 
-  if (paidTillDate && paidTillDate > now) {
-    status = "active";
-  } else if (trialEndsDate && trialEndsDate > now) {
+  // ПРИОРИТЕТ 1: Если есть оплата, проверяем её.
+  // Если оплата просрочена, мы НЕ смотрим на триал (считаем, что триал сгорает при первой оплате)
+  if (paidTillDate) {
+    if (paidTillDate > now) {
+      status = "active";
+    } else {
+      status = "expired";
+    }
+  } 
+  // ПРИОРИТЕТ 2: Если оплаты еще никогда не было, проверяем триал
+  else if (trialEndsDate && trialEndsDate > now) {
     status = "trial";
   }
 
@@ -101,63 +106,23 @@ export default async function TenantPlayerPage({
   const salonName = tenant.brandName ?? tenant.name ?? tenant.slug;
 
   if (status === "expired") {
-    // Экран блокировки при истёкшем триале/подписке
     return (
-      <main
-        style={{
-          background: "#060608",
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "white",
-          fontFamily:
-            "-apple-system, system-ui, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
-          padding: 24,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 480,
-            width: "100%",
-            background: "rgba(8,8,12,0.9)",
-            borderRadius: 16,
-            padding: "24px 20px 20px",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 12,
-              letterSpacing: "0.28em",
-              textTransform: "uppercase",
-              color: "rgba(195,168,108,0.7)",
-              marginBottom: 8,
-            }}
-          >
-            Sound Spa
+      <main style={{
+        background: "#060608", minHeight: "100vh", display: "flex", 
+        alignItems: "center", justifyContent: "center", color: "white", padding: 24
+      }}>
+        <div style={{
+          maxWidth: 480, width: "100%", background: "rgba(8,8,12,0.9)",
+          borderRadius: 16, padding: "24px 20px 20px", border: "1px solid rgba(255,255,255,0.06)"
+        }}>
+          <div style={{ fontSize: 12, letterSpacing: "0.28em", color: "rgba(195,168,108,0.7)", marginBottom: 8 }}>
+            SOUND SPA
           </div>
-          <h1
-            style={{
-              fontSize: 22,
-              fontWeight: 500,
-              margin: 0,
-              marginBottom: 8,
-            }}
-          >
-            Доступ к кабинету приостановлен
+          <h1 style={{ fontSize: 22, fontWeight: 500, margin: "0 0 8px" }}>
+            Доступ приостановлен
           </h1>
-          <p
-            style={{
-              fontSize: 14,
-              opacity: 0.7,
-              margin: 0,
-              marginBottom: 16,
-            }}
-          >
-            Тестовый период или подписка для салона {salonName} завершились.
-            Чтобы продолжить использовать Sound Spa, свяжитесь с вашей
-            контактной персоной или поддержкой.
+          <p style={{ fontSize: 14, opacity: 0.7, margin: "0 0 16px" }}>
+            Подписка или тестовый период для салона <b>{salonName}</b> завершились.
           </p>
         </div>
       </main>
