@@ -164,3 +164,43 @@ export const tenantChannelsRelations = relations(
     }),
   }),
 );
+
+// ---------- payments (Prodamus) ----------
+
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  // Сумма платежа
+  amount: text("amount"),
+  // Статус: pending, success, failed
+  status: text("status").default("pending"),
+  // ID транзакции из системы Prodamus
+  prodamusId: text("prodamus_id"),
+  // Твой внутренний ID заказа
+  orderId: text("order_id"),
+  // Дата создания транзакции
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).defaultNow(),
+});
+
+// ---------- payments relations ----------
+
+export const paymentRelations = relations(payments, ({ one }) => ({
+  tenant: one(tenants, {
+    fields: [payments.tenantId],
+    references: [tenants.id],
+  }),
+}));
+
+// Не забудь обновить tenantRelations выше в файле, 
+// добавив many(payments), чтобы связи работали в обе стороны:
+//
+// export const tenantRelations = relations(tenants, ({ many }) => ({
+//   users: many(users),
+//   tenantChannels: many(tenantChannels),
+//   payments: many(payments), <--- Добавь эту строку в существующий tenantRelations
+// }));

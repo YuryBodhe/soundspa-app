@@ -1,4 +1,4 @@
-// /app/[tenantSlug] — персональный URL кабинета салона
+// /app/[tenantSlug]/page.tsx — персональный URL кабинета салона
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { getChannelsForTenant, PROMO_CARDS } from "../ios-player/channels";
@@ -6,6 +6,7 @@ import { db } from "@/lib/db.pg";
 import { eq } from "drizzle-orm";
 import { tenants } from "@/db";
 import { ResponsivePlayer } from "./ResponsivePlayer";
+import { createProdamusLink } from "@/lib/prodamus";
 
 // ОТКЛЮЧАЕМ КЭШ: чтобы правки в админке срабатывали мгновенно
 export const dynamic = "force-dynamic";
@@ -58,40 +59,76 @@ export default async function TenantPlayerPage({
   const paidTillDate = tenant.paidTill ? new Date(tenant.paidTill) : null;
   const trialEndsDate = tenant.trialEndsAt ? new Date(tenant.trialEndsAt) : null;
 
-  // ЛОГИ ДЛЯ ОТЛАДКИ: увидишь их в `pm2 logs`
-  console.log(`[Subscription Check] Salon: ${tenantSlug}`);
-  console.log(`- Current Time: ${now.toISOString()}`);
-  console.log(`- Paid Till: ${paidTillDate?.toISOString() || 'NULL'}`);
-  console.log(`- Trial Ends: ${trialEndsDate?.toISOString() || 'NULL'}`);
-
   let status: "trial" | "active" | "expired" = "expired";
 
-  // ПРИОРИТЕТ 1: Если есть оплата, проверяем её.
-  // Если оплата просрочена, мы НЕ смотрим на триал (считаем, что триал сгорает при первой оплате)
+  // ПРИОРИТЕТ 1: Оплата
   if (paidTillDate) {
-    if (paidTillDate > now) {
-      status = "active";
-    } else {
-      status = "expired";
-    }
+    status = paidTillDate > now ? "active" : "expired";
   } 
-  // ПРИОРИТЕТ 2: Если оплаты еще никогда не было, проверяем триал
+  // ПРИОРИТЕТ 2: Триал (если никогда не платили)
   else if (trialEndsDate && trialEndsDate > now) {
     status = "trial";
   }
 
+  const salonName = tenant.brandName ?? tenant.name ?? tenant.slug;
+
+  // --- ЭКРАН БЛОКИРОВКИ С КНОПКОЙ ОПЛАТЫ ---
+  if (status === "expired") {
+    return (
+      <main style={{
+        background: "#060608", minHeight: "100vh", display: "flex", 
+        alignItems: "center", justifyContent: "center", color: "white", padding: 24
+      }}>
+        <div style={{
+          maxWidth: 480, width: "100%", background: "rgba(8,8,12,0.9)",
+          borderRadius: 24, padding: "40px 32px", border: "1px solid rgba(255,255,255,0.06)",
+          textAlign: "center", boxShadow: "0 20px 40px rgba(0,0,0,0.4)"
+        }}>
+          <div style={{ fontSize: 12, letterSpacing: "0.4em", color: "#C3A86C", marginBottom: 16, fontWeight: 600 }}>
+            SOUND SPA
+          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 500, margin: "0 0 12px", letterSpacing: "-0.02em" }}>
+            Доступ приостановлен
+          </h1>
+          <p style={{ fontSize: 15, opacity: 0.6, margin: "0 0 32px", lineHeight: "1.6" }}>
+            Подписка или тестовый период для салона <br/><b>{salonName}</b> завершились.
+          </p>
+          
+          <a 
+            href={createProdamusLink(tenantSlug, 3000)} 
+            style={{
+              display: "inline-block",
+              padding: "16px 40px",
+              background: "#C3A86C",
+              color: "black",
+              borderRadius: 12,
+              textDecoration: "none",
+              fontWeight: 700,
+              fontSize: 16,
+              boxShadow: "0 8px 20px rgba(195,168,108,0.25)",
+              transition: "transform 0.2s ease"
+            }}
+          >
+            Продлить доступ — 3000₽
+          </a>
+          
+          <div style={{ marginTop: 24, fontSize: 12, opacity: 0.4 }}>
+            После оплаты доступ восстановится автоматически
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // --- ГРАФИК РАБОТЫ (ДЛЯ ИНТЕРФЕЙСА) ---
   const subscriptionDate =
     status === "active" && paidTillDate
       ? `Подписка активна до ${paidTillDate.toLocaleDateString("ru-RU", {
-          day: "numeric",
-          month: "long",
-          year: "numeric",
+          day: "numeric", month: "long", year: "numeric",
         })}`
       : status === "trial" && trialEndsDate
       ? `Тестовый период до ${trialEndsDate.toLocaleDateString("ru-RU", {
-          day: "numeric",
-          month: "long",
-          year: "numeric",
+          day: "numeric", month: "long", year: "numeric",
         })}`
       : "Доступ неактивен";
 
@@ -102,32 +139,6 @@ export default async function TenantPlayerPage({
     (status === "trial" &&
       trialEndsDate &&
       trialEndsDate.getTime() - now.getTime() < 3 * 24 * 60 * 60 * 1000);
-
-  const salonName = tenant.brandName ?? tenant.name ?? tenant.slug;
-
-  if (status === "expired") {
-    return (
-      <main style={{
-        background: "#060608", minHeight: "100vh", display: "flex", 
-        alignItems: "center", justifyContent: "center", color: "white", padding: 24
-      }}>
-        <div style={{
-          maxWidth: 480, width: "100%", background: "rgba(8,8,12,0.9)",
-          borderRadius: 16, padding: "24px 20px 20px", border: "1px solid rgba(255,255,255,0.06)"
-        }}>
-          <div style={{ fontSize: 12, letterSpacing: "0.28em", color: "rgba(195,168,108,0.7)", marginBottom: 8 }}>
-            SOUND SPA
-          </div>
-          <h1 style={{ fontSize: 22, fontWeight: 500, margin: "0 0 8px" }}>
-            Доступ приостановлен
-          </h1>
-          <p style={{ fontSize: 14, opacity: 0.7, margin: "0 0 16px" }}>
-            Подписка или тестовый период для салона <b>{salonName}</b> завершились.
-          </p>
-        </div>
-      </main>
-    );
-  }
 
   return (
     <main style={{ background: "#060608", minHeight: "100vh" }}>
