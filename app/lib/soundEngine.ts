@@ -1,5 +1,3 @@
-import { Howl } from "howler";
-
 type ChannelId = string;
 type NoiseId = string;
 
@@ -12,12 +10,14 @@ interface SoundEngine {
 }
 
 const isBrowser = typeof window !== "undefined";
-const FADE_DURATION = 3000;
 
-let mainHowl: Howl | null = null;
+// ОСНОВНОЙ ПОТОК (Azura) - используем нативный Audio
+let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: ChannelId | null = null;
 let mainStreamUrl: string | null = null;
 
+// ШУМОВЫЕ КАНАЛЫ (Howler - для петель подходит отлично)
+import { Howl } from "howler";
 let noiseHowl: Howl | null = null;
 let noiseId: NoiseId | null = null;
 let noiseStreamUrl: string | null = null;
@@ -33,17 +33,22 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    // 1. СТАРЫЙ КАНАЛ: Просто оставляем его играть "как есть" на 5 секунд
-    // Мы не вызываем fade, так как Safari его игнорирует. 
-    // Мы просто даем ему доиграть на фоне нового.
-    if (mainHowl) {
-      const oldHowl = mainHowl;
-      setTimeout(() => {
-        try {
-          oldHowl.stop();
-          oldHowl.unload();
-        } catch (e) {}
-      }, 6000); // Увеличиваем нахлест до 6 секунд
+    // 1. Плавный уход старого канала через нативный метод (если был)
+    if (mainAudio) {
+      const oldAudio = mainAudio;
+      // Плавное затухание вручную для нативного Audio
+      let vol = 1;
+      const fadeOut = setInterval(() => {
+        vol -= 0.1;
+        if (vol <= 0) {
+          clearInterval(fadeOut);
+          oldAudio.pause();
+          oldAudio.src = "";
+          oldAudio.load();
+        } else {
+          oldAudio.volume = vol;
+        }
+      }, 200);
     }
 
     if (!streamUrl) return;
@@ -51,65 +56,66 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
-    // 2. НОВЫЙ КАНАЛ: 
-    mainHowl = new Howl({
-      src: [streamUrl],
-      html5: true, 
-      format: ['mp3', 'aac', 'm4a'],
-      volume: 0, // Начинаем с абсолютной тишины
-    });
+    // 2. Создаем нативный аудио-объект
+    mainAudio = new Audio(streamUrl);
+    mainAudio.preload = "none"; // Чтобы не жрать трафик до старта
+    mainAudio.crossOrigin = "anonymous";
+    
+    // Включаем нативную поддержку фонового воспроизведения для iOS
+    mainAudio.autoplay = true;
 
     try {
-      mainHowl.play();
-      // Даем Safari 200мс осознать, что поток пошел, и только потом начинаем фейд
-      setTimeout(() => {
-        if (mainHowl) {
-          mainHowl.fade(0, 1, 5000); // Растягиваем вход нового канала
-        }
-      }, 200);
+      const playPromise = mainAudio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.warn("Autoplay blocked or stream error:", error);
+        });
+      }
     } catch (e) {
       console.warn("Play error", e);
     }
   },
 
   stopChannel() {
-    if (!isBrowser || !mainHowl) return;
-    const old = mainHowl;
-    old.fade(old.volume(), 0, FADE_DURATION);
-    setTimeout(() => {
-      if (mainHowl === old) {
-        mainHowl.stop();
-        mainHowl.unload();
-        mainHowl = null;
+    if (!isBrowser || !mainAudio) return;
+    
+    let vol = mainAudio.volume;
+    const fadeOut = setInterval(() => {
+      if (!mainAudio) {
+        clearInterval(fadeOut);
+        return;
+      }
+      vol -= 0.1;
+      if (vol <= 0) {
+        clearInterval(fadeOut);
+        mainAudio.pause();
+        mainAudio.src = "";
+        mainAudio = null;
         mainChannelId = null;
         mainStreamUrl = null;
       } else {
-        old.stop();
-        old.unload();
+        mainAudio.volume = vol;
       }
-    }, FADE_DURATION + 100);
+    }, 100);
   },
 
+  // Оставляем Howler для шумовых каналов, так как там нужен loop и сложная логика
   setNoise(id, streamUrl) {
     if (!isBrowser) return;
     if (id == null) { this.stopNoise(); return; }
     if (noiseHowl && id === noiseId && streamUrl === noiseStreamUrl) return;
 
-    const oldHowl = noiseHowl;
-    if (oldHowl) {
-      oldHowl.fade(oldHowl.volume(), 0, 4000);
-      setTimeout(() => {
-        try { oldHowl.stop(); oldHowl.unload(); } catch {}
-      }, 4100);
+    if (noiseHowl) {
+      const old = noiseHowl;
+      old.fade(old.volume(), 0, 2000);
+      setTimeout(() => { try { old.stop(); old.unload(); } catch {} }, 2100);
     }
 
     if (!streamUrl) return;
 
-    const isStatic = streamUrl.startsWith("/") || streamUrl.includes(window.location.host);
-
     noiseHowl = new Howl({
       src: [streamUrl],
-      html5: !isStatic,
+      html5: true, // Для стримов это критично
       loop: true,
       volume: 0,
     });
@@ -119,7 +125,7 @@ export const soundEngine: SoundEngine = {
 
     try {
       noiseHowl.play();
-      noiseHowl.fade(0, noiseVolume, 4000);
+      noiseHowl.fade(0, noiseVolume, 3000);
     } catch (e) {
       console.warn("[soundEngine] noise play error:", e);
     }
@@ -129,14 +135,14 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     noiseVolume = clampVolume(volume);
     if (noiseHowl) {
-      noiseHowl.fade(noiseHowl.volume(), noiseVolume, 500);
+      noiseHowl.volume(noiseVolume);
     }
   },
 
   stopNoise() {
     if (!isBrowser || !noiseHowl) return;
     const current = noiseHowl;
-    current.fade(current.volume(), 0, 4000);
+    current.fade(current.volume(), 0, 2000);
     setTimeout(() => {
       if (noiseHowl === current) {
         noiseHowl.stop();
@@ -148,6 +154,6 @@ export const soundEngine: SoundEngine = {
         current.stop();
         current.unload();
       }
-    }, 4100);
+    }, 2100);
   },
 };
