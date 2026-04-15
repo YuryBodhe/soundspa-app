@@ -1,5 +1,3 @@
-import { Howl } from "howler";
-
 type ChannelId = string;
 type NoiseId = string;
 
@@ -13,13 +11,13 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 
-// ОСНОВНОЙ ПОТОК (Azura) - Нативный Audio для стабильности на iOS
+// Состояния основного потока (Azura HLS)
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: ChannelId | null = null;
 let mainStreamUrl: string | null = null;
 
-// ШУМОВЫЕ КАНАЛЫ (Howler - для петель и фейдов)
-let noiseHowl: Howl | null = null;
+// Состояния шумового потока (Azura HLS)
+let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: NoiseId | null = null;
 let noiseStreamUrl: string | null = null;
 let noiseVolume = 0.5;
@@ -34,7 +32,7 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    // Плавный уход предыдущего потока
+    // 1. Плавный уход старого канала
     if (mainAudio) {
       const oldAudio = mainAudio;
       let vol = oldAudio.volume;
@@ -44,11 +42,11 @@ export const soundEngine: SoundEngine = {
           clearInterval(fadeOut);
           oldAudio.pause();
           oldAudio.src = "";
-          oldAudio.load();
+          oldAudio.load(); // Важно для сброса HLS буфера
         } else {
           oldAudio.volume = Math.max(0, vol);
         }
-      }, 50); // Быстрый шаг для плавности
+      }, 50);
     }
 
     if (!streamUrl) return;
@@ -56,35 +54,37 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
+    // 2. Создание нового нативного Audio объекта для HLS
     mainAudio = new Audio(streamUrl);
     mainAudio.crossOrigin = "anonymous";
     mainAudio.preload = "auto";
-    mainAudio.autoplay = true;
+    mainAudio.volume = 1;
 
     try {
-      mainAudio.play().catch(e => console.warn("Azura stream blocked:", e));
+      mainAudio.play().catch(e => console.warn("Main stream play blocked:", e));
     } catch (e) {
-      console.warn("Azura play error:", e);
+      console.warn("Main stream error:", e);
     }
   },
 
   stopChannel() {
     if (!isBrowser || !mainAudio) return;
-    const old = mainAudio;
-    let vol = old.volume;
+    const current = mainAudio;
+    let vol = current.volume;
     const fadeOut = setInterval(() => {
       vol -= 0.05;
       if (vol <= 0) {
         clearInterval(fadeOut);
-        old.pause();
-        old.src = "";
-        if (mainAudio === old) {
+        current.pause();
+        current.src = "";
+        current.load();
+        if (mainAudio === current) {
           mainAudio = null;
           mainChannelId = null;
           mainStreamUrl = null;
         }
       } else {
-        old.volume = Math.max(0, vol);
+        current.volume = Math.max(0, vol);
       }
     }, 50);
   },
@@ -92,62 +92,83 @@ export const soundEngine: SoundEngine = {
   setNoise(id, streamUrl) {
     if (!isBrowser) return;
     if (id == null) { this.stopNoise(); return; }
-    if (noiseHowl && id === noiseId && streamUrl === noiseStreamUrl) return;
+    if (id === noiseId && streamUrl === noiseStreamUrl) return;
 
-    // Плавная смена одного шума на другой
-    if (noiseHowl) {
-      const old = noiseHowl;
-      old.fade(old.volume(), 0, 2000);
-      setTimeout(() => { 
-        try { old.stop(); old.unload(); } catch {} 
-      }, 2100);
+    // 1. Плавный уход старого шума
+    if (noiseAudio) {
+      const oldNoise = noiseAudio;
+      let vol = oldNoise.volume;
+      const fadeOut = setInterval(() => {
+        vol -= 0.05;
+        if (vol <= 0) {
+          clearInterval(fadeOut);
+          oldNoise.pause();
+          oldNoise.src = "";
+          oldNoise.load();
+        } else {
+          oldNoise.volume = Math.max(0, vol);
+        }
+      }, 50);
     }
 
     if (!streamUrl) return;
 
-    noiseHowl = new Howl({
-      src: [streamUrl],
-      html5: true, 
-      loop: true,
-      volume: 0, // Начинаем с тишины для плавного входа
-    });
-
     noiseId = id;
     noiseStreamUrl = streamUrl;
 
+    // 2. Создание нового нативного Audio для шумового HLS-потока
+    noiseAudio = new Audio(streamUrl);
+    noiseAudio.crossOrigin = "anonymous";
+    noiseAudio.preload = "auto";
+    noiseAudio.volume = 0; // Начинаем с тишины для плавного входа
+
     try {
-      noiseHowl.play();
-      // Входим плавно до того уровня, который сейчас на фейдере
-      noiseHowl.fade(0, noiseVolume, 3000);
+      noiseAudio.play().then(() => {
+        // Программный фейд-ин до текущего уровня громкости
+        let vol = 0;
+        const fadeIn = setInterval(() => {
+          vol += 0.02;
+          if (vol >= noiseVolume || !noiseAudio) {
+            clearInterval(fadeIn);
+            if (noiseAudio) noiseAudio.volume = noiseVolume;
+          } else {
+            noiseAudio.volume = vol;
+          }
+        }, 50);
+      }).catch(e => console.warn("Noise stream play blocked:", e));
     } catch (e) {
-      console.warn("Noise play error:", e);
+      console.warn("Noise stream error:", e);
     }
   },
 
   setNoiseVolume(volume) {
     if (!isBrowser) return;
     noiseVolume = clampVolume(volume);
-    if (noiseHowl) {
-      // Мгновенная реакция на движение ползунка
-      noiseHowl.volume(noiseVolume);
+    if (noiseAudio) {
+      // Мгновенная реакция на фейдер
+      noiseAudio.volume = noiseVolume;
     }
   },
 
   stopNoise() {
-    if (!isBrowser || !noiseHowl) return;
-    const current = noiseHowl;
-    current.fade(current.volume(), 0, 2000);
-    setTimeout(() => {
-      if (noiseHowl === current) {
-        current.stop();
-        current.unload();
-        noiseHowl = null;
-        noiseId = null;
-        noiseStreamUrl = null;
+    if (!isBrowser || !noiseAudio) return;
+    const current = noiseAudio;
+    let vol = current.volume;
+    const fadeOut = setInterval(() => {
+      vol -= 0.05;
+      if (vol <= 0) {
+        clearInterval(fadeOut);
+        current.pause();
+        current.src = "";
+        current.load();
+        if (noiseAudio === current) {
+          noiseAudio = null;
+          noiseId = null;
+          noiseStreamUrl = null;
+        }
       } else {
-        current.stop();
-        current.unload();
+        current.volume = Math.max(0, vol);
       }
-    }, 2100);
+    }, 50);
   },
 };
