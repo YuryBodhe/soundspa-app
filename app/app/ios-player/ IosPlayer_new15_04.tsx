@@ -42,7 +42,7 @@ export default function IosPlayer({
   subscriptionWarn = false,
   dailyMessage    = "",
   channels         = [],
-  noiseChannels    = [], 
+  noiseChannels    = [], // Ошибка 2 исправлена здесь
   promoCards       = [],
 }: IosPlayerProps) {
   const tenantChannels = channels;
@@ -61,7 +61,6 @@ export default function IosPlayer({
     [tenantChannels, activeChannelId]
   );
 
-  // ОСТАВЛЯЕМ ТОЛЬКО ОДИН РАЗ ЗДЕСЬ:
   const sortedNoise = useMemo(
     () => [...noiseChannels].sort((a, b) => a.order - b.order),
     [noiseChannels]
@@ -70,7 +69,7 @@ export default function IosPlayer({
   const canvasRef = useWaveCanvas(playing);
 
   // Хендлеры
-    const handleTogglePlay = () => {
+  const handleTogglePlay = () => {
     if (!activeChannel) return;
 
     if (playing) {
@@ -101,7 +100,7 @@ export default function IosPlayer({
     }
   };
 
-   const handleNoiseToggle = (noise: AmbientChannel) => {
+  const handleNoiseToggle = (noise: AmbientChannel) => {
     if (activeNoiseId === noise.id) {
       soundEngine.stopNoise();
       setActiveNoiseId(null);
@@ -128,16 +127,8 @@ export default function IosPlayer({
     }
   };
 
-  const tagClass: Record<string, string> = {
-    promo:   s.tagPromo,
-    update:  s.tagUpdate,
-    tech:    s.tagTech,
-    offline: s.tagOffline,
-  };
-
   return (
     <div className={s.phone}>
-      {/* ── HEADER ── */}
       <header className={s.header}>
         <div>
           <div className={s.salonName}>{salonName}</div>
@@ -151,7 +142,6 @@ export default function IosPlayer({
         </div>
       </header>
 
-      {/* ── PLAYER ZONE ── */}
       <section className={s.playerZone}>
         <div className={s.nowPlayingLabel}>Now playing</div>
         <div className={s.channelName}>{activeChannel?.title}</div>
@@ -161,7 +151,6 @@ export default function IosPlayer({
           className={`${s.yyWrap} ${playing ? s.yyWrapPlaying : ''}`}
           onClick={handleTogglePlay}
           role="button"
-          aria-label={playing ? 'Pause' : 'Play'}
         >
           <div className={s.ambient} />
           <div className={`${s.halo} ${s.h1}`} />
@@ -183,10 +172,7 @@ export default function IosPlayer({
         </div>
 
         <div className={s.waveZone}>
-          <canvas
-            ref={canvasRef}
-            className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ''}`}
-          />
+          <canvas ref={canvasRef} className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ''}`} />
         </div>
 
         <div className={s.statusLine}>
@@ -197,63 +183,37 @@ export default function IosPlayer({
         </div>
       </section>
 
-     {/* ── CAROUSEL: MAIN CHANNELS ── */}
       <section className={s.carouselSection}>
         <div className={s.sectionHeader}>
           <div className={s.sectionLabel}>Channels &amp; Updates</div>
           <div className={s.sectionCount}>{tenantChannels.length} channels</div>
         </div>
-
         <div className={s.carousel}>
           {tenantChannels.map(channel => (
             <div
               key={channel.id}
               className={`${s.chCard} ${activeChannelId === channel.id ? s.chCardActive : ''}`}
               onClick={() => handleSelectChannel(channel)}
-              role="button"
             >
               <div className={s.cardImg}>
-                {/* Используем проверку: если в базе есть channel.image — берем его. 
-                   Если нет — можно подставить заглушку.
-                */}
-                <Image
-                  src={channel.image || '/channel-default.jpg'} 
-                  alt={channel.title}
-                  fill
-                  className={s.cardImgPhoto}
-                  sizes="140px"
-                  priority={activeChannelId === channel.id}
-                />
-                
+                {channel.image && <Image src={channel.image} alt={channel.title} fill className={s.cardImgPhoto} sizes="140px" />}
                 <div className={s.cardImgOverlay} />
-                
-                {/* Индикатор проигрывания */}
                 <div className={`${s.playingIndicator} ${activeChannelId === channel.id && playing ? s.playingIndicatorVisible : ''}`}>
-                  <svg width="8" height="8" viewBox="0 0 8 8">
-                    <rect x="0"   y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
-                    <rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
-                  </svg>
+                   <svg width="8" height="8" viewBox="0 0 8 8"><rect x="0" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/><rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/></svg>
                 </div>
               </div>
-
               <div className={s.cardBody}>
-                <div className={s.cardTitle}>
-                  {channel.title.replace(' Mix', '').replace(' Spa', '')}
-                </div>
-                <div className={s.cardMood}>
-                  {(channel.mood ?? '').split(' · ')[0]}
-                </div>
+                <div className={s.cardTitle}>{channel.title.replace(' Mix', '').replace(' Spa', '')}</div>
+                <div className={s.cardMood}>{(channel.mood ?? '').split(' · ')[0]}</div>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-    {/* ── NOISE / AMBIENT BLOCK ── */}
       <section className={s.noiseSection}>
         <div className={s.sectionHeader}>
           <div className={s.sectionLabel}>Ambient noise</div>
-          {/* Используем sortedNoise для корректного счетчика */}
           <div className={s.sectionCount}>{sortedNoise.length} options</div>
         </div>
 
@@ -264,21 +224,10 @@ export default function IosPlayer({
           </div>
           <div className={s.sliderTrackWrap}>
             <div className={s.sliderTrackBg} />
-            <div
-              className={s.sliderTrackFill}
-              style={{ width: `${Math.round(targetNoiseVol * 100)}%` }}
-            />
-            <div
-              className={s.sliderThumb}
-              style={{ left: `${Math.round(targetNoiseVol * 100)}%` }}
-            >
-              <div className={s.thumbDot} />
-            </div>
+            <div className={s.sliderTrackFill} style={{ width: `${Math.round(targetNoiseVol * 100)}%` }} />
+            <div className={s.sliderThumb} style={{ left: `${Math.round(targetNoiseVol * 100)}%` }}><div className={s.thumbDot} /></div>
             <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
+              type="range" min={0} max={100} step={1}
               value={Math.round(targetNoiseVol * 100)}
               onChange={(e) => handleNoiseVolumeChange(Number(e.target.value))}
               className={s.noiseRange}
@@ -287,40 +236,21 @@ export default function IosPlayer({
         </div>
 
         <div className={s.noiseCarousel}>
-          {/* 1. Теперь итерируемся по sortedNoise */}
           {sortedNoise.map((noise) => {
             const isActive = activeNoiseId === noise.id;
-
             return (
               <div
                 key={noise.id}
                 className={`${s.chCard} ${s.noiseCard} ${isActive ? s.noiseCardActive : ''}`}
                 onClick={() => handleNoiseToggle(noise)}
-                role="button"
               >
                 <div className={s.cardImg}>
-                  {/* 2. Логика Fallback для картинок из public */}
-                  <Image
-                    src={noise.image || `/noise-${noise.slug}.jpg`}
-                    alt={noise.title}
-                    fill
-                    className={s.cardImgPhoto}
-                    sizes="140px"
-                    /* Если картинки нет ни в базе, ни в папке, не ломаем UI */
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.opacity = '0';
-                    }}
-                  />
-                  
+                  {noise.image && <Image src={noise.image} alt={noise.title} fill className={s.cardImgPhoto} sizes="140px" />}
                   <div className={s.cardImgOverlay} />
                   <div className={`${s.playingIndicator} ${isActive ? s.playingIndicatorVisible : ''}`}>
-                    <svg width="8" height="8" viewBox="0 0 8 8">
-                      <rect x="0"   y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
-                      <rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/>
-                    </svg>
+                    <svg width="8" height="8" viewBox="0 0 8 8"><rect x="0" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/><rect x="5.5" y="0" width="2.5" height="8" rx="0.5" fill="rgba(155,185,215,0.8)"/></svg>
                   </div>
                 </div>
-
                 <div className={s.cardBody}>
                   <div className={s.cardTitle}>{noise.title}</div>
                   <div className={s.cardMood}>Ambient noise</div>
@@ -333,9 +263,7 @@ export default function IosPlayer({
 
       <div className={s.subBlock}>
         <div>
-          <div className={s.subStatusLabel}>
-            {subscriptionWarn ? 'Subscription expires soon' : 'Subscription active'}
-          </div>
+          <div className={s.subStatusLabel}>{subscriptionWarn ? 'Subscription expires soon' : 'Subscription active'}</div>
           <div className={s.subDate}>{subscriptionDate}</div>
         </div>
         <button className={s.subCta}>Renew</button>
@@ -343,4 +271,3 @@ export default function IosPlayer({
     </div>
   );
 }
-

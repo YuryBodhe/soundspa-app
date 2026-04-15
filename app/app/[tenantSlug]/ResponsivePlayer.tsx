@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import IosPlayer from "../ios-player/IosPlayer";
 import DesktopPlayer from "../ios-player/DesktopPlayer";
 
-import type { Channel, PromoCard } from "../ios-player/channels";
+// Добавляем импорт типа AmbientChannel
+import type { Channel, AmbientChannel, PromoCard } from "../ios-player/channels";
 
 interface Props {
   tenantSlug: string;
   salonName: string;
   channels: Channel[];
+  noiseChannels: AmbientChannel[]; // <-- Добавили прием шумовых каналов из БД
   promoCards: PromoCard[];
   subscriptionDate?: string;
   subscriptionWarn?: boolean;
@@ -40,6 +42,8 @@ export function ResponsivePlayer(props: Props) {
     return null;
   }
 
+  // Деструктуризация пропсов (spread ...props) автоматически передаст 
+  // noiseChannels и в DesktopPlayer, и в IosPlayer.
   if (isDesktop) {
     return <DesktopPlayer {...props} />;
   }

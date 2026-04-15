@@ -1,7 +1,7 @@
 // /app/[tenantSlug]/page.tsx — персональный URL кабинета салона
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { getChannelsForTenant, PROMO_CARDS } from "../ios-player/channels";
+import { getChannelsForTenant, getNoiseChannelsForTenant, PROMO_CARDS } from "../ios-player/channels";
 import { db } from "@/lib/db.pg";
 import { eq } from "drizzle-orm";
 import { tenants } from "@/db";
@@ -47,8 +47,10 @@ export default async function TenantPlayerPage({
     redirect(`/app/${session.tenantSlug}`);
   }
 
-  const [channels, tenant] = await Promise.all([
+  // Получаем основные каналы, шумовые каналы и данные тенанта параллельно
+  const [channels, noiseChannels, tenant] = await Promise.all([
     getChannelsForTenant(tenantSlug),
+    getNoiseChannelsForTenant(tenantSlug),
     db.query.tenants.findFirst({ where: eq(tenants.slug, tenantSlug) }),
   ]);
 
@@ -61,11 +63,9 @@ export default async function TenantPlayerPage({
 
   let status: "trial" | "active" | "expired" = "expired";
 
-  // ПРИОРИТЕТ 1: Оплата
   if (paidTillDate) {
     status = paidTillDate > now ? "active" : "expired";
   } 
-  // ПРИОРИТЕТ 2: Триал (если никогда не платили)
   else if (trialEndsDate && trialEndsDate > now) {
     status = "trial";
   }
@@ -146,6 +146,7 @@ export default async function TenantPlayerPage({
         tenantSlug={tenantSlug}
         salonName={salonName}
         channels={channels}
+        noiseChannels={noiseChannels}
         promoCards={PROMO_CARDS}
         subscriptionDate={subscriptionDate}
         subscriptionWarn={!!subscriptionWarn}

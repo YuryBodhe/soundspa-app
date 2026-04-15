@@ -14,18 +14,19 @@ export interface Channel {
   title: string;
   mood: string | null;
   streamUrl: string;
-  image: string | null;
+  image?: string | null;
   order: number;
   isNew?: boolean;
 }
 
 export interface AmbientChannel {
   id: string;
-  slug: string;
+  slug: string;      
   title: string;
-  streamUrl: string;
+  streamUrl: string; 
   order: number;
   enabled: boolean;
+  image?: string | null; 
 }
 
 export interface PromoCard {
@@ -92,13 +93,14 @@ export async function getNoiseChannelsForTenant(tenantSlug: string): Promise<Amb
   });
 
   return noiseChannels.map(ch => ({
-    id:        ch.id.toString(),
-    slug:      ch.slug,
-    title:     ch.displayName,
-    streamUrl: ch.streamUrl, // Здесь должна быть ссылка .m3u8 из Азуры
-    order:     ch.order,
-    enabled:   true
-  }));
+  id:        ch.id.toString(),
+  slug:      ch.slug,        // Передаем slug из базы
+  title:     ch.displayName,
+  streamUrl: ch.streamUrl,
+  order:     ch.order,
+  enabled:   true,
+  image:     ch.image        // Передаем image из базы
+}));
 }
 
 // ── ПРОМО-КАРТОЧКИ ───────────────────────────
