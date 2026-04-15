@@ -6,8 +6,12 @@
 import Image from 'next/image';
 import { useMemo, useState } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
-import { Channel, PromoCard, TenantSlug } from './channels';
-import { NOISE_CHANNELS, NoiseChannelConfig } from './noiseConfig';
+import { 
+  Channel, 
+  AmbientChannel, // Используем актуальный тип
+  PromoCard, 
+  TenantSlug 
+} from './channels';
 import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
 
@@ -18,6 +22,7 @@ interface DesktopPlayerProps {
   subscriptionWarn?: boolean;
   dailyMessage?:    string;
   channels:          Channel[];
+  noiseChannels:     AmbientChannel[]; // Обновлено здесь
   promoCards?:       PromoCard[];
 }
 
@@ -28,11 +33,14 @@ export default function DesktopPlayer({
   subscriptionWarn = false,
   dailyMessage    = '',
   channels         = [],
+  noiseChannels    = [], // Приходит пустой массив по умолчанию
   promoCards       = [],
 }: DesktopPlayerProps) {
-  const noiseChannels: NoiseChannelConfig[] = useMemo(
-    () => [...NOISE_CHANNELS].sort((a, b) => a.order - b.order),
-    []
+  
+  // Сортируем шумы из базы
+  const sortedNoise = useMemo(
+    () => [...noiseChannels].sort((a, b) => a.order - b.order),
+    [noiseChannels]
   );
 
   const showDailyMessage = Boolean(dailyMessage && dailyMessage.trim().length > 0);
@@ -43,7 +51,10 @@ export default function DesktopPlayer({
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
   const [noiseVolume,     setNoiseVolume]     = useState(0.4);
 
-  const activeChannel = channels.find(c => c.id === activeChannelId) ?? channels[0];
+  const activeChannel = useMemo(() => 
+    channels.find(c => c.id === activeChannelId) ?? channels[0],
+    [channels, activeChannelId]
+  );
 
   const canvasRef = useWaveCanvas(playing);
 
@@ -79,14 +90,15 @@ export default function DesktopPlayer({
     }
   };
 
-  const handleNoiseToggle = (noise: NoiseChannelConfig) => {
+  const handleNoiseToggle = (noise: AmbientChannel) => {
     if (activeNoiseId === noise.id) {
       soundEngine.stopNoise();
       setActiveNoiseId(null);
       return;
     }
 
-    soundEngine.setNoise(noise.id, noise.src);
+    // Теперь берем streamUrl из БД
+    soundEngine.setNoise(noise.id, noise.streamUrl);
     soundEngine.setNoiseVolume(noiseVolume);
     setActiveNoiseId(noise.id);
   };
@@ -103,12 +115,9 @@ export default function DesktopPlayer({
     finally { window.location.href = '/login'; }
   };
 
-  const tagClass: Record<string, string> = {
-    promo: s.tagPromo, update: s.tagUpdate, tech: s.tagTech, offline: s.tagOffline,
-  };
-
   return (
     <div className={s.desktopShell}>
+      {/* ── HEADER ── */}
       <header className={s.desktopHeader}>
         <div>
           <div className={s.salonName}>{salonName}</div>
@@ -123,6 +132,7 @@ export default function DesktopPlayer({
       </header>
 
       <main className={s.desktopMain}>
+        {/* ── PLAYER ZONE ── */}
         <section className={s.playerZone} style={{ alignItems: 'center' }}>
           <div className={s.nowPlayingLabel}>Now playing</div>
           <div className={s.channelName}>{activeChannel?.title}</div>
@@ -132,7 +142,6 @@ export default function DesktopPlayer({
             className={`${s.yyWrap} ${s.yyWrapDesktop} ${playing ? s.yyWrapPlaying : ''}`}
             onClick={handleTogglePlay}
             role="button"
-            aria-label={playing ? 'Pause' : 'Play'}
           >
             <div className={s.ambient} />
             <div className={`${s.halo} ${s.h1}`} />
@@ -154,10 +163,7 @@ export default function DesktopPlayer({
           </div>
 
           <div className={s.waveZone} style={{ maxWidth: 360, marginTop: 28 }}>
-            <canvas
-              ref={canvasRef}
-              className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ''}`}
-            />
+            <canvas ref={canvasRef} className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ''}`} />
           </div>
 
           <div className={s.statusLine} style={{ marginTop: 14 }}>
@@ -168,6 +174,7 @@ export default function DesktopPlayer({
           </div>
         </section>
 
+        {/* ── CHANNELS ── */}
         <section className={s.desktopSection} style={{ marginTop: 32 }}>
           <div className={s.sectionHeader} style={{ padding: '0 0 12px' }}>
             <div className={s.sectionLabel}>Channels &amp; Updates</div>
@@ -180,18 +187,15 @@ export default function DesktopPlayer({
                 className={`${s.chCard} ${s.chCardDesktop} ${activeChannelId === channel.id ? s.chCardActive : ''}`}
                 onClick={() => handleSelectChannel(channel)}
                 role="button"
-                aria-label={`Play ${channel.title}`}
               >
                 <div className={s.cardImg} style={{ height: 120 }}>
-                  {channel.image && (
-                    <Image
-                      src={channel.image}
-                      alt={channel.title}
-                      fill
-                      className={s.cardImgPhoto}
-                      sizes="180px"
-                    />
-                  )}
+                  <Image
+                    src={channel.image || '/channel-default.jpg'}
+                    alt={channel.title}
+                    fill
+                    className={s.cardImgPhoto}
+                    sizes="180px"
+                  />
                   <div className={s.cardImgOverlay} />
                   {channel.isNew && <div className={s.cardBadge}>New</div>}
                   <div className={`${s.playingIndicator} ${activeChannelId === channel.id && playing ? s.playingIndicatorVisible : ''}`}>
@@ -210,10 +214,11 @@ export default function DesktopPlayer({
           </div>
         </section>
 
+        {/* ── NOISE ── */}
         <section className={s.desktopSection} style={{ marginTop: 32, marginBottom: 32 }}>
           <div className={s.sectionHeader} style={{ padding: '0 0 12px' }}>
             <div className={s.sectionLabel}>Ambient noise</div>
-            <div className={s.sectionCount}>{noiseChannels.length} options</div>
+            <div className={s.sectionCount}>{sortedNoise.length} options</div>
           </div>
 
           <div className={s.noiseSliderWrap} style={{ padding: '0 0 16px' }}>
@@ -240,7 +245,7 @@ export default function DesktopPlayer({
           </div>
 
           <div className={s.desktopNoiseRow}>
-            {noiseChannels.map((noise) => {
+            {sortedNoise.map((noise) => {
               const isActive = activeNoiseId === noise.id;
 
               return (
@@ -249,18 +254,16 @@ export default function DesktopPlayer({
                   className={`${s.chCard} ${s.noiseCard} ${s.noiseCardDesktop} ${isActive ? s.noiseCardActive : ''}`}
                   onClick={() => handleNoiseToggle(noise)}
                   role="button"
-                  aria-label={`Toggle ${noise.title}`}
                 >
                   <div className={s.cardImg} style={{ height: 120 }}>
-                    {noise.image && (
-                      <Image
-                        src={noise.image}
-                        alt={noise.title}
-                        fill
-                        className={s.cardImgPhoto}
-                        sizes="180px"
-                      />
-                    )}
+                    <Image
+                      src={noise.image || `/noise-${noise.slug}.jpg`}
+                      alt={noise.title}
+                      fill
+                      className={s.cardImgPhoto}
+                      sizes="180px"
+                      onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
+                    />
                     <div className={s.cardImgOverlay} />
                     <div className={`${s.playingIndicator} ${isActive ? s.playingIndicatorVisible : ''}`}>
                       <svg width="8" height="8" viewBox="0 0 8 8">
