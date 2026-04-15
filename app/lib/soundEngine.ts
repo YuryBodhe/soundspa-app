@@ -1,3 +1,5 @@
+import { Howl } from "howler";
+
 type ChannelId = string;
 type NoiseId = string;
 
@@ -11,13 +13,12 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 
-// ОСНОВНОЙ ПОТОК (Azura) - используем нативный Audio
+// ОСНОВНОЙ ПОТОК (Azura) - Нативный Audio для стабильности на iOS
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: ChannelId | null = null;
 let mainStreamUrl: string | null = null;
 
-// ШУМОВЫЕ КАНАЛЫ (Howler - для петель подходит отлично)
-import { Howl } from "howler";
+// ШУМОВЫЕ КАНАЛЫ (Howler - для петель и фейдов)
 let noiseHowl: Howl | null = null;
 let noiseId: NoiseId | null = null;
 let noiseStreamUrl: string | null = null;
@@ -33,22 +34,21 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    // 1. Плавный уход старого канала через нативный метод (если был)
+    // Плавный уход предыдущего потока
     if (mainAudio) {
       const oldAudio = mainAudio;
-      // Плавное затухание вручную для нативного Audio
-      let vol = 1;
+      let vol = oldAudio.volume;
       const fadeOut = setInterval(() => {
-        vol -= 0.1;
+        vol -= 0.05;
         if (vol <= 0) {
           clearInterval(fadeOut);
           oldAudio.pause();
           oldAudio.src = "";
           oldAudio.load();
         } else {
-          oldAudio.volume = vol;
+          oldAudio.volume = Math.max(0, vol);
         }
-      }, 200);
+      }, 50); // Быстрый шаг для плавности
     }
 
     if (!streamUrl) return;
@@ -56,68 +56,60 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
-    // 2. Создаем нативный аудио-объект
     mainAudio = new Audio(streamUrl);
-    mainAudio.preload = "none"; // Чтобы не жрать трафик до старта
     mainAudio.crossOrigin = "anonymous";
-    
-    // Включаем нативную поддержку фонового воспроизведения для iOS
+    mainAudio.preload = "auto";
     mainAudio.autoplay = true;
 
     try {
-      const playPromise = mainAudio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(error => {
-          console.warn("Autoplay blocked or stream error:", error);
-        });
-      }
+      mainAudio.play().catch(e => console.warn("Azura stream blocked:", e));
     } catch (e) {
-      console.warn("Play error", e);
+      console.warn("Azura play error:", e);
     }
   },
 
   stopChannel() {
     if (!isBrowser || !mainAudio) return;
-    
-    let vol = mainAudio.volume;
+    const old = mainAudio;
+    let vol = old.volume;
     const fadeOut = setInterval(() => {
-      if (!mainAudio) {
-        clearInterval(fadeOut);
-        return;
-      }
-      vol -= 0.1;
+      vol -= 0.05;
       if (vol <= 0) {
         clearInterval(fadeOut);
-        mainAudio.pause();
-        mainAudio.src = "";
-        mainAudio = null;
-        mainChannelId = null;
-        mainStreamUrl = null;
+        old.pause();
+        old.src = "";
+        if (mainAudio === old) {
+          mainAudio = null;
+          mainChannelId = null;
+          mainStreamUrl = null;
+        }
       } else {
-        mainAudio.volume = vol;
+        old.volume = Math.max(0, vol);
       }
-    }, 100);
+    }, 50);
   },
 
-  // Оставляем Howler для шумовых каналов, так как там нужен loop и сложная логика
   setNoise(id, streamUrl) {
     if (!isBrowser) return;
     if (id == null) { this.stopNoise(); return; }
     if (noiseHowl && id === noiseId && streamUrl === noiseStreamUrl) return;
 
+    // Плавная смена одного шума на другой
     if (noiseHowl) {
       const old = noiseHowl;
       old.fade(old.volume(), 0, 2000);
-      setTimeout(() => { try { old.stop(); old.unload(); } catch {} }, 2100);
+      setTimeout(() => { 
+        try { old.stop(); old.unload(); } catch {} 
+      }, 2100);
     }
 
     if (!streamUrl) return;
 
     noiseHowl = new Howl({
       src: [streamUrl],
-      html5: true, // Для стримов это критично
+      html5: true, 
       loop: true,
-      volume: 0,
+      volume: 0, // Начинаем с тишины для плавного входа
     });
 
     noiseId = id;
@@ -125,9 +117,10 @@ export const soundEngine: SoundEngine = {
 
     try {
       noiseHowl.play();
+      // Входим плавно до того уровня, который сейчас на фейдере
       noiseHowl.fade(0, noiseVolume, 3000);
     } catch (e) {
-      console.warn("[soundEngine] noise play error:", e);
+      console.warn("Noise play error:", e);
     }
   },
 
@@ -135,6 +128,7 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     noiseVolume = clampVolume(volume);
     if (noiseHowl) {
+      // Мгновенная реакция на движение ползунка
       noiseHowl.volume(noiseVolume);
     }
   },
@@ -145,8 +139,8 @@ export const soundEngine: SoundEngine = {
     current.fade(current.volume(), 0, 2000);
     setTimeout(() => {
       if (noiseHowl === current) {
-        noiseHowl.stop();
-        noiseHowl.unload();
+        current.stop();
+        current.unload();
         noiseHowl = null;
         noiseId = null;
         noiseStreamUrl = null;
