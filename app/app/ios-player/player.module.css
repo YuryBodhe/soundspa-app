@@ -446,22 +446,15 @@
 
 .noiseCarousel {
   display: flex;
+  flex-wrap: nowrap;     /* ОБЯЗАТЕЛЬНО: запрещает падать во второй ряд */
   gap: 10px;
   padding: 0 22px 8px;
-  overflow-x: auto;
+  overflow-x: auto;      /* Включает прокрутку */
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
 
-.noiseCarousel::-webkit-scrollbar { display: none; }
-
-.noiseCard {
-  /* используем базовый вид .chCard через JSX; здесь можно добавить тюнинг при необходимости */
-}
-
-.noiseCardActive {
-  /* дополнительный акцент для активного шума, если нужно */
-}
+.desktopNoiseRow::-webkit-scrollbar { display: none; }
 
 .noisePlayButton {
   position: absolute;
@@ -743,8 +736,8 @@
 }
 
 /* ── CHANNEL CARDS ROW ───────────────────────
-   Flex-wrap: карточки переносятся на новую строку
-   если не влезают, а не уходят в горизонтальный скролл */
+   Flex-wrap: карточки не переносятся на новую строку
+   если не влезают, а уходят в горизонтальный скролл */
 .desktopCardsRow {
   display: flex;
   flex-wrap: nowrap; /* Оставляем запрет переноса */
@@ -784,7 +777,7 @@
 /* Десктопная noise-карточка — чуть шире */
 .noiseCardDesktop {
   width: 160px;
-  flex-shrink: 0; /* <--- ДОБАВЬ ЭТУ СТРОКУ! */
+  flex-shrink: 0; 
 }
 
 /* ── YY BUTTON — DESKTOP SIZE (240px) ────────*/

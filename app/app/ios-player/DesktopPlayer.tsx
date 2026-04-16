@@ -249,17 +249,18 @@ export default function DesktopPlayer({
             </div>
           </div>
 
-          <div className={s.noiseCarousel}>
+          <div className={s.desktopNoiseRow} style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto' }}>
             {sortedNoise.map((noise) => {
-              const isActive = activeNoiseId === noise.id;
+  const isActive = activeNoiseId === noise.id;
 
-              return (
-                <div
-                  key={noise.id}
-                  className={`${s.chCard} ${s.noiseCard} ${s.noiseCardDesktop} ${isActive ? s.noiseCardActive : ''}`}
-                  onClick={() => handleNoiseToggle(noise)}
-                  role="button"
-                >
+  return (
+    <div
+      key={noise.id}
+      className={`${s.chCard} ${s.noiseCardDesktop} ${isActive ? s.noiseCardActive : ''}`}
+      style={{ flexShrink: 0 }} // ВОТ ЭТО ЗАПРЕТИТ ИМ ПАДАТЬ ВНИЗ
+      onClick={() => handleNoiseToggle(noise)}
+      role="button"
+    >
                   <div className={s.cardImg} style={{ height: 120 }}>
                     <img
   src={noise.image || `/noise-${noise.slug}.jpg`}
