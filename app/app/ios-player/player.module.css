@@ -747,18 +747,20 @@
    если не влезают, а не уходят в горизонтальный скролл */
 .desktopCardsRow {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: nowrap; /* Оставляем запрет переноса */
   gap: 16px;
   overflow-x: auto;
-  scroll-snap-type: x mandatory;
+  scrollbar-width: none; /* Прячем полосу прокрутки */
   justify-content: flex-start;
   padding: 4px 8px 16px;
   -webkit-overflow-scrolling: touch;
 }
+.desktopCardsRow::-webkit-scrollbar { display: none; } /* Скрываем скролл в Chrome */
 
 /* Десктопная карточка канала — чуть шире */
 .chCardDesktop {
-  width: 160px; /* same as channel cards */
+  width: 160px;
+  flex-shrink: 0; /* ДОБАВЬ ЭТО: теперь они не станут узкими! */
 }
 
 /* Десктопная promo-карточка */
@@ -770,14 +772,19 @@
 /* ── NOISE CARDS ROW ─────────────────────────*/
 .desktopNoiseRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* ЗАПРЕЩАЕМ ВТОРОЙ РЯД */
   gap: 16px;
-  justify-content: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 8px 16px;
+  -webkit-overflow-scrolling: touch;
 }
+.desktopNoiseRow::-webkit-scrollbar { display: none; }
 
 /* Десктопная noise-карточка — чуть шире */
 .noiseCardDesktop {
-  width: 160px; /* same as channel cards */
+  width: 160px;
+  flex-shrink: 0; /* <--- ДОБАВЬ ЭТУ СТРОКУ! */
 }
 
 /* ── YY BUTTON — DESKTOP SIZE (240px) ────────*/
