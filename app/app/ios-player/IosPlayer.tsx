@@ -216,14 +216,18 @@ export default function IosPlayer({
                 {/* Используем проверку: если в базе есть channel.image — берем его. 
                    Если нет — можно подставить заглушку.
                 */}
-                <Image
-                  src={channel.image || '/channel-default.jpg'} 
-                  alt={channel.title}
-                  fill
-                  className={s.cardImgPhoto}
-                  sizes="140px"
-                  priority={activeChannelId === channel.id}
-                />
+                <img
+  src={channel.image || '/channel-default.jpg'} 
+  alt={channel.title}
+  className={s.cardImgPhoto}
+  style={{ 
+    position: 'absolute', 
+    height: '100%', 
+    width: '100%', 
+    inset: 0, 
+    objectFit: 'cover' 
+  }}
+/>
                 
                 <div className={s.cardImgOverlay} />
                 
@@ -300,17 +304,21 @@ export default function IosPlayer({
               >
                 <div className={s.cardImg}>
                   {/* 2. Логика Fallback для картинок из public */}
-                  <Image
-                    src={noise.image || `/noise-${noise.slug}.jpg`}
-                    alt={noise.title}
-                    fill
-                    className={s.cardImgPhoto}
-                    sizes="140px"
-                    /* Если картинки нет ни в базе, ни в папке, не ломаем UI */
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.opacity = '0';
-                    }}
-                  />
+                  <img
+  src={noise.image || `/noise-${noise.slug}.jpg`}
+  alt={noise.title}
+  className={s.cardImgPhoto}
+  style={{ 
+    position: 'absolute', 
+    height: '100%', 
+    width: '100%', 
+    inset: 0, 
+    objectFit: 'cover' 
+  }}
+  onError={(e) => {
+    (e.target as HTMLImageElement).style.opacity = '0';
+  }}
+/>
                   
                   <div className={s.cardImgOverlay} />
                   <div className={`${s.playingIndicator} ${isActive ? s.playingIndicatorVisible : ''}`}>

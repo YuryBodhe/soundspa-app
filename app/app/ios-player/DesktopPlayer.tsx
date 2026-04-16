@@ -189,13 +189,18 @@ export default function DesktopPlayer({
                 role="button"
               >
                 <div className={s.cardImg} style={{ height: 120 }}>
-                  <Image
-                    src={channel.image || '/channel-default.jpg'}
-                    alt={channel.title}
-                    fill
-                    className={s.cardImgPhoto}
-                    sizes="180px"
-                  />
+                  <img
+  src={channel.image || '/channel-default.jpg'}
+  alt={channel.title}
+  className={s.cardImgPhoto}
+  style={{ 
+    position: 'absolute', 
+    height: '100%', 
+    width: '100%', 
+    inset: 0, 
+    objectFit: 'cover' 
+  }}
+/>
                   <div className={s.cardImgOverlay} />
                   {channel.isNew && <div className={s.cardBadge}>New</div>}
                   <div className={`${s.playingIndicator} ${activeChannelId === channel.id && playing ? s.playingIndicatorVisible : ''}`}>
@@ -256,14 +261,22 @@ export default function DesktopPlayer({
                   role="button"
                 >
                   <div className={s.cardImg} style={{ height: 120 }}>
-                    <Image
-                      src={noise.image || `/noise-${noise.slug}.jpg`}
-                      alt={noise.title}
-                      fill
-                      className={s.cardImgPhoto}
-                      sizes="180px"
-                      onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
-                    />
+                    <img
+  src={noise.image || `/noise-${noise.slug}.jpg`}
+  alt={noise.title}
+  className={s.cardImgPhoto}
+  /* Чтобы картинка вела себя так же, как при 'fill', добавим инлайн-стили */
+  style={{ 
+    position: 'absolute', 
+    height: '100%', 
+    width: '100%', 
+    left: 0, 
+    top: 0, 
+    right: 0, 
+    bottom: 0, 
+    objectFit: 'cover' 
+  }}
+/>
                     <div className={s.cardImgOverlay} />
                     <div className={`${s.playingIndicator} ${isActive ? s.playingIndicatorVisible : ''}`}>
                       <svg width="8" height="8" viewBox="0 0 8 8">

@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Sound Spa — Cabinet",
-  description: "Sound Spa music service for salons and spas.",
+  description: "Sound Spa music service for premium spa.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
