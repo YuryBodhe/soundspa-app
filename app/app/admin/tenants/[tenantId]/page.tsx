@@ -47,6 +47,7 @@ export default async function TenantDetailPage({
       streamUrl:   channels.streamUrl,
       image:       channels.image,
       isNew:       channels.isNew,
+      kind:        channels.kind,    // <--- ДОБАВИЛИ ЭТО
       tcOrder:     tenantChannels.order,
     })
     .from(tenantChannels)
@@ -166,7 +167,7 @@ export default async function TenantDetailPage({
                 <th>Slug</th>
                 <th>Stream URL</th>
                 <th>Order</th>
-                <th>New</th>
+                <th>Type</th>
                 <th></th>
               </tr>
             </thead>
@@ -180,6 +181,22 @@ export default async function TenantDetailPage({
                       {row.streamUrl.replace("https://", "").slice(0, 40)}…
                     </span>
                   </td>
+                  <td style={{ textAlign: 'center' }}>
+      <span 
+        style={{ 
+          fontSize: '10px', 
+          padding: '2px 6px', 
+          borderRadius: '4px',
+          background: row.kind === 'noise' ? 'rgba(195,168,108,0.2)' : 'rgba(255,255,255,0.05)',
+          color: row.kind === 'noise' ? '#C3A86C' : '#888',
+          border: '1px solid rgba(255,255,255,0.1)',
+          textTransform: 'uppercase',
+          fontWeight: 'bold'
+        }}
+      >
+        {row.kind ?? 'music'}
+      </span>
+    </td>
                   <td style={{ width: 80 }}>
                     <form
                       action={async (formData: FormData) => {
