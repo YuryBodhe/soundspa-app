@@ -249,7 +249,7 @@ export default function DesktopPlayer({
             </div>
           </div>
 
-          <div className={s.desktopNoiseRow}>
+          <div className={s.noiseCarousel}>
             {sortedNoise.map((noise) => {
               const isActive = activeNoiseId === noise.id;
 
