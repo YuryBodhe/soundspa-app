@@ -54,6 +54,8 @@ export default async function TenantDetailPage({
     .innerJoin(channels, eq(tenantChannels.channelId, channels.id))
     .where(eq(tenantChannels.tenantId, id))
     .orderBy(tenantChannels.order);
+    const musicRows = linkedRows.filter(r => r.kind !== "noise");
+    const noiseRows = linkedRows.filter(r => r.kind === "noise");
 
   // Каналы НЕ подключённые к этому тенанту (для формы добавления)
   const linkedIds = linkedRows.map(r => r.channelId);
@@ -153,93 +155,46 @@ export default async function TenantDetailPage({
         </form>
       </div>
 
-      {/* ── Channels ── */}
+      {/* ── Channels (Music & Noises) ── */}
       <div className="admin-card">
-        <div className="admin-card-title">Channels for this tenant</div>
-
-        {linkedRows.length === 0 ? (
-          <p className="text-dim">No channels linked yet.</p>
+        
+        {/* ТАБЛИЦА 1: МУЗЫКА */}
+        <div className="admin-card-title">Music Channels (Top Row)</div>
+        {musicRows.length === 0 ? (
+          <p className="text-dim">No music channels linked yet.</p>
         ) : (
-          <table className="admin-table" style={{ marginBottom: 16 }}>
+          <table className="admin-table" style={{ marginBottom: 32 }}>
             <thead>
               <tr>
                 <th>Channel</th>
                 <th>Slug</th>
-                <th>Stream URL</th>
                 <th>Order</th>
-                <th>Type</th>
+                <th>New</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {linkedRows.map(row => (
+              {musicRows.map(row => (
                 <tr key={row.channelId}>
                   <td>{row.displayName}</td>
                   <td><span className="text-dim">{row.slug}</span></td>
-                  <td>
-                    <span className="text-dim" style={{ fontSize: 12 }}>
-                      {row.streamUrl.replace("https://", "").slice(0, 40)}…
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'center' }}>
-      <span 
-        style={{ 
-          fontSize: '10px', 
-          padding: '2px 6px', 
-          borderRadius: '4px',
-          background: row.kind === 'noise' ? 'rgba(195,168,108,0.2)' : 'rgba(255,255,255,0.05)',
-          color: row.kind === 'noise' ? '#C3A86C' : '#888',
-          border: '1px solid rgba(255,255,255,0.1)',
-          textTransform: 'uppercase',
-          fontWeight: 'bold'
-        }}
-      >
-        {row.kind ?? 'music'}
-      </span>
-    </td>
-                  <td style={{ width: 80 }}>
-                    <form
-                      action={async (formData: FormData) => {
-                        "use server";
-                        await updateTenantChannel(id, row.channelId, {
-                          order: parseInt(formData.get("order") as string, 10),
-                          isNew: formData.get("isNew") === "on",
-                        });
-                      }}
-                    >
-                      <input
-                        name="order"
-                        type="number"
-                        defaultValue={row.tcOrder}
-                        style={{ width: 56 }}
-                      />
-                      <input
-                        name="isNew"
-                        type="checkbox"
-                        defaultChecked={row.isNew}
-                        style={{ marginLeft: 8 }}
-                        title="Mark as New"
-                      />
-                      <button
-                        type="submit"
-                        className="btn btn-sm"
-                        style={{ marginLeft: 8 }}
-                      >
-                        ✓
-                      </button>
+                  <td style={{ width: 120 }}>
+                    <form action={async (formData: FormData) => {
+                      "use server";
+                      await updateTenantChannel(id, row.channelId, {
+                        order: parseInt(formData.get("order") as string, 10),
+                        isNew: formData.get("isNew") === "on",
+                      });
+                    }}>
+                      <input name="order" type="number" defaultValue={row.tcOrder} style={{ width: 45 }} />
+                      <input name="isNew" type="checkbox" defaultChecked={row.isNew} style={{ marginLeft: 8 }} />
+                      <button type="submit" className="btn btn-sm" style={{ marginLeft: 8 }}>✓</button>
                     </form>
                   </td>
                   <td></td>
                   <td>
-                    <form
-                      action={async () => {
-                        "use server";
-                        await removeChannelFromTenant(id, row.channelId);
-                      }}
-                    >
-                      <button type="submit" className="btn btn-sm btn-danger">
-                        Remove
-                      </button>
+                    <form action={async () => { "use server"; await removeChannelFromTenant(id, row.channelId); }}>
+                      <button type="submit" className="btn btn-sm btn-danger">Remove</button>
                     </form>
                   </td>
                 </tr>
@@ -248,12 +203,54 @@ export default async function TenantDetailPage({
           </table>
         )}
 
-        {/* Add channel */}
+        {/* ТАБЛИЦА 2: ШУМЫ */}
+        <div className="admin-card-title" style={{ color: "#C3A86C", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 24 }}>
+          Ambient Noises (Bottom Slider)
+        </div>
+        {noiseRows.length === 0 ? (
+          <p className="text-dim">No ambient noises linked yet.</p>
+        ) : (
+          <table className="admin-table" style={{ marginBottom: 16 }}>
+            <thead>
+              <tr>
+                <th>Noise Name</th>
+                <th>Slug</th>
+                <th>Order</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {noiseRows.map(row => (
+                <tr key={row.channelId}>
+                  <td>{row.displayName}</td>
+                  <td><span className="text-dim">{row.slug}</span></td>
+                  <td style={{ width: 80 }}>
+                    <form action={async (formData: FormData) => {
+                      "use server";
+                      await updateTenantChannel(id, row.channelId, {
+                        order: parseInt(formData.get("order") as string, 10),
+                        isNew: false,
+                      });
+                    }}>
+                      <input name="order" type="number" defaultValue={row.tcOrder} style={{ width: 45 }} />
+                      <button type="submit" className="btn btn-sm" style={{ marginLeft: 8 }}>✓</button>
+                    </form>
+                  </td>
+                  <td>
+                    <form action={async () => { "use server"; await removeChannelFromTenant(id, row.channelId); }}>
+                      <button type="submit" className="btn btn-sm btn-danger">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* ДОБАВЛЕНИЕ КАНАЛА */}
         {availableChannels.length > 0 && (
-          <>
-            <div className="admin-card-title" style={{ marginTop: 16 }}>
-              Add channel
-            </div>
+          <div style={{ marginTop: 32, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 24 }}>
+            <div className="admin-card-title">Add channel</div>
             <form
               className="admin-form"
               action={async (formData: FormData) => {
@@ -267,7 +264,7 @@ export default async function TenantDetailPage({
                 <select id="channelId" name="channelId">
                   {availableChannels.map(c => (
                     <option key={c.id} value={c.id}>
-                      {c.displayName} ({c.slug})
+                      {c.displayName} ({c.slug}) — [{c.kind}]
                     </option>
                   ))}
                 </select>
@@ -276,9 +273,9 @@ export default async function TenantDetailPage({
                 <button type="submit" className="btn btn-primary">Add →</button>
               </div>
             </form>
-          </>
+          </div> // Закрывает div с формой добавления (если он был открыт внутри условия)
         )}
-      </div>
-    </>
+      </div> // Закрывает основную .admin-card
+    </> // Закрывает самый верхний пустой фрагмент страницы
   );
 }
