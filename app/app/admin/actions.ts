@@ -115,7 +115,15 @@ export async function createChannel(data: {
   kind: string;
   isNew: boolean;
 }) {
-  await db.insert(channels).values(data);
+  // Подготавливаем данные: добавляем слэш к пути картинки, если его нет
+  const preparedData = {
+    ...data,
+    image: (data.image && !data.image.startsWith('/') && !data.image.startsWith('http'))
+      ? `/${data.image.trim()}`
+      : data.image.trim()
+  };
+
+  await db.insert(channels).values(preparedData);
   revalidatePath("/app/admin/channels");
 }
 
@@ -129,10 +137,21 @@ export async function updateChannel(
     order: number;
     kind: string;
     isNew: boolean;
-  },
+  }
 ) {
-  await db.update(channels).set(data).where(eq(channels.id, channelId));
+  // Точно такая же логика для обновления
+  const preparedData = {
+    ...data,
+    image: (data.image && !data.image.startsWith('/') && !data.image.startsWith('http'))
+      ? `/${data.image.trim()}`
+      : data.image.trim()
+  };
 
+  await db
+    .update(channels)
+    .set(preparedData)
+    .where(eq(channels.id, channelId));
+    
   revalidatePath("/app/admin/channels");
 }
 export async function deleteChannel(channelId: number) {
