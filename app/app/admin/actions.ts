@@ -175,7 +175,7 @@ export async function createUser(data: {
     }
     return { error: "Failed to create user" };
   }
-} // <--- ВОТ ЭТА СКОБКА ДОЛЖНА БЫТЬ ЗДЕСЬ
+} // <--- УБЕДИСЬ, ЧТО ЭТА СКОБКА ЗАКРЫВАЕТ ТОЛЬКО createUser
 
 export async function resetPassword(userId: number, newPassword: string) {
   await db
