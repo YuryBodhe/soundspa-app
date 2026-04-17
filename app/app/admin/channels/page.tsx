@@ -2,7 +2,8 @@
 // Server Component: читает все channels из Drizzle
 
 import { db } from "@/lib/db.pg";
-import { createChannel, updateChannel } from "../actions";
+import { createChannel, updateChannel, deleteChannel } from "../actions"; // Добавил deleteChannel
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -74,27 +75,35 @@ export default async function AdminChannelsPage() {
                       style={{ width: "100%" }}
                     />
                   </td>
-                  <td style={{ width: 90 }}>
+                  <td style={{ width: 70 }}>
                     <input
                       form={formId}
                       name="order"
                       type="number"
                       defaultValue={ch.order}
-                      style={{ width: "100%" }}
+                      style={{ width: "100%", textAlign: 'center' }}
                     />
                   </td>
-                  <td>
+                  <td style={{ width: 120 }}>
                     <select
                       form={formId}
                       name="kind"
                       defaultValue={ch.kind || "music"}
-                      style={{ width: "100%" }}
+                      style={{ 
+                        width: "100%",
+                        padding: '4px',
+                        borderRadius: '4px',
+                        background: 'rgba(255,255,255,0.05)',
+                        color: ch.kind === 'noise' ? '#C3A86C' : '#888',
+                        fontWeight: ch.kind === 'noise' ? 'bold' : 'normal',
+                        border: ch.kind === 'noise' ? '1px solid rgba(195,168,108,0.3)' : '1px solid rgba(255,255,255,0.1)'
+                      }}
                     >
-                      <option value="music">Music</option>
-                      <option value="noise">Noise</option>
+                      <option value="music">🎵 Music</option>
+                      <option value="noise">🍃 Noise</option>
                     </select>
                   </td>
-                  <td style={{ textAlign: "center" }}>
+                  <td style={{ textAlign: "center", width: 50 }}>
                     <input
                       form={formId}
                       name="isNew"
@@ -102,28 +111,45 @@ export default async function AdminChannelsPage() {
                       defaultChecked={ch.isNew}
                     />
                   </td>
-                  <td>
-                    <form
-                      id={formId}
-                      className="inline-form"
-                      action={async (formData: FormData) => {
-                        "use server";
-                        await updateChannel(ch.id, {
-                          displayName: formData.get("displayName") as string,
-                          mood: (formData.get("mood") as string) ?? "",
-                          streamUrl: formData.get("streamUrl") as string,
-                          image: (formData.get("image") as string) ?? "",
-                          order:
-                            parseInt((formData.get("order") as string) ?? "0", 10) || 0,
-                          kind: formData.get("kind") as string || "music",
-                          isNew: formData.get("isNew") === "on",
-                        });
-                      }}
-                    >
-                      <button type="submit" className="btn btn-sm">
-                        Save
-                      </button>
-                    </form>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <form
+                        id={formId}
+                        className="inline-form"
+                        action={async (formData: FormData) => {
+                          "use server";
+                          await updateChannel(ch.id, {
+                            displayName: formData.get("displayName") as string,
+                            mood: (formData.get("mood") as string) ?? "",
+                            streamUrl: formData.get("streamUrl") as string,
+                            image: (formData.get("image") as string) ?? "",
+                            order: parseInt((formData.get("order") as string) ?? "0", 10) || 0,
+                            kind: (formData.get("kind") as string) || "music",
+                            isNew: formData.get("isNew") === "on",
+                          });
+                        }}
+                      >
+                        <button type="submit" className="btn btn-sm">Save</button>
+                      </form>
+
+                      <form
+                        action={async () => {
+                          "use server";
+                          await deleteChannel(ch.id);
+                        }}
+                        onSubmit={(e) => {
+                          if (!confirm("Удалить канал навсегда?")) e.preventDefault();
+                        }}
+                      >
+                        <button 
+                          type="submit" 
+                          className="btn btn-sm" 
+                          style={{ backgroundColor: '#442222', color: '#ff8888' }}
+                        >
+                          Delete
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 </tr>
               );
@@ -147,8 +173,8 @@ export default async function AdminChannelsPage() {
               streamUrl: formData.get("streamUrl") as string,
               image: (formData.get("image") as string) ?? "",
               order: parseInt((formData.get("order") as string) ?? "0", 10) || 0,
-              kind: formData.get("kind") as string || "music",
-                          isNew: formData.get("isNew") === "on",
+              kind: (formData.get("kind") as string) || "music",
+              isNew: formData.get("isNew") === "on",
             });
           }}
         >
@@ -188,14 +214,12 @@ export default async function AdminChannelsPage() {
                 <option value="noise">Noise</option>
               </select>
 
-              <label htmlFor="newIsNew" style={{ marginBottom: 0 }}>New badge</label>
+              <label htmlFor="newIsNew" style={{ marginLeft: 16 }}>New badge</label>
               <input id="newIsNew" name="isNew" type="checkbox" />
             </div>
           </div>
           <div className="form-actions">
-            <button type="submit" className="btn btn-primary">
-              Create channel
-            </button>
+            <button type="submit" className="btn btn-primary">Create channel</button>
           </div>
         </form>
       </div>

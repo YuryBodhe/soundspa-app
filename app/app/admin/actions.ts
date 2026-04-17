@@ -135,6 +135,23 @@ export async function updateChannel(
 
   revalidatePath("/app/admin/channels");
 }
+export async function deleteChannel(channelId: number) {
+  // 1. Сначала удаляем все связи этого канала с салонами (тенантами)
+  // Это критично, чтобы не нарушить целостность базы данных
+  await db
+    .delete(tenantChannels)
+    .where(eq(tenantChannels.channelId, channelId));
+
+  // 2. Теперь удаляем сам канал
+  await db
+    .delete(channels)
+    .where(eq(channels.id, channelId));
+
+  // 3. Обновляем пути, чтобы изменения сразу отразились в админке
+  revalidatePath("/app/admin/channels");
+  // Также стоит обновить админку тенантов, так как список доступных каналов там изменится
+  revalidatePath("/app/admin/tenants/[id]", "page");
+}
 
 // ── USER ACTIONS ──────────────────────────────
 
