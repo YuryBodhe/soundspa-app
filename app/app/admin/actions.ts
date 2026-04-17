@@ -176,16 +176,3 @@ export async function createUser(data: {
     return { error: "Failed to create user" };
   }
 }
-
-export async function resetPassword(userId: number, newPassword: string) {
-  await db
-    .update(users)
-    .set({ password: newPassword })
-    .where(eq(users.id, userId));
-  revalidatePath("/app/admin/users");
-}
-
-export async function deleteUser(userId: number) {
-  await db.delete(users).where(eq(users.id, userId));
-  revalidatePath("/app/admin/users");
-}
