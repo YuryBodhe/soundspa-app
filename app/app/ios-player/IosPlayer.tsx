@@ -102,21 +102,22 @@ export default function IosPlayer({
   };
 
    const handleNoiseToggle = (noise: AmbientChannel) => {
-    if (activeNoiseId === noise.id) {
-      soundEngine.stopNoise();
-      setActiveNoiseId(null);
-    } else {
-      soundEngine.setNoise(noise.id, noise.streamUrl);
-      soundEngine.setNoiseVolume(targetNoiseVol);
-      setActiveNoiseId(noise.id);
-    }
-  };
+  if (activeNoiseId === noise.id) {
+    soundEngine.stopNoise();
+    setActiveNoiseId(null);
+  } else {
+    soundEngine.setNoise(noise.id, noise.streamUrl);
+    // Всегда 0.5 для стабильности на iOS
+    soundEngine.setNoiseVolume(0.5); 
+    setActiveNoiseId(noise.id);
+  }
+};
 
-  const handleNoiseVolumeChange = (valuePercent: number) => {
+  /* const handleNoiseVolumeChange = (valuePercent: number) => {
     const next = valuePercent / 100;
     setTargetNoiseVol(next);
     soundEngine.setNoiseVolume(next);
-  };
+  };*/
 
   const handleLogout = async () => {
     try {
@@ -192,7 +193,7 @@ export default function IosPlayer({
         <div className={s.statusLine}>
           <div className={`${s.sdot} ${playing ? s.sdotPlaying : ''}`} />
           <div className={`${s.stxt} ${playing ? s.stxtPlaying : ''}`}>
-            {playing ? 'Streaming · AzuraCast' : 'Tap to play'}
+            {playing ? 'Streaming · Sound Spa' : 'Tap to play'}
           </div>
         </div>
       </section>
@@ -259,35 +260,6 @@ export default function IosPlayer({
           <div className={s.sectionLabel}>Ambient noise</div>
           {/* Используем sortedNoise для корректного счетчика */}
           <div className={s.sectionCount}>{sortedNoise.length} options</div>
-        </div>
-
-        <div className={s.noiseSliderWrap}>
-          <div className={s.noiseSliderHeader}>
-            <div className={s.noiseLabel}>Noise level</div>
-            <div className={s.noiseValue}>{Math.round(targetNoiseVol * 100)}%</div>
-          </div>
-          <div className={s.sliderTrackWrap}>
-            <div className={s.sliderTrackBg} />
-            <div
-              className={s.sliderTrackFill}
-              style={{ width: `${Math.round(targetNoiseVol * 100)}%` }}
-            />
-            <div
-              className={s.sliderThumb}
-              style={{ left: `${Math.round(targetNoiseVol * 100)}%` }}
-            >
-              <div className={s.thumbDot} />
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round(targetNoiseVol * 100)}
-              onChange={(e) => handleNoiseVolumeChange(Number(e.target.value))}
-              className={s.noiseRange}
-            />
-          </div>
         </div>
 
         <div className={s.noiseCarousel}>

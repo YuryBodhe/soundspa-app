@@ -11,16 +11,27 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 
-// Состояния основного потока (Azura HLS)
-let mainAudio: HTMLAudioElement | null = null;
-let mainChannelId: ChannelId | null = null;
-let mainStreamUrl: string | null = null;
+// Проверка на Apple (нужна для блокировки изменений на iOS)
+const isApple = isBrowser && (
+  /iPhone|iPad|iPod/.test(navigator.platform) || 
+  (navigator.userAgent.includes("Mac") && "ontouchend" in document)
+);
 
-// Состояния шумового потока (Azura HLS)
+// ЭТАЛОННЫЕ ЗНАЧЕНИЯ ГРОМКОСТИ
+const MASTER_MAIN_VOL = 0.8;
+const MASTER_NOISE_VOL = 0.5;
+
+// Состояния основного потока
+let mainAudio: HTMLAudioElement | null = null;
+let mainChannelId: string | null = null; 
+let mainStreamUrl: string | null = null;
+let mainVolume = MASTER_MAIN_VOL; // Сразу 0.8
+
+// Состояния шумового потока
 let noiseAudio: HTMLAudioElement | null = null;
-let noiseId: NoiseId | null = null;
+let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
-let noiseVolume = 0.5;
+let noiseVolume = MASTER_NOISE_VOL; // Сразу 0.5
 
 const clampVolume = (value: number) => {
   if (Number.isNaN(value)) return 0;
@@ -42,7 +53,6 @@ export const soundEngine: SoundEngine = {
           clearInterval(fadeOut);
           oldAudio.pause();
           oldAudio.src = "";
-          oldAudio.load(); // Важно для сброса HLS буфера
         } else {
           oldAudio.volume = Math.max(0, vol);
         }
@@ -51,20 +61,25 @@ export const soundEngine: SoundEngine = {
 
     if (!streamUrl) return;
 
+    // 2. Создание и запуск нового канала
     mainChannelId = id;
     mainStreamUrl = streamUrl;
-
-    // 2. Создание нового нативного Audio объекта для HLS
     mainAudio = new Audio(streamUrl);
-    mainAudio.crossOrigin = "anonymous";
-    mainAudio.preload = "auto";
-    mainAudio.volume = 1;
+    
+    // Начинаем с нуля и плавно поднимаем до MASTER_MAIN_VOL (0.8)
+    mainAudio.volume = 0;
+    mainAudio.play();
 
-    try {
-      mainAudio.play().catch(e => console.warn("Main stream play blocked:", e));
-    } catch (e) {
-      console.warn("Main stream error:", e);
-    }
+    let fadeInVol = 0;
+    const fadeIn = setInterval(() => {
+      fadeInVol += 0.05;
+      if (fadeInVol >= MASTER_MAIN_VOL) {
+        clearInterval(fadeIn);
+        if (mainAudio) mainAudio.volume = MASTER_MAIN_VOL;
+      } else {
+        if (mainAudio) mainAudio.volume = fadeInVol;
+      }
+    }, 100);
   },
 
   stopChannel() {
