@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script"; // 1. ДОБАВЬ ЭТОТ ИМПОРТ
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,20 +31,22 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="format-detection" content="telephone=no" />
-      
-  {/* Lock to portrait mode on iOS */}
-  <script
-    dangerouslySetInnerHTML={{
-      __html: `
-        if (screen.orientation && screen.orientation.lock) {
-          screen.orientation.lock('portrait').catch(() => {});
-        }
-      `,
-    }}
-  />
-
-</head>
-      <body>{children}</body>
+      </head>
+      <body>
+        {/* 2. ПЕРЕНЕСИ СКРИПТ СЮДА И ЗАМЕНИ НА <Script> */}
+        <Script
+          id="lock-orientation"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('portrait').catch(() => {});
+              }
+            `,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

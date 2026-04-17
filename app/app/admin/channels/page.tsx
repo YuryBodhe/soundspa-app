@@ -4,6 +4,7 @@
 import { db } from "@/lib/db.pg";
 import { createChannel, updateChannel, deleteChannel } from "../actions"; // Добавил deleteChannel
 import Link from "next/link";
+import { DeleteChannelButton } from "./DeleteChannelButton";
 
 export const dynamic = "force-dynamic";
 
@@ -111,8 +112,11 @@ export default async function AdminChannelsPage() {
                       defaultChecked={ch.isNew}
                     />
                   </td>
+
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      
+                      {/* Кнопка Save — работает на сервере */}
                       <form
                         id={formId}
                         className="inline-form"
@@ -129,26 +133,14 @@ export default async function AdminChannelsPage() {
                           });
                         }}
                       >
-                        <button type="submit" className="btn btn-sm">Save</button>
-                      </form>
-
-                      <form
-                        action={async () => {
-                          "use server";
-                          await deleteChannel(ch.id);
-                        }}
-                        onSubmit={(e) => {
-                          if (!confirm("Удалить канал навсегда?")) e.preventDefault();
-                        }}
-                      >
-                        <button 
-                          type="submit" 
-                          className="btn btn-sm" 
-                          style={{ backgroundColor: '#442222', color: '#ff8888' }}
-                        >
-                          Delete
+                        <button type="submit" className="btn btn-sm">
+                          Save
                         </button>
                       </form>
+
+                      {/* Кнопка Delete — наш новый клиентский компонент */}
+                      <DeleteChannelButton id={ch.id} />
+                      
                     </div>
                   </td>
                 </tr>
