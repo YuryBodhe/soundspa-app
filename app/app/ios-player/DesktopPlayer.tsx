@@ -191,7 +191,7 @@ export default function DesktopPlayer({
           <div className={s.statusLine} style={{ marginTop: 14 }}>
             <div className={`${s.sdot} ${playing ? s.sdotPlaying : ''}`} />
             <div className={`${s.stxt} ${playing ? s.stxtPlaying : ''}`}>
-              {playing ? 'Streaming · AzuraCast' : 'Click to play'}
+              {playing ? 'Streaming · Sound Spa' : 'Click to play'}
             </div>
           </div>
         </section>

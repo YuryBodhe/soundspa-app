@@ -37,28 +37,53 @@ let noiseVolume = MASTER_NOISE_VOL;
 
 // --- WATCHER & RECOVERY LOGIC ---
 
-const recoverConnection = () => {
-  if (!mainChannelId || !mainStreamUrl || !mainAudio) return;
+// Флаг, чтобы не запускать несколько восстановлений одновременно
+let isRecovering = false;
 
+const recoverConnection = () => {
+  // Если уже восстанавливаемся или нет данных для канала — выходим
+  if (isRecovering || !mainChannelId || !mainStreamUrl || !mainAudio) return;
+
+  isRecovering = true;
   console.warn(`SoundEngine: Попытка восстановления канала ${mainChannelId}`);
   
-  // Принудительная очистка старого объекта перед реконнектом
+  // 1. Принудительная очистка текущего объекта
   mainAudio.pause();
   mainAudio.src = "";
   mainAudio.load();
 
-  // Создаем новый объект с обходом кэша
-  const recoveryUrl = `${mainStreamUrl}${mainStreamUrl.includes('?') ? '&' : '?'}cb=${Date.now()}`;
-  mainAudio = new Audio(recoveryUrl);
-  mainAudio.volume = MASTER_MAIN_VOL;
-  
-  mainAudio.play().catch(e => console.error("SoundEngine Recovery Error:", e));
+  // 2. Делаем паузу 2 секунды
+  setTimeout(() => {
+    // Создаем локальную переменную, чтобы TS не сомневался в её наличии
+    const url = mainStreamUrl;
+    if (!url) {
+      isRecovering = false;
+      return;
+    }
+
+    const recoveryUrl = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`;
+    
+    const newAudio = new Audio(recoveryUrl);
+    newAudio.volume = MASTER_MAIN_VOL;
+    
+    newAudio.play()
+      .then(() => {
+        console.log("SoundEngine: Восстановление успешно");
+        mainAudio = newAudio;
+        isRecovering = false;
+      })
+      .catch(e => {
+        console.error("SoundEngine Recovery Error:", e.name);
+        isRecovering = false;
+      });
+  }, 2000);
 };
 
 const checkHealth = () => {
-  if (!mainAudio || mainAudio.paused) return;
+  // Если плеер на паузе или уже идет восстановление — ничего не делаем
+  if (!mainAudio || mainAudio.paused || isRecovering) return;
 
-  // Если время в плеере не изменилось за цикл проверки - значит поток "встал"
+  // Если время в плеере не изменилось за 10 секунд — поток "встал"
   if (mainAudio.currentTime === lastTimeUpdate) {
     recoverConnection();
   }
@@ -67,14 +92,12 @@ const checkHealth = () => {
 
 const checkScheduledRestart = () => {
   const now = new Date();
-  // Определяем мобильное устройство
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   
-  // Добавляем !isMobile в условие
+  // Перезагрузка в 4 утра только для десктопов
   if (!isMobile && now.getHours() === 4 && now.getMinutes() === 0 && now.getSeconds() < 15) {
-    console.log("SoundEngine: Плановая перезагрузка страницы для очистки памяти.");
+    console.log("SoundEngine: Плановая перезагрузка страницы.");
     
-    // Сохраняем состояние
     localStorage.setItem('last_active_channel', JSON.stringify({
       id: mainChannelId, 
       url: mainStreamUrl
