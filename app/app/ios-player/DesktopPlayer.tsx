@@ -80,6 +80,31 @@ export default function DesktopPlayer({
 
   const canvasRef = useWaveCanvas(playing);
 
+// Вспомогательная функция для плавной анимации громкости шума
+const animateNoiseVolume = (target: number, duration: number = 1000) => {
+  const start = noiseVolume;
+  const startTime = performance.now();
+
+  const step = (now: number) => {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    
+    // Вычисляем промежуточное значение
+    const current = start + (target - start) * progress;
+    
+    // Обновляем стейт (ползунок поедет визуально)
+    setNoiseVolume(current);
+    // Обновляем звук в движке
+    soundEngine.setNoiseVolume(current);
+
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  };
+
+  requestAnimationFrame(step);
+};
+
   const handleTogglePlay = () => {
     if (!activeChannel) return;
 
@@ -113,16 +138,39 @@ export default function DesktopPlayer({
   };
 
   const handleNoiseToggle = (noise: AmbientChannel) => {
+    // Если нажимаем на уже активный шум — выключаем его плавно
     if (activeNoiseId === noise.id) {
-      soundEngine.stopNoise();
-      setActiveNoiseId(null);
+      const currentVolBeforeFade = noiseVolume; // Запоминаем текущую громкость
+
+      // 1. Анимируем ползунок в 0
+      animateNoiseVolume(0, 800); 
+
+      // 2. Ждем окончания анимации и выключаем поток
+      setTimeout(() => {
+        soundEngine.stopNoise();
+        setActiveNoiseId(null);
+        // Возвращаем ползунок на место (визуально), чтобы при следующем включении 
+        // он не остался в нуле
+        setNoiseVolume(currentVolBeforeFade); 
+      }, 850);
       return;
     }
 
-    // Теперь берем streamUrl из БД
-    soundEngine.setNoise(noise.id, noise.streamUrl);
-    soundEngine.setNoiseVolume(noiseVolume);
+    // Если включаем новый шум
     setActiveNoiseId(noise.id);
+    
+    // Сначала ставим всё в 0 (тишина)
+    const targetVol = noiseVolume; // Целевая громкость, которая стоит на ползунке
+    setNoiseVolume(0);
+    
+    // Запускаем поток
+    soundEngine.setNoise(noise.id, noise.streamUrl);
+    soundEngine.setNoiseVolume(0);
+
+    // Плавно поднимаем "ручку" фейдера до целевого значения
+    setTimeout(() => {
+      animateNoiseVolume(targetVol, 1000);
+    }, 50); // Микро-пауза для Chrome
   };
 
   const handleNoiseVolumeChange = (valuePercent: number) => {

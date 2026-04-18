@@ -41,20 +41,16 @@ let noiseVolume = MASTER_NOISE_VOL;
 let isRecovering = false;
 
 const recoverConnection = () => {
-  // Если уже восстанавливаемся или нет данных для канала — выходим
   if (isRecovering || !mainChannelId || !mainStreamUrl || !mainAudio) return;
 
   isRecovering = true;
   console.warn(`SoundEngine: Попытка восстановления канала ${mainChannelId}`);
   
-  // 1. Принудительная очистка текущего объекта
   mainAudio.pause();
   mainAudio.src = "";
   mainAudio.load();
 
-  // 2. Делаем паузу 2 секунды
   setTimeout(() => {
-    // Создаем локальную переменную, чтобы TS не сомневался в её наличии
     const url = mainStreamUrl;
     if (!url) {
       isRecovering = false;
@@ -63,35 +59,48 @@ const recoverConnection = () => {
 
     const recoveryUrl = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`;
     
-    const newAudio = new Audio(recoveryUrl);
-    newAudio.volume = MASTER_MAIN_VOL;
+    // ПРИМЕНЯЕМ ТАКТИКУ ПРОТИВ ЩЕЛЧКОВ ПРИ ВОССТАНОВЛЕНИИ
+    const newAudio = new Audio();
+    newAudio.volume = 0; // Начинаем с тишины
+    newAudio.src = recoveryUrl;
     
-    newAudio.play()
-      .then(() => {
-        console.log("SoundEngine: Восстановление успешно");
-        mainAudio = newAudio;
-        isRecovering = false;
-      })
-      .catch(e => {
-        console.error("SoundEngine Recovery Error:", e.name);
-        isRecovering = false;
-      });
+    setTimeout(() => {
+      newAudio.play()
+        .then(() => {
+          console.log("SoundEngine: Восстановление успешно");
+          mainAudio = newAudio;
+          isRecovering = false;
+          
+          // Плавный возврат громкости
+          let v = 0;
+          const f = setInterval(() => {
+            v += 0.05;
+            if (v >= MASTER_MAIN_VOL) {
+              clearInterval(f);
+              newAudio.volume = MASTER_MAIN_VOL;
+            } else {
+              newAudio.volume = v;
+            }
+          }, 100);
+        })
+        .catch(e => {
+          console.error("SoundEngine Recovery Error:", e.name);
+          isRecovering = false;
+        });
+    }, 50);
   }, 2000);
 };
 
 const checkHealth = () => {
-  // Лог для отладки (потом удалим)
-  // console.log(`HealthCheck: state=${mainAudio?.readyState}, paused=${mainAudio?.paused}, time=${mainAudio?.currentTime}`);
-
   if (!mainAudio || mainAudio.paused || isRecovering) return;
 
   if (mainAudio.currentTime === lastTimeUpdate) {
-    console.warn("SoundEngine: Пульс не обнаружен. Проверяю readyState...");
+    // Если поток висит в буферизации (readyState 1 или 2) больше 15-20 секунд
+    // Значит, он сам уже не выберется. Нужно "толкнуть".
     
-    // Если поток просто буферизуется (readyState 1 или 2), дадим ему еще шанс
     if (mainAudio.readyState <= 2) {
-      console.log("SoundEngine: Поток в режиме ожидания данных (буферизация).");
-      // Можно не реконектить сразу, а подождать еще цикл
+      console.warn("SoundEngine: Затянувшаяся буферизация. Переподключаюсь...");
+      recoverConnection(); // Force recovery
     } else {
       recoverConnection();
     }
@@ -207,26 +216,14 @@ export const soundEngine: SoundEngine = {
     }, 50);
   },
 
-  setNoise(id, streamUrl) {
+ setNoise(id, streamUrl) {
     if (!isBrowser) return;
-    if (id == null) { this.stopNoise(); return; }
     if (id === noiseId && streamUrl === noiseStreamUrl) return;
 
-    // 1. Плавный уход старого шума
     if (noiseAudio) {
-      const oldNoise = noiseAudio;
-      let vol = oldNoise.volume;
-      const fadeOut = setInterval(() => {
-        vol -= 0.05;
-        if (vol <= 0) {
-          clearInterval(fadeOut);
-          oldNoise.pause();
-          oldNoise.src = "";
-          oldNoise.load();
-        } else {
-          oldNoise.volume = Math.max(0, vol);
-        }
-      }, 50);
+      noiseAudio.pause();
+      noiseAudio.src = "";
+      noiseAudio.load();
     }
 
     if (!streamUrl) return;
@@ -234,62 +231,37 @@ export const soundEngine: SoundEngine = {
     noiseId = id;
     noiseStreamUrl = streamUrl;
 
-    // 2. Создание нового нативного Audio для шумового потока
     const audio = new Audio();
     audio.crossOrigin = "anonymous";
     audio.preload = "auto";
-    audio.volume = 0;
+    audio.volume = 0; // Оставляем 0, DesktopPlayer сам поднимет фейдер
     audio.src = streamUrl;
     noiseAudio = audio;
 
+    // Важно: в Chrome play() лучше вызывать через микро-паузу даже здесь
     setTimeout(() => {
-      audio.play().then(() => {
-        let vol = 0;
-        const fadeIn = setInterval(() => {
-          if (audio !== noiseAudio) {
-            clearInterval(fadeIn);
-            return;
-          }
-          vol += 0.02;
-          if (vol >= noiseVolume) {
-            clearInterval(fadeIn);
-            audio.volume = noiseVolume;
-          } else {
-            audio.volume = vol;
-          }
-        }, 50);
-      }).catch(e => console.warn("Noise stream play blocked:", e));
-    }, 50); 
-  }, 
+        audio.play().catch(e => console.warn("Noise play blocked:", e));
+    }, 50);
+  },
 
   setNoiseVolume(volume) {
     if (!isBrowser) return;
     noiseVolume = clampVolume(volume);
     if (noiseAudio) {
-      // Мгновенная реакция на фейдер
       noiseAudio.volume = noiseVolume;
     }
   },
 
   stopNoise() {
     if (!isBrowser || !noiseAudio) return;
-    const current = noiseAudio;
-    let vol = current.volume;
-    const fadeOut = setInterval(() => {
-      vol -= 0.05;
-      if (vol <= 0) {
-        clearInterval(fadeOut);
-        current.pause();
-        current.src = "";
-        current.load();
-        if (noiseAudio === current) {
-          noiseAudio = null;
-          noiseId = null;
-          noiseStreamUrl = null;
-        }
-      } else {
-        current.volume = Math.max(0, vol);
-      }
-    }, 50);
+    
+    // Мгновенный стоп (так как DesktopPlayer уже увел громкость в 0)
+    noiseAudio.pause();
+    noiseAudio.src = "";
+    noiseAudio.load();
+    
+    noiseAudio = null;
+    noiseId = null;
+    noiseStreamUrl = null;
   },
 };
