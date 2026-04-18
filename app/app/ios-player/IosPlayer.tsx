@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────
 
 import Image from 'next/image';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
 import {
   Channel,
@@ -48,6 +48,17 @@ export default function IosPlayer({
   const tenantChannels = channels;
   const showDailyMessage = Boolean(dailyMessage && dailyMessage.trim().length > 0);
 
+// --- ВставляемWatcher ---
+  useEffect(() => {
+    // Инициализируем только мониторинг зависаний
+    soundEngine.initWatcher();
+    
+    // На iOS мы НЕ делаем авто-плей после рестарта 4 утра, 
+    // так как Safari его заблокирует.
+    // Но мы оставляем мониторинг, чтобы если интернет моргнул, 
+    // звук восстановился сам.
+  }, []);
+  
   // Состояния плеера
   const [playing,         setPlaying]         = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(tenantChannels[0]?.id ?? '');

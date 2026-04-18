@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────
 
 import Image from 'next/image';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
 import { 
   Channel, 
@@ -37,6 +37,28 @@ export default function DesktopPlayer({
   promoCards       = [],
 }: DesktopPlayerProps) {
   
+// 2. Вставляем инициализацию сразу после объявления стейтов
+  useEffect(() => {
+    soundEngine.initWatcher();
+    
+    const saved = localStorage.getItem('last_active_channel');
+    if (saved) {
+      try {
+        const { id, url } = JSON.parse(saved);
+        if (id && url) {
+          soundEngine.playChannel(id, url);
+          setPlaying(true);
+          setActiveChannelId(id);
+        }
+      } catch (e) {
+        console.error('Failed to restore channel', e);
+      } finally {
+        localStorage.removeItem('last_active_channel');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Пустой массив важен, чтобы не зациклить watcher
+
   // Сортируем шумы из базы
   const sortedNoise = useMemo(
     () => [...noiseChannels].sort((a, b) => a.order - b.order),

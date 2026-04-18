@@ -7,6 +7,8 @@ interface SoundEngine {
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
   stopNoise: () => void;
+  // Добавим метод инициализации мониторинга
+  initWatcher: () => void;
 }
 
 const isBrowser = typeof window !== "undefined";
@@ -25,13 +27,64 @@ const MASTER_NOISE_VOL = 0.5;
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null; 
 let mainStreamUrl: string | null = null;
-let mainVolume = MASTER_MAIN_VOL; // Сразу 0.8
+let lastTimeUpdate = 0;
 
 // Состояния шумового потока
 let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
-let noiseVolume = MASTER_NOISE_VOL; // Сразу 0.5
+let noiseVolume = MASTER_NOISE_VOL;
+
+// --- WATCHER & RECOVERY LOGIC ---
+
+const recoverConnection = () => {
+  if (!mainChannelId || !mainStreamUrl || !mainAudio) return;
+
+  console.warn(`SoundEngine: Попытка восстановления канала ${mainChannelId}`);
+  
+  // Принудительная очистка старого объекта перед реконнектом
+  mainAudio.pause();
+  mainAudio.src = "";
+  mainAudio.load();
+
+  // Создаем новый объект с обходом кэша
+  const recoveryUrl = `${mainStreamUrl}${mainStreamUrl.includes('?') ? '&' : '?'}cb=${Date.now()}`;
+  mainAudio = new Audio(recoveryUrl);
+  mainAudio.volume = MASTER_MAIN_VOL;
+  
+  mainAudio.play().catch(e => console.error("SoundEngine Recovery Error:", e));
+};
+
+const checkHealth = () => {
+  if (!mainAudio || mainAudio.paused) return;
+
+  // Если время в плеере не изменилось за цикл проверки - значит поток "встал"
+  if (mainAudio.currentTime === lastTimeUpdate) {
+    recoverConnection();
+  }
+  lastTimeUpdate = mainAudio.currentTime;
+};
+
+const checkScheduledRestart = () => {
+  const now = new Date();
+  // Определяем мобильное устройство
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  
+  // Добавляем !isMobile в условие
+  if (!isMobile && now.getHours() === 4 && now.getMinutes() === 0 && now.getSeconds() < 15) {
+    console.log("SoundEngine: Плановая перезагрузка страницы для очистки памяти.");
+    
+    // Сохраняем состояние
+    localStorage.setItem('last_active_channel', JSON.stringify({
+      id: mainChannelId, 
+      url: mainStreamUrl
+    }));
+    
+    window.location.reload();
+  }
+};
+
+// --- END WATCHER ---
 
 const clampVolume = (value: number) => {
   if (Number.isNaN(value)) return 0;
@@ -39,11 +92,19 @@ const clampVolume = (value: number) => {
 };
 
 export const soundEngine: SoundEngine = {
+  // Инициализация мониторинга (вызвать один раз при старте приложения)
+  initWatcher() {
+    if (!isBrowser) return;
+    setInterval(() => {
+      checkHealth();
+      checkScheduledRestart();
+    }, 10000); // Проверка каждые 10 секунд
+  },
+
   playChannel(id, streamUrl) {
     if (!isBrowser) return;
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
-    // 1. Плавный уход старого канала
     if (mainAudio) {
       const oldAudio = mainAudio;
       let vol = oldAudio.volume;
@@ -61,14 +122,15 @@ export const soundEngine: SoundEngine = {
 
     if (!streamUrl) return;
 
-    // 2. Создание и запуск нового канала
     mainChannelId = id;
     mainStreamUrl = streamUrl;
-    mainAudio = new Audio(streamUrl);
     
-    // Начинаем с нуля и плавно поднимаем до MASTER_MAIN_VOL (0.8)
+    // При старте нового канала сбрасываем счетчик времени
+    lastTimeUpdate = 0;
+    
+    mainAudio = new Audio(streamUrl);
     mainAudio.volume = 0;
-    mainAudio.play();
+    mainAudio.play().catch(e => console.error("Play blocked:", e));
 
     let fadeInVol = 0;
     const fadeIn = setInterval(() => {
@@ -131,7 +193,7 @@ export const soundEngine: SoundEngine = {
     noiseId = id;
     noiseStreamUrl = streamUrl;
 
-    // 2. Создание нового нативного Audio для шумового HLS-потока
+    // 2. Создание нового нативного Audio для шумового потока
     noiseAudio = new Audio(streamUrl);
     noiseAudio.crossOrigin = "anonymous";
     noiseAudio.preload = "auto";
