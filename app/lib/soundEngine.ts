@@ -1,19 +1,21 @@
+// soundEngine.ts
 type ChannelId = string;
 type NoiseId = string;
 
 interface SoundEngine {
   playChannel: (id: ChannelId, streamUrl: string) => void;
   stopChannel: () => void;
-  setMainVolume: (volume: number) => void;
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
   stopNoise: () => void;
   initWatcher: () => void;
+  setMainVolume: (vol: number) => void;
 }
 
 const isBrowser = typeof window !== "undefined";
+const FADE_TIME = 3000; 
 
-// --- STATE ---
+// --- Внутреннее состояние ---
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
@@ -21,8 +23,30 @@ let mainStreamUrl: string | null = null;
 let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
+let currentNoiseVol = 0.4; // Дефолтное значение
 
-// --- SILENCE HACK (удержание аудио-карты от засыпания) ---
+// --- Вспомогательная функция фейда ---
+const internalFade = (audio: HTMLAudioElement, targetVol: number, duration: number, callback?: () => void) => {
+  const startVol = audio.volume;
+  const startTime = performance.now();
+
+  const step = (now: number) => {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    
+    // Плавное изменение громкости
+    audio.volume = startVol + (targetVol - startVol) * progress;
+
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    } else if (callback) {
+      callback();
+    }
+  };
+  requestAnimationFrame(step);
+};
+
+// --- SILENCE HACK ---
 let silencePlayer: HTMLAudioElement | null = null;
 const keepAudioContextAlive = () => {
   if (!isBrowser || silencePlayer) return;
@@ -36,74 +60,94 @@ const keepAudioContextAlive = () => {
 
 export const soundEngine: SoundEngine = {
   initWatcher() {
-    if (!isBrowser) return;
-    keepAudioContextAlive();
-    // Мониторинг и авто-рекавери удалены по запросу
+    if (isBrowser) keepAudioContextAlive();
   },
 
-  playChannel(id, streamUrl) {
+  playChannel(id, url) {
     if (!isBrowser) return;
-    
-    // Если канал тот же — не дергаем поток
-    if (id === mainChannelId && streamUrl === mainStreamUrl) return;
+    if (id === mainChannelId && url === mainStreamUrl) return;
 
+    // Кроссфейд: старый плавно гасим и удаляем
     if (mainAudio) {
-      mainAudio.pause();
-      mainAudio.src = "";
+      const old = mainAudio;
+      internalFade(old, 0, FADE_TIME, () => {
+        old.pause();
+        old.src = "";
+      });
     }
 
     mainChannelId = id;
-    mainStreamUrl = streamUrl;
+    mainStreamUrl = url;
 
-    const audio = new Audio(streamUrl);
+    const audio = new Audio(url);
     audio.crossOrigin = "anonymous";
-    audio.volume = 0; // Плавный вход (fade in) делает DesktopPlayer
+    audio.volume = 0.001; // Почти ноль для прогрева
     mainAudio = audio;
-    
-    audio.play().catch(e => console.warn("Main play blocked", e));
+
+    audio.play()
+      .then(() => internalFade(audio, 0.8, FADE_TIME))
+      .catch(e => console.warn("Main play blocked", e));
   },
 
   stopChannel() {
     if (!mainAudio) return;
-    mainAudio.pause();
-    mainAudio.src = "";
-    mainAudio = null;
-    mainChannelId = null;
-    mainStreamUrl = null;
+    const target = mainAudio;
+    internalFade(target, 0, FADE_TIME, () => {
+      target.pause();
+      target.src = "";
+      if (mainAudio === target) {
+        mainAudio = null;
+        mainChannelId = null;
+        mainStreamUrl = null;
+      }
+    });
   },
 
   setMainVolume(vol) {
     if (mainAudio) mainAudio.volume = Math.max(0, Math.min(1, vol));
   },
 
-  setNoise(id, streamUrl) {
-    if (!isBrowser || (id === noiseId && streamUrl === noiseStreamUrl)) return;
-    if (noiseAudio) { noiseAudio.pause(); noiseAudio.src = ""; }
-    
-    if (!streamUrl) return;
-    noiseId = id;
-    noiseStreamUrl = streamUrl;
+  setNoise(id, url) {
+    if (!isBrowser || !url) return;
+    if (id === noiseId && url === noiseStreamUrl) return;
 
-    const audio = new Audio(streamUrl);
+    if (noiseAudio) {
+      const old = noiseAudio;
+      internalFade(old, 0, 1500, () => {
+        old.pause();
+        old.src = "";
+      });
+    }
+
+    noiseId = id;
+    noiseStreamUrl = url;
+
+    const audio = new Audio(url);
     audio.crossOrigin = "anonymous";
-    audio.volume = 0; // Плавный вход делает DesktopPlayer
+    audio.volume = 0.001;
     noiseAudio = audio;
-    
-    setTimeout(() => {
-      audio.play().catch(e => console.warn("Noise blocked", e));
-    }, 50);
+
+    audio.play()
+      .then(() => internalFade(audio, currentNoiseVol, 2000))
+      .catch(e => console.warn("Noise blocked", e));
   },
 
   setNoiseVolume(volume) {
-    if (noiseAudio) noiseAudio.volume = Math.max(0, Math.min(1, volume));
+    currentNoiseVol = Math.max(0, Math.min(1, volume));
+    if (noiseAudio) noiseAudio.volume = currentNoiseVol;
   },
 
   stopNoise() {
     if (!noiseAudio) return;
-    noiseAudio.pause();
-    noiseAudio.src = "";
-    noiseAudio = null;
-    noiseId = null;
-    noiseStreamUrl = null;
+    const target = noiseAudio;
+    internalFade(target, 0, 1500, () => {
+      target.pause();
+      target.src = "";
+      if (noiseAudio === target) {
+        noiseAudio = null;
+        noiseId = null;
+        noiseStreamUrl = null;
+      }
+    });
   }
 };
