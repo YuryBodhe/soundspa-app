@@ -137,6 +137,7 @@ export const soundEngine: SoundEngine = {
     if (!isBrowser) return;
     if (id === mainChannelId && streamUrl === mainStreamUrl) return;
 
+    // --- Фейд-аут старого (без изменений) ---
     if (mainAudio) {
       const oldAudio = mainAudio;
       let vol = oldAudio.volume;
@@ -156,24 +157,32 @@ export const soundEngine: SoundEngine = {
 
     mainChannelId = id;
     mainStreamUrl = streamUrl;
-    
-    // При старте нового канала сбрасываем счетчик времени
     lastTimeUpdate = 0;
     
-    mainAudio = new Audio(streamUrl);
-    mainAudio.volume = 0;
-    mainAudio.play().catch(e => console.error("Play blocked:", e));
+    // --- ИСПРАВЛЕНИЕ ДЛЯ CHROME ---
+    // 1. Создаем объект БЕЗ URL (пустой)
+    const audio = new Audio();
+    audio.volume = 0;
+    
+    // 2. Только после установки громкости даем URL
+    audio.src = streamUrl;
+    mainAudio = audio;
 
-    let fadeInVol = 0;
-    const fadeIn = setInterval(() => {
-      fadeInVol += 0.05;
-      if (fadeInVol >= MASTER_MAIN_VOL) {
-        clearInterval(fadeIn);
-        if (mainAudio) mainAudio.volume = MASTER_MAIN_VOL;
-      } else {
-        if (mainAudio) mainAudio.volume = fadeInVol;
-      }
-    }, 100);
+    // 3. Небольшая пауза (50мс), чтобы Chrome успел "прожевать" настройки
+    setTimeout(() => {
+      audio.play().then(() => {
+        let fadeInVol = 0;
+        const fadeIn = setInterval(() => {
+          fadeInVol += 0.05;
+          if (fadeInVol >= MASTER_MAIN_VOL) {
+            clearInterval(fadeIn);
+            if (audio) audio.volume = MASTER_MAIN_VOL;
+          } else {
+            if (audio) audio.volume = fadeInVol;
+          }
+        }, 100);
+      }).catch(e => console.error("Play blocked:", e));
+    }, 50); 
   },
 
   stopChannel() {
@@ -226,29 +235,32 @@ export const soundEngine: SoundEngine = {
     noiseStreamUrl = streamUrl;
 
     // 2. Создание нового нативного Audio для шумового потока
-    noiseAudio = new Audio(streamUrl);
-    noiseAudio.crossOrigin = "anonymous";
-    noiseAudio.preload = "auto";
-    noiseAudio.volume = 0; // Начинаем с тишины для плавного входа
+    const audio = new Audio();
+    audio.crossOrigin = "anonymous";
+    audio.preload = "auto";
+    audio.volume = 0;
+    audio.src = streamUrl;
+    noiseAudio = audio;
 
-    try {
-      noiseAudio.play().then(() => {
-        // Программный фейд-ин до текущего уровня громкости
+    setTimeout(() => {
+      audio.play().then(() => {
         let vol = 0;
         const fadeIn = setInterval(() => {
-          vol += 0.02;
-          if (vol >= noiseVolume || !noiseAudio) {
+          if (audio !== noiseAudio) {
             clearInterval(fadeIn);
-            if (noiseAudio) noiseAudio.volume = noiseVolume;
+            return;
+          }
+          vol += 0.02;
+          if (vol >= noiseVolume) {
+            clearInterval(fadeIn);
+            audio.volume = noiseVolume;
           } else {
-            noiseAudio.volume = vol;
+            audio.volume = vol;
           }
         }, 50);
       }).catch(e => console.warn("Noise stream play blocked:", e));
-    } catch (e) {
-      console.warn("Noise stream error:", e);
-    }
-  },
+    }, 50); 
+  }, 
 
   setNoiseVolume(volume) {
     if (!isBrowser) return;
