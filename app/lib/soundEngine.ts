@@ -4,6 +4,7 @@ type NoiseId = string;
 interface SoundEngine {
   playChannel: (id: ChannelId, streamUrl: string) => void;
   stopChannel: () => void;
+  setMainVolume: (volume: number) => void;
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
   stopNoise: () => void;
@@ -12,7 +13,16 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 
-// --- SILENCE HACK ---
+// --- STATE ---
+let mainAudio: HTMLAudioElement | null = null;
+let mainChannelId: string | null = null;
+let mainStreamUrl: string | null = null;
+
+let noiseAudio: HTMLAudioElement | null = null;
+let noiseId: string | null = null;
+let noiseStreamUrl: string | null = null;
+
+// --- SILENCE HACK (удержание аудио-карты от засыпания) ---
 let silencePlayer: HTMLAudioElement | null = null;
 const keepAudioContextAlive = () => {
   if (!isBrowser || silencePlayer) return;
@@ -24,32 +34,33 @@ const keepAudioContextAlive = () => {
   start();
 };
 
-// --- STATE ---
-let mainAudio: HTMLAudioElement | null = null;
-let mainChannelId: string | null = null;
-let mainStreamUrl: string | null = null;
-let noiseAudio: HTMLAudioElement | null = null;
-let noiseId: string | null = null;
-let noiseStreamUrl: string | null = null;
-
 export const soundEngine: SoundEngine = {
   initWatcher() {
     if (!isBrowser) return;
     keepAudioContextAlive();
+    // Мониторинг и авто-рекавери удалены по запросу
   },
 
   playChannel(id, streamUrl) {
-    if (!isBrowser || (id === mainChannelId && streamUrl === mainStreamUrl)) return;
-    if (mainAudio) { mainAudio.pause(); mainAudio.src = ""; }
+    if (!isBrowser) return;
     
+    // Если канал тот же — не дергаем поток
+    if (id === mainChannelId && streamUrl === mainStreamUrl) return;
+
+    if (mainAudio) {
+      mainAudio.pause();
+      mainAudio.src = "";
+    }
+
     mainChannelId = id;
     mainStreamUrl = streamUrl;
-    
+
     const audio = new Audio(streamUrl);
     audio.crossOrigin = "anonymous";
-    audio.volume = 0.8; // Базовая громкость без фейдов
+    audio.volume = 0; // Плавный вход (fade in) делает DesktopPlayer
     mainAudio = audio;
-    audio.play().catch(e => console.error("Main play blocked", e));
+    
+    audio.play().catch(e => console.warn("Main play blocked", e));
   },
 
   stopChannel() {
@@ -59,6 +70,10 @@ export const soundEngine: SoundEngine = {
     mainAudio = null;
     mainChannelId = null;
     mainStreamUrl = null;
+  },
+
+  setMainVolume(vol) {
+    if (mainAudio) mainAudio.volume = Math.max(0, Math.min(1, vol));
   },
 
   setNoise(id, streamUrl) {
@@ -71,7 +86,7 @@ export const soundEngine: SoundEngine = {
 
     const audio = new Audio(streamUrl);
     audio.crossOrigin = "anonymous";
-    audio.volume = 0; // Начинаем с 0, DesktopPlayer поднимет
+    audio.volume = 0; // Плавный вход делает DesktopPlayer
     noiseAudio = audio;
     
     setTimeout(() => {
