@@ -64,54 +64,56 @@ let noiseVolume = MASTER_NOISE_VOL;
 let isRecovering = false;
 
 const recoverConnection = () => {
-  if (isRecovering || !mainChannelId || !mainStreamUrl || !mainAudio) return;
+  if (isRecovering || !mainChannelId || !mainStreamUrl) return;
 
   isRecovering = true;
   console.warn(`SoundEngine: Попытка восстановления канала ${mainChannelId}`);
   
-  mainAudio.pause();
-  mainAudio.src = "";
-  mainAudio.load();
+  // 1. Полная зачистка старого объекта
+  if (mainAudio) {
+    mainAudio.pause();
+    mainAudio.src = "";
+    mainAudio.load();
+  }
 
+  // 2. Увеличиваем паузу перед реконнектом до 3 секунд, чтобы сервер "отпустил" старое соединение
   setTimeout(() => {
     const url = mainStreamUrl;
-    if (!url) {
-      isRecovering = false;
-      return;
-    }
+    if (!url) { isRecovering = false; return; }
 
     const recoveryUrl = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`;
-    
-    // ПРИМЕНЯЕМ ТАКТИКУ ПРОТИВ ЩЕЛЧКОВ ПРИ ВОССТАНОВЛЕНИИ
     const newAudio = new Audio();
-    newAudio.volume = 0; // Начинаем с тишины
-    newAudio.src = recoveryUrl;
     
+    // ВАЖНО: сначала вешаем обработчик ошибки, потом даем src
+    newAudio.onerror = () => {
+      console.error("SoundEngine: Ошибка загрузки потока при восстановлении.");
+      isRecovering = false; // Позволяем watcher-у попробовать еще раз через 10 сек
+    };
+
+    newAudio.crossOrigin = "anonymous";
+    newAudio.volume = 0;
+    newAudio.src = recoveryUrl;
+
     setTimeout(() => {
       newAudio.play()
         .then(() => {
           console.log("SoundEngine: Восстановление успешно");
           mainAudio = newAudio;
           isRecovering = false;
-          
-          // Плавный возврат громкости
+          // Плавный фейд-ин
           let v = 0;
           const f = setInterval(() => {
             v += 0.05;
-            if (v >= MASTER_MAIN_VOL) {
-              clearInterval(f);
-              newAudio.volume = MASTER_MAIN_VOL;
-            } else {
-              newAudio.volume = v;
-            }
+            if (v >= MASTER_MAIN_VOL) { clearInterval(f); newAudio.volume = MASTER_MAIN_VOL; }
+            else { newAudio.volume = v; }
           }, 100);
         })
         .catch(e => {
-          console.error("SoundEngine Recovery Error:", e.name);
+          console.error("SoundEngine: Play failed during recovery", e.name);
           isRecovering = false;
         });
-    }, 50);
-  }, 2000);
+    }, 100); // Чуть больше времени на инициализацию
+  }, 3000);
 };
 
 const checkHealth = () => {
