@@ -138,39 +138,33 @@ const animateNoiseVolume = (target: number, duration: number = 1000) => {
   };
 
   const handleNoiseToggle = (noise: AmbientChannel) => {
-    // Если нажимаем на уже активный шум — выключаем его плавно
+    // 1. ВЫКЛЮЧЕНИЕ
     if (activeNoiseId === noise.id) {
-      const currentVolBeforeFade = noiseVolume; // Запоминаем текущую громкость
-
-      // 1. Анимируем ползунок в 0
+      // Просто уводим фейдер в ноль и НЕ возвращаем его обратно
       animateNoiseVolume(0, 800); 
 
-      // 2. Ждем окончания анимации и выключаем поток
+      // Ждем завершения анимации, чтобы полностью убить поток
       setTimeout(() => {
         soundEngine.stopNoise();
         setActiveNoiseId(null);
-        // Возвращаем ползунок на место (визуально), чтобы при следующем включении 
-        // он не остался в нуле
-        setNoiseVolume(currentVolBeforeFade); 
+        // Теперь ползунок останется в 0 визуально — это честно.
       }, 850);
       return;
     }
 
-    // Если включаем новый шум
+    // 2. ВКЛЮЧЕНИЕ
     setActiveNoiseId(noise.id);
     
-    // Сначала ставим всё в 0 (тишина)
-    const targetVol = noiseVolume; // Целевая громкость, которая стоит на ползунке
+    // Сначала убеждаемся, что мы в полном нуле
     setNoiseVolume(0);
-    
-    // Запускаем поток
     soundEngine.setNoise(noise.id, noise.streamUrl);
     soundEngine.setNoiseVolume(0);
 
-    // Плавно поднимаем "ручку" фейдера до целевого значения
+    // Плавно выводим на "рабочую громкость" (например, 0.4 или 0.5)
+    // Можно использовать MASTER_NOISE_VOL из soundEngine или просто константу
     setTimeout(() => {
-      animateNoiseVolume(targetVol, 1000);
-    }, 50); // Микро-пауза для Chrome
+      animateNoiseVolume(0.4, 1000); 
+    }, 50);
   };
 
   const handleNoiseVolumeChange = (valuePercent: number) => {
