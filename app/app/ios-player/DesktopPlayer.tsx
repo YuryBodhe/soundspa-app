@@ -3,9 +3,20 @@
 import Image from 'next/image';
 import { useMemo, useState, useEffect } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
-import { Channel, AmbientChannel, TenantSlug } from './channels';
+import { Channel, AmbientChannel, TenantSlug, PromoCard } from './channels';
 import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
+
+interface DesktopPlayerProps {
+  tenantSlug?:       TenantSlug;
+  salonName?:        string;
+  subscriptionDate?: string;
+  subscriptionWarn?: boolean;
+  dailyMessage?:    string;
+  channels:          Channel[];
+  noiseChannels:     AmbientChannel[];
+  promoCards?:       PromoCard[];
+}
 
 export default function DesktopPlayer({
   salonName        = 'Spaquatoria',
@@ -29,7 +40,6 @@ export default function DesktopPlayer({
 
   useEffect(() => {
     soundEngine.initWatcher();
-    // Авто-восстановление при загрузке без анимации ползунков
     const saved = localStorage.getItem('last_active_channel');
     if (saved) {
       try {
@@ -45,21 +55,21 @@ export default function DesktopPlayer({
 
   const handleTogglePlay = () => {
     if (playing) {
-      soundEngine.stopChannel(); // Fade-out внутри движка
+      soundEngine.stopChannel();
       setPlaying(false);
     } else {
-      soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl); // Fade-in внутри движка
+      soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
       setPlaying(true);
     }
   };
 
-  const handleSelectChannel = (channel: Channel) => { // Добавь : Channel
+  const handleSelectChannel = (channel: Channel) => {
     setActiveChannelId(channel.id);
     soundEngine.playChannel(channel.id, channel.streamUrl);
     setPlaying(true);
   };
 
-  const handleNoiseToggle = (noise: AmbientChannel) => { // Добавь : AmbientChannel
+  const handleNoiseToggle = (noise: AmbientChannel) => {
     if (activeNoiseId === noise.id) {
       soundEngine.stopNoise();
       setActiveNoiseId(null);
@@ -76,32 +86,9 @@ export default function DesktopPlayer({
     soundEngine.setNoiseVolume(next);
   };
 
-  const sortedNoise = useMemo(
-    () => [...noiseChannels].sort((a, b) => a.order - b.order),
-    [noiseChannels]
-  );
-
-  // ... Рендер остается прежним, я убрал только логику анимации из обработчиков
-  return (
-    <div className={s.desktopShell}>
-      {/* HEADER, PLAYER ZONE, CHANNELS, NOISE - всё как в твоем исходнике */}
-      {/* В инпуте range используем noiseVolume напрямую */}
-      <input
-        type="range"
-        min={0} max={100}
-        value={Math.round(noiseVolume * 100)}
-        onChange={(e) => handleNoiseVolumeChange(Number(e.target.value))}
-        className={s.noiseRange}
-      />
-      {/* ... остальной UI */}
-    </div>
-  );
-
-const handleLogout = async () => {
-    // Останавливаем всё перед выходом
+  const handleLogout = async () => {
     soundEngine.stopChannel();
     soundEngine.stopNoise();
-    
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } catch (e) {
@@ -111,8 +98,14 @@ const handleLogout = async () => {
     }
   };
 
+  const sortedNoise = useMemo(
+    () => [...noiseChannels].sort((a, b) => a.order - b.order),
+    [noiseChannels]
+  );
+
   return (
     <div className={s.desktopShell}>
+      {/* ── HEADER ── */}
       <header className={s.desktopHeader}>
         <div>
           <div className={s.salonName}>{salonName}</div>
@@ -127,6 +120,7 @@ const handleLogout = async () => {
       </header>
 
       <main className={s.desktopMain}>
+        {/* ── PLAYER ZONE ── */}
         <section className={s.playerZone} style={{ alignItems: 'center' }}>
           <div className={s.nowPlayingLabel}>Now playing</div>
           <div className={s.channelName}>{activeChannel?.title}</div>
@@ -163,6 +157,7 @@ const handleLogout = async () => {
           </div>
         </section>
 
+        {/* ── CHANNELS ── */}
         <section className={s.desktopSection} style={{ marginTop: 32 }}>
           <div className={s.sectionHeader} style={{ padding: '0 0 12px' }}>
             <div className={s.sectionLabel}>Channels &amp; Updates</div>
@@ -170,12 +165,12 @@ const handleLogout = async () => {
           </div>
           <div className={s.desktopCardsRow}>
             {channels.map((channel: Channel) => (
-  <div
-    key={channel.id}
-    className={`${s.chCard} ${s.chCardDesktop} ${activeChannelId === channel.id ? s.chCardActive : ''}`}
-    onClick={() => handleSelectChannel(channel)}
-    role="button"
-  >
+              <div
+                key={channel.id}
+                className={`${s.chCard} ${s.chCardDesktop} ${activeChannelId === channel.id ? s.chCardActive : ''}`}
+                onClick={() => handleSelectChannel(channel)}
+                role="button"
+              >
                 <div className={s.cardImg} style={{ height: 120 }}>
                   <img src={channel.image || '/channel-default.jpg'} alt={channel.title} className={s.cardImgPhoto} style={{ position: 'absolute', height: '100%', width: '100%', inset: 0, objectFit: 'cover' }} />
                   <div className={s.cardImgOverlay} />
@@ -195,6 +190,7 @@ const handleLogout = async () => {
           </div>
         </section>
 
+        {/* ── NOISE ── */}
         <section className={s.desktopSection} style={{ marginTop: 32, marginBottom: 32 }}>
           <div className={s.sectionHeader} style={{ padding: '0 0 12px' }}>
             <div className={s.sectionLabel}>Ambient noise</div>
@@ -221,7 +217,7 @@ const handleLogout = async () => {
           </div>
 
           <div className={s.desktopNoiseRow} style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto' }}>
-            {sortedNoise.map((noise) => (
+            {sortedNoise.map((noise: AmbientChannel) => (
               <div
                 key={noise.id}
                 className={`${s.chCard} ${s.noiseCardDesktop} ${activeNoiseId === noise.id ? s.noiseCardActive : ''}`}
