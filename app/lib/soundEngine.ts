@@ -12,284 +12,83 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 
-// --- SILENCE HACK ZONE ---
+// --- SILENCE HACK ---
 let silencePlayer: HTMLAudioElement | null = null;
-
 const keepAudioContextAlive = () => {
   if (!isBrowser || silencePlayer) return;
-  
-  // Крошечный WAV с тишиной (удерживает аудио-карту активной)
   const silentSrc = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
   silencePlayer = new Audio(silentSrc);
   silencePlayer.loop = true;
-  silencePlayer.volume = 0.001; 
-  
-  const startSilent = () => {
-    if (!silencePlayer) return;
-    silencePlayer.play().catch(() => {
-      // Если браузер заблокировал автоплей (нужен жест пользователя)
-      window.addEventListener('click', startSilent, { once: true });
-    });
-  };
-  
-  startSilent();
-}; 
-// --- END SILENCE HACK ---
+  silencePlayer.volume = 0.001;
+  const start = () => silencePlayer?.play().catch(() => window.addEventListener('click', start, { once: true }));
+  start();
+};
 
-// Проверка на Apple (нужна для блокировки изменений на iOS)
-const isApple = isBrowser && (
-  /iPhone|iPad|iPod/.test(navigator.platform) || 
-  (navigator.userAgent.includes("Mac") && "ontouchend" in document)
-);
-
-// ЭТАЛОННЫЕ ЗНАЧЕНИЯ ГРОМКОСТИ
-const MASTER_MAIN_VOL = 0.8;
-const MASTER_NOISE_VOL = 0.5;
-
-// Состояния основного потока
+// --- STATE ---
 let mainAudio: HTMLAudioElement | null = null;
-let mainChannelId: string | null = null; 
+let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
-let lastTimeUpdate = 0;
-
-// Состояния шумового потока
 let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
-let noiseVolume = MASTER_NOISE_VOL;
-
-// --- WATCHER & RECOVERY LOGIC ---
-
-// Флаг, чтобы не запускать несколько восстановлений одновременно
-let isRecovering = false;
-
-const recoverConnection = () => {
-  if (isRecovering || !mainChannelId || !mainStreamUrl) return;
-
-  isRecovering = true;
-  console.warn(`SoundEngine: Попытка восстановления канала ${mainChannelId}`);
-  
-  // 1. Полная зачистка старого объекта
-  if (mainAudio) {
-    mainAudio.pause();
-    mainAudio.src = "";
-    mainAudio.load();
-  }
-
-  // 2. Увеличиваем паузу перед реконнектом до 3 секунд, чтобы сервер "отпустил" старое соединение
-  setTimeout(() => {
-    const url = mainStreamUrl;
-    if (!url) { isRecovering = false; return; }
-
-    const recoveryUrl = `${url}${url.includes('?') ? '&' : '?'}cb=${Date.now()}`;
-    const newAudio = new Audio();
-    
-    // ВАЖНО: сначала вешаем обработчик ошибки, потом даем src
-    newAudio.onerror = () => {
-      console.error("SoundEngine: Ошибка загрузки потока при восстановлении.");
-      isRecovering = false; // Позволяем watcher-у попробовать еще раз через 10 сек
-    };
-
-    newAudio.crossOrigin = "anonymous";
-    newAudio.volume = 0;
-    newAudio.src = recoveryUrl;
-
-    setTimeout(() => {
-      newAudio.play()
-        .then(() => {
-          console.log("SoundEngine: Восстановление успешно");
-          mainAudio = newAudio;
-          isRecovering = false;
-          // Плавный фейд-ин
-          let v = 0;
-          const f = setInterval(() => {
-            v += 0.05;
-            if (v >= MASTER_MAIN_VOL) { clearInterval(f); newAudio.volume = MASTER_MAIN_VOL; }
-            else { newAudio.volume = v; }
-          }, 100);
-        })
-        .catch(e => {
-          console.error("SoundEngine: Play failed during recovery", e.name);
-          isRecovering = false;
-        });
-    }, 100); // Чуть больше времени на инициализацию
-  }, 3000);
-};
-
-const checkHealth = () => {
-  if (!mainAudio || mainAudio.paused || isRecovering) return;
-
-  if (mainAudio.currentTime === lastTimeUpdate) {
-    // Если поток висит в буферизации (readyState 1 или 2) больше 15-20 секунд
-    // Значит, он сам уже не выберется. Нужно "толкнуть".
-    
-    if (mainAudio.readyState <= 2) {
-      console.warn("SoundEngine: Затянувшаяся буферизация. Переподключаюсь...");
-      recoverConnection(); // Force recovery
-    } else {
-      recoverConnection();
-    }
-  }
-  lastTimeUpdate = mainAudio.currentTime;
-};
-
-const checkScheduledRestart = () => {
-  const now = new Date();
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  
-  // Перезагрузка в 4 утра только для десктопов
-  if (!isMobile && now.getHours() === 4 && now.getMinutes() === 0 && now.getSeconds() < 15) {
-    console.log("SoundEngine: Плановая перезагрузка страницы.");
-    
-    localStorage.setItem('last_active_channel', JSON.stringify({
-      id: mainChannelId, 
-      url: mainStreamUrl
-    }));
-    
-    window.location.reload();
-  }
-};
-
-// --- END WATCHER ---
-
-const clampVolume = (value: number) => {
-  if (Number.isNaN(value)) return 0;
-  return Math.max(0, Math.min(1, value));
-};
 
 export const soundEngine: SoundEngine = {
   initWatcher() {
     if (!isBrowser) return;
-
-    // Запускаем удержание аудио-карты
     keepAudioContextAlive();
-
-    setInterval(() => {
-      checkHealth();
-      checkScheduledRestart();
-    }, 10000);
   },
 
   playChannel(id, streamUrl) {
-    if (!isBrowser) return;
-    if (id === mainChannelId && streamUrl === mainStreamUrl) return;
-
-    // --- Фейд-аут старого (без изменений) ---
-    if (mainAudio) {
-      const oldAudio = mainAudio;
-      let vol = oldAudio.volume;
-      const fadeOut = setInterval(() => {
-        vol -= 0.05;
-        if (vol <= 0) {
-          clearInterval(fadeOut);
-          oldAudio.pause();
-          oldAudio.src = "";
-        } else {
-          oldAudio.volume = Math.max(0, vol);
-        }
-      }, 50);
-    }
-
-    if (!streamUrl) return;
-
+    if (!isBrowser || (id === mainChannelId && streamUrl === mainStreamUrl)) return;
+    if (mainAudio) { mainAudio.pause(); mainAudio.src = ""; }
+    
     mainChannelId = id;
     mainStreamUrl = streamUrl;
-    lastTimeUpdate = 0;
     
-    // --- ИСПРАВЛЕНИЕ ДЛЯ CHROME ---
-    // 1. Создаем объект БЕЗ URL (пустой)
-    const audio = new Audio();
-    audio.volume = 0;
-    
-    // 2. Только после установки громкости даем URL
-    audio.src = streamUrl;
+    const audio = new Audio(streamUrl);
+    audio.crossOrigin = "anonymous";
+    audio.volume = 0.8; // Базовая громкость без фейдов
     mainAudio = audio;
-
-    // 3. Небольшая пауза (50мс), чтобы Chrome успел "прожевать" настройки
-    setTimeout(() => {
-      audio.play().then(() => {
-        let fadeInVol = 0;
-        const fadeIn = setInterval(() => {
-          fadeInVol += 0.05;
-          if (fadeInVol >= MASTER_MAIN_VOL) {
-            clearInterval(fadeIn);
-            if (audio) audio.volume = MASTER_MAIN_VOL;
-          } else {
-            if (audio) audio.volume = fadeInVol;
-          }
-        }, 100);
-      }).catch(e => console.error("Play blocked:", e));
-    }, 50); 
+    audio.play().catch(e => console.error("Main play blocked", e));
   },
 
   stopChannel() {
-    if (!isBrowser || !mainAudio) return;
-    const current = mainAudio;
-    let vol = current.volume;
-    const fadeOut = setInterval(() => {
-      vol -= 0.05;
-      if (vol <= 0) {
-        clearInterval(fadeOut);
-        current.pause();
-        current.src = "";
-        current.load();
-        if (mainAudio === current) {
-          mainAudio = null;
-          mainChannelId = null;
-          mainStreamUrl = null;
-        }
-      } else {
-        current.volume = Math.max(0, vol);
-      }
-    }, 50);
+    if (!mainAudio) return;
+    mainAudio.pause();
+    mainAudio.src = "";
+    mainAudio = null;
+    mainChannelId = null;
+    mainStreamUrl = null;
   },
 
- setNoise(id, streamUrl) {
-    if (!isBrowser) return;
-    if (id === noiseId && streamUrl === noiseStreamUrl) return;
-
-    if (noiseAudio) {
-      noiseAudio.pause();
-      noiseAudio.src = "";
-      noiseAudio.load();
-    }
-
+  setNoise(id, streamUrl) {
+    if (!isBrowser || (id === noiseId && streamUrl === noiseStreamUrl)) return;
+    if (noiseAudio) { noiseAudio.pause(); noiseAudio.src = ""; }
+    
     if (!streamUrl) return;
-
     noiseId = id;
     noiseStreamUrl = streamUrl;
 
-    const audio = new Audio();
+    const audio = new Audio(streamUrl);
     audio.crossOrigin = "anonymous";
-    audio.preload = "auto";
-    audio.volume = 0; // Оставляем 0, DesktopPlayer сам поднимет фейдер
-    audio.src = streamUrl;
+    audio.volume = 0; // Начинаем с 0, DesktopPlayer поднимет
     noiseAudio = audio;
-
-    // Важно: в Chrome play() лучше вызывать через микро-паузу даже здесь
+    
     setTimeout(() => {
-        audio.play().catch(e => console.warn("Noise play blocked:", e));
+      audio.play().catch(e => console.warn("Noise blocked", e));
     }, 50);
   },
 
   setNoiseVolume(volume) {
-    if (!isBrowser) return;
-    noiseVolume = clampVolume(volume);
-    if (noiseAudio) {
-      noiseAudio.volume = noiseVolume;
-    }
+    if (noiseAudio) noiseAudio.volume = Math.max(0, Math.min(1, volume));
   },
 
   stopNoise() {
-    if (!isBrowser || !noiseAudio) return;
-    
-    // Мгновенный стоп (так как DesktopPlayer уже увел громкость в 0)
+    if (!noiseAudio) return;
     noiseAudio.pause();
     noiseAudio.src = "";
-    noiseAudio.load();
-    
     noiseAudio = null;
     noiseId = null;
     noiseStreamUrl = null;
-  },
+  }
 };
