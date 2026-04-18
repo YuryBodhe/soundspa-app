@@ -7,11 +7,34 @@ interface SoundEngine {
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
   stopNoise: () => void;
-  // Добавим метод инициализации мониторинга
   initWatcher: () => void;
 }
 
 const isBrowser = typeof window !== "undefined";
+
+// --- SILENCE HACK ZONE ---
+let silencePlayer: HTMLAudioElement | null = null;
+
+const keepAudioContextAlive = () => {
+  if (!isBrowser || silencePlayer) return;
+  
+  // Крошечный WAV с тишиной (удерживает аудио-карту активной)
+  const silentSrc = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  silencePlayer = new Audio(silentSrc);
+  silencePlayer.loop = true;
+  silencePlayer.volume = 0.001; 
+  
+  const startSilent = () => {
+    if (!silencePlayer) return;
+    silencePlayer.play().catch(() => {
+      // Если браузер заблокировал автоплей (нужен жест пользователя)
+      window.addEventListener('click', startSilent, { once: true });
+    });
+  };
+  
+  startSilent();
+}; 
+// --- END SILENCE HACK ---
 
 // Проверка на Apple (нужна для блокировки изменений на iOS)
 const isApple = isBrowser && (
@@ -133,13 +156,16 @@ const clampVolume = (value: number) => {
 };
 
 export const soundEngine: SoundEngine = {
-  // Инициализация мониторинга (вызвать один раз при старте приложения)
   initWatcher() {
     if (!isBrowser) return;
+
+    // Запускаем удержание аудио-карты
+    keepAudioContextAlive();
+
     setInterval(() => {
       checkHealth();
       checkScheduledRestart();
-    }, 10000); // Проверка каждые 10 секунд
+    }, 10000);
   },
 
   playChannel(id, streamUrl) {
