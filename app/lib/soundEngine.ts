@@ -80,12 +80,21 @@ const recoverConnection = () => {
 };
 
 const checkHealth = () => {
-  // Если плеер на паузе или уже идет восстановление — ничего не делаем
+  // Лог для отладки (потом удалим)
+  // console.log(`HealthCheck: state=${mainAudio?.readyState}, paused=${mainAudio?.paused}, time=${mainAudio?.currentTime}`);
+
   if (!mainAudio || mainAudio.paused || isRecovering) return;
 
-  // Если время в плеере не изменилось за 10 секунд — поток "встал"
   if (mainAudio.currentTime === lastTimeUpdate) {
-    recoverConnection();
+    console.warn("SoundEngine: Пульс не обнаружен. Проверяю readyState...");
+    
+    // Если поток просто буферизуется (readyState 1 или 2), дадим ему еще шанс
+    if (mainAudio.readyState <= 2) {
+      console.log("SoundEngine: Поток в режиме ожидания данных (буферизация).");
+      // Можно не реконектить сразу, а подождать еще цикл
+    } else {
+      recoverConnection();
+    }
   }
   lastTimeUpdate = mainAudio.currentTime;
 };
