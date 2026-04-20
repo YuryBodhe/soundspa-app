@@ -1,9 +1,8 @@
-// drizzle.config.ts
 // @ts-nocheck
 import type { Config } from "drizzle-kit";
 
 export default {
-  schema: "./db/index.ts",   // 🔥 ВАЖНО — через агрегатор
+  schema: "./db/schema/index.ts",
   out: "./drizzle/pg",
   dialect: "postgresql",
   dbCredentials: {

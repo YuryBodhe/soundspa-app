@@ -9,16 +9,18 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
-// ---------- tenants ----------
+// ---------- TENANTS (Салоны) ----------
 
 export const tenants = pgTable("tenants", {
   id: serial("id").primaryKey(),
-  // Старое поле name сохраняем для совместимости с данными
+  // Системное имя (например, для админки)
   name: text("name").notNull(),
+  // Уникальный адрес для входа в плеер (soundspa.com/slug)
   slug: text("slug").notNull().unique(),
-  // Новое поле брендового названия для UI
+  // Красивое название для отображения внутри плеера
   brandName: text("brand_name"),
-  // Даты триала/подписки — храним как timestamptz
+  
+  // Даты триала
   trialStartedAt: timestamp("trial_started_at", {
     withTimezone: true,
     mode: "string",
@@ -27,28 +29,31 @@ export const tenants = pgTable("tenants", {
     withTimezone: true,
     mode: "string",
   }),
+  
+  // КРИТИЧЕСКОЕ ПОЛЕ: До какого числа оплачен сервис.
+  // На основе этого поля мы считаем "Осталось дней" в админке.
   paidTill: timestamp("paid_till", {
     withTimezone: true,
     mode: "string",
   }),
+
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-// ---------- users ----------
+// ---------- USERS (Пользователи) ----------
 
 export const users = pgTable(
   "users",
   {
     id: serial("id").primaryKey(),
     email: text("email").notNull(),
-    // В новой модели авторизации используем magic-link,
-    // но поле пароля оставляем для совместимости.
+    // Пароль оставляем для совместимости, хотя переходим на Magic Links
     password: text("password").notNull(),
     tenantId: integer("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
   },
   (table) => ({
-    // Совмещённый уникальный индекс по email + tenantId
     uniqueEmailTenant: uniqueIndex("unique_email_tenant").on(
       table.email,
       table.tenantId,
@@ -56,30 +61,22 @@ export const users = pgTable(
   }),
 );
 
-// ---------- channels ----------
+// ---------- CHANNELS (Музыкальные каналы) ----------
 
 export const channels = pgTable("channels", {
   id: serial("id").primaryKey(),
-  // Уникальный код/slug канала
-  code: text("code").notNull().unique(),
+  code: text("code").notNull().unique(), // Короткий код (jazz, relax)
   slug: text("slug").notNull().unique(),
-  // Отображаемое имя для UI
   displayName: text("display_name").notNull(),
-  // Настроение/категория (relax, dynamic, etc.)
   mood: text("mood"),
-  // Тип канала: основной музыкальный или шум/ambient
-  kind: text("kind").notNull().default("music"),
-  // URL потока
+  kind: text("kind").notNull().default("music"), // music или ambient
   streamUrl: text("stream_url").notNull(),
-  // Картинка превью
   image: text("image"),
-  // Глобальный порядок по умолчанию
   order: integer("order").notNull().default(0),
-  // Флаг "новый" канал для бейджа в UI
   isNew: boolean("is_new").notNull().default(false),
 });
 
-// ---------- tenant_channels ----------
+// ---------- TENANT_CHANNELS (Доступные каналы для салона) ----------
 
 export const tenantChannels = pgTable(
   "tenant_channels",
@@ -90,7 +87,6 @@ export const tenantChannels = pgTable(
     channelId: integer("channel_id")
       .notNull()
       .references(() => channels.id, { onDelete: "cascade" }),
-    // Индивидуальный порядок канала для конкретного тенанта
     order: integer("order").notNull().default(0),
   },
   (table) => ({
@@ -101,21 +97,39 @@ export const tenantChannels = pgTable(
   }),
 );
 
-// ---------- invites ----------
+// ---------- PAYMENTS (Платежи Prodamus) ----------
+
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id")
+    .notNull()
+    .references(() => tenants.id, { onDelete: "cascade" }),
+  
+  amount: text("amount"), // Сумма текстом (как приходит от платежки)
+  status: text("status").default("pending"), // pending, success, failed
+  
+  // Сколько дней подписки было куплено (30, 365 и т.д.)
+  // Это поле поможет в аналитике видеть, кто берет "оптом"
+  periodDays: integer("period_days").default(30),
+  
+  prodamusId: text("prodamus_id"), // Внешний ID транзакции
+  orderId: text("order_id"),       // Внутренний ID заказа
+  
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).defaultNow(),
+});
+
+// ---------- АВТОРИЗАЦИЯ (Инвайты и Токены) ----------
 
 export const invites = pgTable("invites", {
   id: serial("id").primaryKey(),
   code: text("code").notNull().unique(),
   maxUses: integer("max_uses"),
   usedCount: integer("used_count").notNull().default(0),
-  // Дата истечения инвайта
-  expiresAt: timestamp("expires_at", {
-    withTimezone: true,
-    mode: "string",
-  }),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }),
 });
-
-// ---------- login_tokens ----------
 
 export const loginTokens = pgTable("login_tokens", {
   id: serial("id").primaryKey(),
@@ -123,21 +137,16 @@ export const loginTokens = pgTable("login_tokens", {
   userId: integer("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  expiresAt: timestamp("expires_at", {
-    withTimezone: true,
-    mode: "string",
-  }).notNull(),
-  usedAt: timestamp("used_at", {
-    withTimezone: true,
-    mode: "string",
-  }),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true, mode: "string" }),
 });
 
-// ---------- relations ----------
+// ---------- RELATIONS (Связи между таблицами) ----------
 
 export const tenantRelations = relations(tenants, ({ many }) => ({
   users: many(users),
   tenantChannels: many(tenantChannels),
+  payments: many(payments),
 }));
 
 export const userRelations = relations(users, ({ one }) => ({
@@ -151,43 +160,16 @@ export const channelRelations = relations(channels, ({ many }) => ({
   tenantChannels: many(tenantChannels),
 }));
 
-export const tenantChannelsRelations = relations(
-  tenantChannels,
-  ({ one }) => ({
-    tenant: one(tenants, {
-      fields: [tenantChannels.tenantId],
-      references: [tenants.id],
-    }),
-    channel: one(channels, {
-      fields: [tenantChannels.channelId],
-      references: [channels.id],
-    }),
+export const tenantChannelsRelations = relations(tenantChannels, ({ one }) => ({
+  tenant: one(tenants, {
+    fields: [tenantChannels.tenantId],
+    references: [tenants.id],
   }),
-);
-
-// ---------- payments (Prodamus) ----------
-
-export const payments = pgTable("payments", {
-  id: serial("id").primaryKey(),
-  tenantId: integer("tenant_id")
-    .notNull()
-    .references(() => tenants.id, { onDelete: "cascade" }),
-  // Сумма платежа
-  amount: text("amount"),
-  // Статус: pending, success, failed
-  status: text("status").default("pending"),
-  // ID транзакции из системы Prodamus
-  prodamusId: text("prodamus_id"),
-  // Твой внутренний ID заказа
-  orderId: text("order_id"),
-  // Дата создания транзакции
-  createdAt: timestamp("created_at", {
-    withTimezone: true,
-    mode: "string",
-  }).defaultNow(),
-});
-
-// ---------- payments relations ----------
+  channel: one(channels, {
+    fields: [tenantChannels.channelId],
+    references: [channels.id],
+  }),
+}));
 
 export const paymentRelations = relations(payments, ({ one }) => ({
   tenant: one(tenants, {
@@ -195,12 +177,3 @@ export const paymentRelations = relations(payments, ({ one }) => ({
     references: [tenants.id],
   }),
 }));
-
-// Не забудь обновить tenantRelations выше в файле, 
-// добавив many(payments), чтобы связи работали в обе стороны:
-//
-// export const tenantRelations = relations(tenants, ({ many }) => ({
-//   users: many(users),
-//   tenantChannels: many(tenantChannels),
-//   payments: many(payments), <--- Добавь эту строку в существующий tenantRelations
-// }));

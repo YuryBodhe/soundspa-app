@@ -16,6 +16,7 @@ const isBrowser = typeof window !== "undefined";
 const FADE_TIME = 3000; 
 
 // --- Внутреннее состояние ---
+const sessionId = isBrowser ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}` : 'node';
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
@@ -61,6 +62,28 @@ const keepAudioContextAlive = () => {
 export const soundEngine: SoundEngine = {
   initWatcher() {
     if (isBrowser) keepAudioContextAlive();
+    // Запускаем пульс мониторинга
+    setInterval(async () => {
+      try {
+        await fetch('/api/monitoring/ping', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: 1, // Позже можно сделать динамическим
+            status: mainAudio && !mainAudio.paused ? "online" : "paused",
+            metadata: {
+              sessionId: sessionId,
+              channelId: mainChannelId,
+              noiseId: noiseId,
+              device: "Desktop-Player",
+              version: "1.1.0"
+            }
+          })
+        });
+      } catch (e) {
+        // Не спамим в консоль, чтобы не забивать логи браузера
+      }
+    }, 60000); // Раз в минуту
   },
 
   playChannel(id, url) {

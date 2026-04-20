@@ -26,6 +26,9 @@ export default function DesktopPlayer({
   noiseChannels    = [],
 }: any) {
   
+// Генерируем уникальный ID сессии при загрузке компонента
+  const [sessionId] = useState(() => `desktop_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`);
+
   const [playing,         setPlaying]         = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(channels[0]?.id ?? '');
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
