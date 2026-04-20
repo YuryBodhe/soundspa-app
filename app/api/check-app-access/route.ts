@@ -15,25 +15,33 @@ export async function GET() {
       return NextResponse.json({ error: 'No session' }, { status: 401 });
     }
 
-    // 1. Ищем сессию в базе
+    // 1. Ищем сессию
     const sessionData = await db.query.loginTokens.findFirst({
       where: eq(loginTokens.token, token),
-      with: {
-        user: {
-          with: {
-            tenant: true
-          }
-        }
-      }
-    }) as any; // Добавляем 'as any' прямо здесь к результату запроса
+    });
 
-    // Теперь TS считает, что sessionData может содержать что угодно, и не будет блокировать билд
-    if (!sessionData || !sessionData.user?.tenant) {
-      return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
+    if (!sessionData) {
+      return NextResponse.json({ error: 'No session found' }, { status: 401 });
     }
 
-    const tenant = sessionData.user.tenant;
-    const userEmail = sessionData.user.email; 
+    // 2. Ищем пользователя и его тенанта отдельным простым запросом
+    const userData = await db.query.users.findFirst({
+      where: eq(users.id, sessionData.userId),
+    });
+
+    if (!userData) {
+      return NextResponse.json({ error: 'User not found' }, { status: 401 });
+    }
+
+    const tenant = await db.query.tenants.findFirst({
+      where: eq(tenants.id, userData.tenantId),
+    });
+
+    if (!tenant) {
+      return NextResponse.json({ error: 'Tenant not found' }, { status: 401 });
+    }
+
+    const userEmail = userData.email;
     const now = new Date();
 
     // --- МАСТЕР-КЛЮЧ ---
