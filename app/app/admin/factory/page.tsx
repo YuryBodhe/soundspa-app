@@ -34,7 +34,7 @@ export default async function AdminFactoryPage() {
           <tbody>
             {allAgents.map(agent => (
               <tr key={agent.id}>
-                <td><span className="badge">{agent.role}</span></td>
+                <td><span className="badge">{agent.name}</span></td>
                 <td>
                   <textarea 
                     defaultValue={agent.systemPrompt ?? ""} 
@@ -66,8 +66,10 @@ export default async function AdminFactoryPage() {
           <tbody>
             {recentActions.map(act => (
               <tr key={act.id}>
-                <td className="text-dim">{new Date(act.createdAt).toLocaleTimeString()}</td>
-                <td>{act.tenant?.slug}</td>
+               <td className="text-dim">
+               {act.createdAt ? new Date(act.createdAt).toLocaleTimeString() : "—"}
+              </td>
+                <td>{(act.tenant as any)?.slug || "—"}</td>
                 <td>{act.action}</td>
                 <td>
                    <span className={`status-pill ${act.status}`}>
