@@ -14,6 +14,7 @@ import {
 import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
 
+
 interface IosPlayerProps {
   tenantSlug?:       TenantSlug;
   salonName?:        string;
@@ -26,6 +27,7 @@ interface IosPlayerProps {
 }
 
 export default function IosPlayer({
+  tenantSlug,
   salonName        = 'Spaquatoria',
   subscriptionDate = 'Until 12 April 2026',
   subscriptionWarn = false,
@@ -33,10 +35,14 @@ export default function IosPlayer({
   noiseChannels    = [],
 }: IosPlayerProps) {
   
-  // --- Инициализация ---
+// --- Инициализация ---
   useEffect(() => {
-    soundEngine.initWatcher(); // Запуск Silence Hack для iOS
+    // 1. Запускаем вочер
+    if (tenantSlug) {
+      soundEngine.initWatcher(tenantSlug);
+    }
     
+    // 2. Восстанавливаем сохраненный канал
     const saved = localStorage.getItem('last_active_channel');
     if (saved) {
       try {
@@ -46,10 +52,11 @@ export default function IosPlayer({
           // но мы подготавливаем состояние.
           setActiveChannelId(id);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("Ошибка парсинга сохраненного канала", e);
+      }
     }
-  }, []);
-
+  }, [tenantSlug]); // 
   // --- Состояния ---
   const [playing,         setPlaying]         = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(channels[0]?.id ?? '');

@@ -20,10 +20,12 @@ interface DesktopPlayerProps {
 
 export default function DesktopPlayer({
   salonName        = 'Spaquatoria',
+  tenantSlug,
   subscriptionDate = '',
   subscriptionWarn = false,
   channels         = [],
   noiseChannels    = [],
+
 }: any) {
   
 // Генерируем уникальный ID сессии при загрузке компонента
@@ -42,7 +44,7 @@ export default function DesktopPlayer({
   const canvasRef = useWaveCanvas(playing);
 
   useEffect(() => {
-    soundEngine.initWatcher();
+    soundEngine.initWatcher(tenantSlug);
     const saved = localStorage.getItem('last_active_channel');
     if (saved) {
       try {
