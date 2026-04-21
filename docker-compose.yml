@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  # Твоё основное приложение
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+      # Если у тебя есть другие переменные в .env, они подтянутся через env_file ниже
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+
+  # Твоя база данных
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: soundspa
+      POSTGRES_PASSWORD: QQyo7zDqJMukdveU3C1LuJPyCAdDehbU 
+      POSTGRES_DB: soundspa
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # Наши "глаза" - Drizzle Studio
+  drizzle-studio:
+    image: node:18-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "4983:4983"
+    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0
+    environment:
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+
+volumes:
+  pgdata:

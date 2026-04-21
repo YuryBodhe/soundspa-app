@@ -1,39 +1,14 @@
-name: Deploy to Hetzner
-
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            # Переходим в папку проекта
+script: |
+            # 1. Переходим в папку проекта
             cd /opt/soundspa-app
             
-            # 1. Принудительно сбрасываем локальные изменения на сервере (если они были)
-            # Это гарантирует, что git pull не застрянет из-за конфликтов
+            # 2. Сбрасываем лишнее и тянем код
             git reset --hard origin/main
-            
-            # 2. Подтягиваем свежий код из GitHub
             git pull origin main
             
-            # 3. Устанавливаем зависимости
-            npm install
+            # 3. Команда «Магия Докера»
+            # Она сама поймет, что код изменился, пересоберет образ и перезапустит контейнер
+            docker-compose up -d --build
             
-            # 4. Собираем проект
-            # Если здесь будет ошибка (например, в типах TS), GitHub Action остановится
-            # и пометит билд красным, что сразу даст тебе сигнал
-            npm run build
-            
-            # 5. Перезапускаем конкретный процесс
-            # Лучше перезапускать по имени, чтобы не трогать другие сервисы
-            npx pm2 restart soundspa || npx pm2 restart all
+            # 4. Опционально: очистка старых образов (чтобы диск не забивался)
+            docker image prune -f
