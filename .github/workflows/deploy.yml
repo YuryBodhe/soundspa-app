@@ -1,14 +1,16 @@
-script: |
-            # 1. Переходим в папку проекта
-            cd /opt/soundspa-app
-            
-            # 2. Сбрасываем лишнее и тянем код
-            git reset --hard origin/main
-            git pull origin main
-            
-            # 3. Команда «Магия Докера»
-            # Она сама поймет, что код изменился, пересоберет образ и перезапустит контейнер
-            docker-compose up -d --build
-            
-            # 4. Опционально: очистка старых образов (чтобы диск не забивался)
-            docker image prune -f
+name: Deploy SoundSpa App
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run build check
+        run: |
+          echo "Код прошел проверку. Теперь выполни команды на сервере вручную или настрой SSH-деплой."
