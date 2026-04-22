@@ -50,13 +50,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Теперь просто запускаем, она сама найдет json
-    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0
+    # Указываем рабочий каталог, чтобы npx понимал, где он находится
+    working_dir: /app
+    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0 --config drizzle.config.json
     restart: unless-stopped
     ports:
       - "4983:4983"
     env_file:
       - .env
+    # 🔥 ВОТ ЭТОТ ТУННЕЛЬ:
+    volumes:
+      - ./drizzle.config.json:/app/drizzle.config.json
+      - ./db:/app/db
+    environment:
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
     depends_on:
       - postgres
       # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО:
