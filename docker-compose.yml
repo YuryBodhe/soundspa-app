@@ -61,3 +61,6 @@ services:
       - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
     depends_on:
       - postgres
+      # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО:
+volumes:
+  pgdata:
