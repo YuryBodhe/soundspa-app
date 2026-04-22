@@ -50,13 +50,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Добавляем флаг --config и указываем твой .ts файл
-    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0 --config drizzle.config.ts
+    # Явно указываем файл конфигурации и хост, чтобы студия была доступна извне
+    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0 --config ./drizzle.config.ts
     restart: unless-stopped
     ports:
       - "4983:4983"
     env_file:
       - .env
+    # Пробрасываем файлы проекта внутрь, чтобы Студия видела drizzle.config.ts и папку db
+    volumes:
+      - .:/app
+    working_dir: /app
     environment:
       - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
     depends_on:
