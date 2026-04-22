@@ -11,6 +11,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Run build check
-        run: |
-          echo "Код прошел проверку. Теперь выполни команды на сервере вручную или настрой SSH-деплой."
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/soundspa-app
+            git reset --hard origin/main
+            git pull origin main
+            # Собираем только 'app', чтобы не вешать память сервера
+            docker-compose build app
+            docker-compose up -d --remove-orphans
+            docker image prune -f
