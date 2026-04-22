@@ -1,0 +1,8 @@
+{
+  "schema": "./db/index.ts",
+  "out": "./drizzle/pg",
+  "dialect": "postgresql",
+  "dbCredentials": {
+    "url": "postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa"
+  }
+}
