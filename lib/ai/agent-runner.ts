@@ -1,6 +1,7 @@
 import { db } from "@/lib/db.pg";
 import { agents } from "@/db/schema/agents";
 import { eq } from "drizzle-orm";
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
 
 export async function runAgent(agentName: string, context: string) {
   // 1. Ищем агента в базе по имени
@@ -9,7 +10,9 @@ export async function runAgent(agentName: string, context: string) {
   });
 
   if (!agent) {
-    throw new Error(`Агент с именем "${agentName}" не найден в базе.`);
+    const errorMsg = `Агент с именем "${agentName}" не найден в базе.`;
+    await sendTelegramMessage(`❌ **Ошибка системы:** ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
   if (!agent.isActive) {
@@ -23,16 +26,16 @@ export async function runAgent(agentName: string, context: string) {
       headers: {
         "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://soundspa.ai", // Опционально для OpenRouter
+        "HTTP-Referer": "https://soundspa.ai",
         "X-Title": "SoundSpa AI Factory",
       },
       body: JSON.stringify({
-        model: agent.model, // Наша NVIDIA Nemotron из базы
+        model: agent.model || "nvidia/llama-3.1-nemotron-70b-instruct",
         messages: [
-          { role: "system", content: agent.systemPrompt }, // Тот самый Watcher-промпт
-          { role: "user", content: context }, // Данные о пингах, которые мы передадим
+          { role: "system", content: agent.systemPrompt },
+          { role: "user", content: context },
         ],
-        temperature: agent.temperature,
+        temperature: agent.temperature ?? 0.7,
       }),
     });
 
@@ -42,9 +45,20 @@ export async function runAgent(agentName: string, context: string) {
       throw new Error(`Ошибка OpenRouter: ${data.error.message}`);
     }
 
-    return data.choices[0].message.content;
-  } catch (error) {
+    const result = data.choices[0].message.content;
+
+    // 🔥 Если это наш Watcher, отправляем его отчет в Телеграм
+    if (agentName === "watcher") {
+      await sendTelegramMessage(`🤖 **Отчет Watcher:**\n\n${result}`);
+    }
+
+    return result;
+  } catch (error: any) {
     console.error("Ошибка при работе агента:", error);
+    
+    // Уведомляем в ТГ о критическом сбое
+    await sendTelegramMessage(`⚠️ **Сбой агента ${agentName}:**\n${error.message}`);
+    
     throw error;
   }
 }
