@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  # Твоё основное приложение
+  # 1. Основной сайт (Next.js)
   app:
     build:
       context: .
@@ -9,17 +9,32 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
-      # Если у тебя есть другие переменные в .env, они подтянутся через env_file ниже
     env_file:
       - .env
+    environment:
+      # Переопределяем URL базы, чтобы он смотрел на контейнер postgres
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
     depends_on:
       - postgres
 
-  # Твоя база данных
+  # 2. ИИ-Сторож (Watcher)
+  watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Переопределяем команду запуска из Dockerfile на запуск скрипта
+    command: npx tsx scripts/watcher.ts
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+    depends_on:
+      - postgres
+
+  # 3. База данных
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: soundspa
@@ -28,19 +43,24 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
+      # Прокидываем порт наружу только на 127.0.0.1 для безопасности
       - "127.0.0.1:5432:5432"
 
-  # Наши "глаза" - Drizzle Studio
+  # 4. Админка базы данных
   drizzle-studio:
-    image: node:18-slim
-    working_dir: /app
-    volumes:
-      - .:/app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0
+    restart: unless-stopped
     ports:
       - "4983:4983"
-    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+    depends_on:
+      - postgres
 
 volumes:
   pgdata:
