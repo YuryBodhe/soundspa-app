@@ -9,19 +9,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Deploy to Server
-        uses: appleboy/ssh-action@master
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
+          host: ${{ secrets.SERVER_HOST }}     # Было HOST
+          username: ${{ secrets.SERVER_USER }} # Было USERNAME
+          key: ${{ secrets.SERVER_SSH_KEY }}   # Было SSH_KEY
           script: |
             cd /opt/soundspa-app
+            git fetch origin main
             git reset --hard origin/main
-            git pull origin main
-            # Собираем только 'app', чтобы не вешать память сервера
             docker-compose build app
             docker-compose up -d --remove-orphans
             docker image prune -f
