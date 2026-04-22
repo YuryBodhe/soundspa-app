@@ -19,11 +19,10 @@ services:
 
   # 2. ИИ-Сторож (Watcher)
   watcher:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # Переопределяем команду запуска из Dockerfile на запуск скрипта
-    command: npx tsx scripts/watcher.ts
+    build: .
+    # Указываем tsconfig относительно ВНУТРЕННЕГО корня контейнера
+    command: npx tsx --tsconfig tsconfig.json scripts/watcher.ts
+    working_dir: /app
     restart: unless-stopped
     env_file:
       - .env
