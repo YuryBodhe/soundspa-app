@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
 import { Channel, AmbientChannel, TenantSlug, PromoCard } from './channels';
 import { useWaveCanvas } from './useWaveCanvas';
@@ -36,6 +36,11 @@ export default function DesktopPlayer({
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
   const [noiseVolume,     setNoiseVolume]     = useState(0.4);
 
+  const channelsRef = useRef<Channel[]>(channels);
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
+
   const activeChannel = useMemo(() => 
     channels.find((c: any) => c.id === activeChannelId) ?? channels[0],
     [channels, activeChannelId]
@@ -44,32 +49,57 @@ export default function DesktopPlayer({
   const canvasRef = useWaveCanvas(playing);
 
   useEffect(() => {
+    if (!tenantSlug) return;
+
     soundEngine.initWatcher(tenantSlug);
-    const saved = localStorage.getItem('last_active_channel');
-    if (saved) {
-      try {
-        const { id, url } = JSON.parse(saved);
-        if (id && url) {
-          soundEngine.playChannel(id, url);
-          setPlaying(true);
+
+    try {
+      const saved = localStorage.getItem('last_active_channel');
+      if (saved) {
+        const { id } = JSON.parse(saved);
+        if (id && channelsRef.current.some((channel) => channel.id === id)) {
           setActiveChannelId(id);
         }
-      } catch (e) {}
+      }
+    } catch (e) {
+      console.warn('Failed to restore last channel', e);
     }
-  }, []);
+
+    return () => {
+      soundEngine.stopChannel();
+      soundEngine.stopNoise();
+      soundEngine.dispose();
+    };
+  }, [tenantSlug]);
+
+  const persistChannelSelection = (channel: Channel) => {
+    try {
+      localStorage.setItem('last_active_channel', JSON.stringify({ id: channel.id }));
+    } catch (e) {
+      console.warn('Failed to persist last channel', e);
+    }
+  };
 
   const handleTogglePlay = () => {
+    if (!activeChannel) return;
+
     if (playing) {
       soundEngine.stopChannel();
       setPlaying(false);
     } else {
       soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
       setPlaying(true);
+      persistChannelSelection(activeChannel);
     }
   };
 
   const handleSelectChannel = (channel: Channel) => {
+    if (channel.id === activeChannelId && playing) {
+      return;
+    }
+
     setActiveChannelId(channel.id);
+    persistChannelSelection(channel);
     soundEngine.playChannel(channel.id, channel.streamUrl);
     setPlaying(true);
   };

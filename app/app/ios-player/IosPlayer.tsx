@@ -1,7 +1,5 @@
 'use client';
 
-// Этот проект — источник бесконечного изобилия для всех людей Земли, меня, моей семьи и мира!
-
 import Image from 'next/image';
 import { useMemo, useState, useEffect } from 'react';
 import { soundEngine } from '@/app/lib/soundEngine';
@@ -13,7 +11,6 @@ import {
 } from './channels';
 import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
-
 
 interface IosPlayerProps {
   tenantSlug?:       TenantSlug;
@@ -35,35 +32,13 @@ export default function IosPlayer({
   noiseChannels    = [],
 }: IosPlayerProps) {
   
-// --- Инициализация ---
-  useEffect(() => {
-    // 1. Запускаем вочер
-    if (tenantSlug) {
-      soundEngine.initWatcher(tenantSlug);
-    }
-    
-    // 2. Восстанавливаем сохраненный канал
-    const saved = localStorage.getItem('last_active_channel');
-    if (saved) {
-      try {
-        const { id, url } = JSON.parse(saved);
-        if (id && url) {
-          // На iOS автоплей может быть заблокирован до первого клика,
-          // но мы подготавливаем состояние.
-          setActiveChannelId(id);
-        }
-      } catch (e) {
-        console.error("Ошибка парсинга сохраненного канала", e);
-      }
-    }
-  }, [tenantSlug]); // 
-  // --- Состояния ---
+  // ── 1. ВСЕ СОСТОЯНИЯ (Hooks) В НАЧАЛЕ ──
   const [playing,         setPlaying]         = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(channels[0]?.id ?? '');
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
   const [showIosHint,     setShowIosHint]     = useState(false);
 
-  // --- Вычисления ---
+  // ── 2. ВЫЧИСЛЕНИЯ ──
   const activeChannel = useMemo(() => 
     channels.find(c => c.id === activeChannelId) ?? channels[0],
     [channels, activeChannelId]
@@ -76,27 +51,59 @@ export default function IosPlayer({
 
   const canvasRef = useWaveCanvas(playing);
 
-  // --- Обработчики (Упрощенная логика с использованием фейдов движка) ---
+  // ── 3. ЭФФЕКТЫ (После инициализации всех стейтов) ──
+  useEffect(() => {
+    // Инициализация мониторинга
+    if (tenantSlug) {
+      soundEngine.initWatcher(tenantSlug);
+    }
+    
+    // Восстановление сохраненного канала
+    try {
+      const saved = localStorage.getItem('last_active_channel');
+      if (saved) {
+        const { id } = JSON.parse(saved);
+        // Проверяем, существует ли такой канал в текущем списке
+        if (id && channels.some(c => c.id === id)) {
+          setActiveChannelId(id);
+        }
+      }
+    } catch (e) {
+      console.error("Error restoring session", e);
+    }
+
+    // Cleanup: Очистка при размонтировании компонента
+    return () => {
+      soundEngine.stopChannel();
+      soundEngine.stopNoise();
+      soundEngine.dispose();
+    };
+  }, [tenantSlug, channels]); 
+
+  // ── 4. ОБРАБОТЧИКИ ──
   const handleTogglePlay = () => {
     if (!activeChannel) return;
 
     if (playing) {
-      soundEngine.stopChannel(); // Плавный уход в движке
+      soundEngine.stopChannel();
       setPlaying(false);
     } else {
       try {
-        soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl); // Плавный вход в движке
+        soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
         setPlaying(true);
         setShowIosHint(false);
       } catch (err) {
+        // Если iOS заблокировал автоплей
         setShowIosHint(true);
       }
     }
   };
 
   const handleSelectChannel = (channel: Channel) => {
+    if (activeChannelId === channel.id && playing) return;
+
     setActiveChannelId(channel.id);
-    soundEngine.playChannel(channel.id, channel.streamUrl); // Кроссфейд внутри движка
+    soundEngine.playChannel(channel.id, channel.streamUrl);
     setPlaying(true);
     setShowIosHint(false);
     localStorage.setItem('last_active_channel', JSON.stringify({ id: channel.id, url: channel.streamUrl }));
@@ -104,12 +111,11 @@ export default function IosPlayer({
 
   const handleNoiseToggle = (noise: AmbientChannel) => {
     if (activeNoiseId === noise.id) {
-      soundEngine.stopNoise(); // Плавный стоп в движке
+      soundEngine.stopNoise();
       setActiveNoiseId(null);
     } else {
       setActiveNoiseId(noise.id);
       soundEngine.setNoise(noise.id, noise.streamUrl);
-      // Фиксированная громкость 0.5 по твоему запросу
       soundEngine.setNoiseVolume(0.5); 
     }
   };
@@ -126,9 +132,9 @@ export default function IosPlayer({
     }
   };
 
+  // ── 5. ОТРЕНДЕРЕННЫЙ JSX (Без изменений) ──
   return (
     <div className={s.phone}>
-      {/* ── HEADER ── */}
       <header className={s.header}>
         <div>
           <div className={s.salonName}>{salonName}</div>
@@ -142,7 +148,6 @@ export default function IosPlayer({
         </div>
       </header>
 
-      {/* ── PLAYER ZONE ── */}
       <section className={s.playerZone}>
         <div className={s.nowPlayingLabel}>Now playing</div>
         <div className={s.channelName}>{activeChannel?.title}</div>
@@ -183,7 +188,6 @@ export default function IosPlayer({
         </div>
       </section>
 
-      {/* ── CHANNELS ── */}
       <section className={s.carouselSection}>
         <div className={s.sectionHeader}>
           <div className={s.sectionLabel}>Channels</div>
@@ -216,7 +220,6 @@ export default function IosPlayer({
         </div>
       </section>
 
-      {/* ── AMBIENT NOISE ── */}
       <section className={s.noiseSection} style={{ marginBottom: 40 }}>
         <div className={s.sectionHeader}>
           <div className={s.sectionLabel}>Ambient noise (50%)</div>

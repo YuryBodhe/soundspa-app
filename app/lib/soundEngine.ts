@@ -10,6 +10,12 @@ interface SoundEngine {
   stopNoise: () => void;
   initWatcher: (tenantId: string | number) => void;
   setMainVolume: (vol: number) => void;
+  dispose: () => void;
+  getState: () => {
+    isPlaying: boolean;
+    channelId: string | null;
+    noiseId: string | null;
+  };
 }
 
 const isBrowser = typeof window !== "undefined";
@@ -20,34 +26,89 @@ const sessionId = isBrowser ? `sess_${Math.random().toString(36).substring(2, 9)
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
+let isMainTransitioning = false;
 
 let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
+let isNoiseTransitioning = false;
 let currentNoiseVol = 0.4; // Дефолтное значение
-let reconnectTimer: any = null; 
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null; 
 let retryCount = 0;
 let currentTenantId: string | number = 'unknown';
+let pingInterval: ReturnType<typeof setInterval> | null = null;
+
+const getValidTenantId = (): number | null => {
+  const parsedTenantId = Number(currentTenantId);
+  if (!Number.isInteger(parsedTenantId) || parsedTenantId <= 0) return null;
+  return parsedTenantId;
+};
+
+// --- Вспомогательные функции ---
+
+const cleanAudio = (audio: HTMLAudioElement | null) => {
+  if (!audio) return;
+  try {
+    audio.pause();
+    // Эти три строки критичны для разгрузки процессора и сети:
+    audio.src = ""; 
+    audio.removeAttribute('src'); 
+    audio.load(); 
+    
+    // Сбрасываем все обработчики, чтобы "мертвое" аудио не спамило в консоль
+    audio.onplay = null;
+    audio.onpause = null;
+    audio.onerror = null;
+    audio.onstalled = null;
+    audio.onwaiting = null;
+  } catch (err) {
+    console.warn("[SoundEngine] cleanAudio error", err);
+  }
+};
 
 // --- Вспомогательная функция фейда ---
-const internalFade = (audio: HTMLAudioElement, targetVol: number, duration: number, callback?: () => void) => {
+const internalFade = (
+  audio: HTMLAudioElement,
+  targetVol: number,
+  duration: number,
+  callback?: () => void,
+  onFadeStart?: () => void
+) => {
   const startVol = audio.volume;
   const startTime = performance.now();
+  let cancelled = false;
+
+  if (onFadeStart) onFadeStart();
 
   const step = (now: number) => {
+    if (cancelled) return;
+
     const elapsed = now - startTime;
     const progress = Math.min(elapsed / duration, 1);
     
-    // Плавное изменение громкости
-    audio.volume = startVol + (targetVol - startVol) * progress;
+    const newVol = startVol + (targetVol - startVol) * progress;
+    audio.volume = Math.max(0, Math.min(1, newVol));
 
     if (progress < 1) {
       requestAnimationFrame(step);
-    } else if (callback) {
+    } else if (callback && !cancelled) {
       callback();
     }
   };
+
   requestAnimationFrame(step);
+
+  return () => {
+    cancelled = true;
+  };
+};
+
+const clearReconnect = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  retryCount = 0;
 };
 
 // --- SILENCE HACK ---
@@ -64,23 +125,33 @@ const keepAudioContextAlive = () => {
 
 export const soundEngine: SoundEngine = {
   initWatcher(tenantId) {
-    if (tenantId) currentTenantId = tenantId; // Запоминаем, кто мы
+    const parsedTenantId = Number(tenantId);
+    if (Number.isInteger(parsedTenantId) && parsedTenantId > 0) {
+      currentTenantId = parsedTenantId;
+    }
     if (isBrowser) keepAudioContextAlive();
+    if (pingInterval) {
+      clearInterval(pingInterval);
+    }
+
     // Запускаем пульс мониторинга
-    setInterval(async () => {
+    pingInterval = setInterval(async () => {
       try {
+        const validTenantId = getValidTenantId();
+        if (validTenantId === null) return;
+
         await fetch('/api/monitoring/ping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tenantId: currentTenantId, // Используем динамический ID
+            tenantId: validTenantId,
             status: mainAudio && !mainAudio.paused ? "online" : "paused",
             metadata: {
               sessionId: sessionId,
               channelId: mainChannelId,
               noiseId: noiseId,
               device: "Desktop-Player",
-              version: "1.1.0"
+              version: "1.2.0"
             }
           })
         });
@@ -92,136 +163,82 @@ export const soundEngine: SoundEngine = {
 
   playChannel(id, url) {
     if (!isBrowser) return;
-    // Если это тот же канал, который уже играет — ничего не делаем
-    if (id === mainChannelId && url === mainStreamUrl) return;
 
-    // Очистка старого потока
-    if (mainAudio) {
-      const old = mainAudio;
-      internalFade(old, 0, FADE_TIME, () => {
-        old.pause();
-        old.src = "";
-        old.load();
-      });
+    // 1. Если уже идет переключение — не мешаем
+    if (isMainTransitioning) {
+      console.warn("[SoundEngine] main transition in progress");
+      return;
     }
 
-    // Сброс мониторинга при ручном переключении
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+    // 2. Если нажали на тот же канал, который уже играет — просто выходим или возобновляем
+    if (id === mainChannelId && url === mainStreamUrl) {
+      if (mainAudio && mainAudio.paused) {
+        mainAudio.play()
+          .then(() => internalFade(mainAudio!, 0.8, FADE_TIME))
+          .catch((e) => console.warn("[SoundEngine] resume blocked", e));
+      }
+      return;
     }
-    retryCount = 0;
+
+    isMainTransitioning = true;
+
+    // 3. Жестко останавливаем и чистим всё старое перед запуском нового
+    this.stopChannel(); 
 
     mainChannelId = id;
     mainStreamUrl = url;
 
+    // 4. Создаем новый объект
     const audio = new Audio(url);
     audio.crossOrigin = "anonymous";
     audio.volume = 0.001; 
     mainAudio = audio;
 
-    // --- Функция реанимации потока ---
-   const runReconnect = () => {
-      if (reconnectTimer || !mainStreamUrl) return;
-
-      // Просто уведомляем наш API, что мы в процессе восстановления
-      fetch('/api/monitoring/ping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: 1, 
-          status: "reconnecting",
-          metadata: { 
-            sessionId, 
-            channelId: mainChannelId, 
-            error: "Connection Lost" 
-          }
-        })
-      }).catch(() => {}); 
-
-      retryCount++;
-      const delay = Math.min(1000 * Math.pow(2, retryCount), 20000); 
-      
-      console.warn(`[SoundEngine] Поток прерван. Попытка #${retryCount}...`);
-
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        if (!mainStreamUrl) return;
-
-        const retryUrl = mainStreamUrl.includes('?') 
-          ? `${mainStreamUrl}&t=${Date.now()}` 
-          : `${mainStreamUrl}?t=${Date.now()}`;
-        
-        audio.src = retryUrl;
-        audio.load();
-        audio.play()
-          .then(() => {
-            retryCount = 0;
-            internalFade(audio, 0.8, FADE_TIME);
-            console.log("[SoundEngine] Восстановлено!");
-
-            // УВЕДОМЛЯЕМ ОБ УСПЕХЕ
-            fetch('/api/monitoring/ping', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                tenantId: 1, 
-                status: "online", 
-                metadata: { 
-                  sessionId, 
-                  channelId: mainChannelId, 
-                  info: "Recovered successfully" 
-                }
-              })
-            }).catch(() => {});
-          })
-          .catch(() => runReconnect()); 
-      }, delay);
-    };
-
-    // Вешаем «слушателей» на новый объект audio
+    // 5. Минимальный набор слушателей (без циклов реконнекта!)
     audio.addEventListener('error', () => {
-      console.error("[SoundEngine] Ошибка сети");
-      runReconnect();
+      console.error("[SoundEngine] Критическая ошибка потока");
+      this.stopChannel(); // Просто гасим плеер, если стрим "умер"
     });
 
     audio.addEventListener('stalled', () => {
-      console.warn("[SoundEngine] Поток замер");
-      runReconnect();
+      console.warn("[SoundEngine] Поток замер (буферизация)");
+      // Позволяем браузеру самому разобраться с буфером
     });
 
-    // Запуск
+    // 6. Запуск
     audio.play()
       .then(() => {
-        retryCount = 0;
+        isMainTransitioning = false;
         internalFade(audio, 0.8, FADE_TIME);
       })
       .catch(e => {
+        isMainTransitioning = false;
         console.warn("Main play blocked by browser", e);
+        // Если браузер запретил автоплей, ждем клика пользователя
         window.addEventListener('click', () => audio.play(), { once: true });
       });
   },
 
   stopChannel() {
+    // 1. Сбрасываем флаги сразу, чтобы интерфейс мгновенно отреагировал
+    isMainTransitioning = false;
+    mainChannelId = null;
+    mainStreamUrl = null;
+
     if (!mainAudio) return;
 
-    // СТРАХОВКА: Останавливаем любые попытки переподключения,
-    // так как пользователь сам нажал "Стоп"
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
+    // 2. Снимаем всех слушателей
+    mainAudio.onerror = null;
+    mainAudio.onstalled = null;
+    mainAudio.onwaiting = null;
 
     const target = mainAudio;
-    internalFade(target, 0, FADE_TIME, () => {
-      target.pause();
-      target.src = "";
-      target.load(); // Очищаем буфер
-      if (mainAudio === target) {
-        mainAudio = null;
-        mainChannelId = null;
-        mainStreamUrl = null;
-      }
+    mainAudio = null; // Отвязываем ссылку сразу
+
+    // 3. Быстрый фейд и жесткая очистка
+    // Используем 200мс, чтобы не было щелчка в динамиках
+    internalFade(target, 0, 200, () => {
+      cleanAudio(target);
     });
   },
 
@@ -231,15 +248,31 @@ export const soundEngine: SoundEngine = {
 
   setNoise(id, url) {
     if (!isBrowser || !url) return;
-    if (id === noiseId && url === noiseStreamUrl) return;
 
-    if (noiseAudio) {
-      const old = noiseAudio;
-      internalFade(old, 0, 1500, () => {
-        old.pause();
-        old.src = "";
-      });
+    if (isNoiseTransitioning) {
+      console.warn("[SoundEngine] noise transition in progress");
+      return;
     }
+
+    if (id === noiseId && url === noiseStreamUrl) {
+      if (noiseAudio && noiseAudio.paused) {
+        noiseAudio
+          .play()
+          .then(() => internalFade(noiseAudio!, currentNoiseVol, 2000))
+          .catch((e) => console.warn("[SoundEngine] noise resume blocked", e));
+      }
+      return;
+    }
+
+    isNoiseTransitioning = true;
+
+    const previous = noiseAudio;
+    if (previous) {
+      cleanAudio(previous);
+    }
+    noiseAudio = null;
+    noiseId = null;
+    noiseStreamUrl = null;
 
     noiseId = id;
     noiseStreamUrl = url;
@@ -249,9 +282,16 @@ export const soundEngine: SoundEngine = {
     audio.volume = 0.001;
     noiseAudio = audio;
 
-    audio.play()
-      .then(() => internalFade(audio, currentNoiseVol, 2000))
-      .catch(e => console.warn("Noise blocked", e));
+    audio
+      .play()
+      .then(() => {
+        isNoiseTransitioning = false;
+        internalFade(audio, currentNoiseVol, 2000);
+      })
+      .catch((e) => {
+        isNoiseTransitioning = false;
+        console.warn("Noise blocked", e);
+      });
   },
 
   setNoiseVolume(volume) {
@@ -262,14 +302,42 @@ export const soundEngine: SoundEngine = {
   stopNoise() {
     if (!noiseAudio) return;
     const target = noiseAudio;
+    isNoiseTransitioning = false;
     internalFade(target, 0, 1500, () => {
-      target.pause();
-      target.src = "";
+      cleanAudio(target);
       if (noiseAudio === target) {
         noiseAudio = null;
         noiseId = null;
         noiseStreamUrl = null;
       }
     });
+  },
+
+  dispose() {
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
+    clearReconnect();
+    cleanAudio(mainAudio);
+    cleanAudio(noiseAudio);
+    cleanAudio(silencePlayer);
+    mainAudio = null;
+    noiseAudio = null;
+    silencePlayer = null;
+    mainChannelId = null;
+    mainStreamUrl = null;
+    noiseId = null;
+    noiseStreamUrl = null;
+    isMainTransitioning = false;
+    isNoiseTransitioning = false;
+  },
+
+  getState() {
+    return {
+      isPlaying: !!(mainAudio && !mainAudio.paused),
+      channelId: mainChannelId,
+      noiseId: noiseId,
+    };
   }
 };

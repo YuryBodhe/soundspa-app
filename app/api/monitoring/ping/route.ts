@@ -6,11 +6,15 @@ export async function POST(req: NextRequest) {
   try {
     const { tenantId, status, metadata } = await req.json();
 
-    if (!tenantId) {
+    if (tenantId === undefined || tenantId === null || tenantId === "") {
       return NextResponse.json({ error: "Missing tenantId" }, { status: 400 });
     }
 
-    const tId = parseInt(tenantId);
+    const tId = Number(tenantId);
+    if (!Number.isInteger(tId) || tId <= 0) {
+      return NextResponse.json({ error: "Invalid tenantId" }, { status: 400 });
+    }
+
     const currentStatus = status || "online";
 
     // 1. Обновляем мгновенный статус
