@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   # 1. Основной сайт (Next.js)
@@ -17,19 +16,18 @@ services:
     depends_on:
       - postgres
 
-  # 2. ИИ-Сторож (Watcher)
-  watcher:
-    build: .
-    # Указываем tsconfig относительно ВНУТРЕННЕГО корня контейнера
-    command: npx tsx --tsconfig tsconfig.json scripts/watcher.ts
-    working_dir: /app
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
-    depends_on:
-      - postgres
+   # 2. ИИ-Сторож (Watcher) — ВСЁ ЗАКОММЕНТИРОВАНО
+  # watcher:
+  #   build: .
+  #   command: npx tsx --tsconfig tsconfig.json scripts/watcher.ts
+  #   working_dir: /app
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+  #   depends_on:
+  #     - postgres
 
   # 3. База данных
   postgres:
@@ -63,7 +61,7 @@ services:
       - ./drizzle.config.json:/app/drizzle.config.json
       - ./db:/app/db
     environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@127.0.0.1:5432/soundspa 
     depends_on:
       - postgres
       # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО:

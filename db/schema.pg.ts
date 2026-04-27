@@ -37,6 +37,8 @@ export const tenants = pgTable("tenants", {
     mode: "string",
   }),
 
+  usersCount: integer("users_count").notNull().default(0),
+
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
@@ -52,6 +54,7 @@ export const users = pgTable(
     tenantId: integer("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("user"),
   },
   (table) => ({
     uniqueEmailTenant: uniqueIndex("unique_email_tenant").on(
@@ -129,6 +132,29 @@ export const invites = pgTable("invites", {
   maxUses: integer("max_uses"),
   usedCount: integer("used_count").notNull().default(0),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }),
+
+  tenantId: integer("tenant_id").references(() => tenants.id, {
+    onDelete: "set null",
+  }),
+
+  issuedTo: text("issued_to"),
+
+  createdByUserId: integer("created_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+
+  usedByTenantId: integer("used_by_tenant_id").references(() => tenants.id, {
+    onDelete: "set null",
+  }),
+  usedByUserId: integer("used_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+
+  baseLabel: text("base_label"),
+
+  rotationIntervalMonths: integer("rotation_interval_months"),
+
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
 export const loginTokens = pgTable("login_tokens", {
