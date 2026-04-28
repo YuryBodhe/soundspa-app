@@ -8,6 +8,7 @@ services:
     restart: always
     ports:
       - "3000:3000"
+     # - "4983:4983"
     env_file:
       - .env
     environment:
@@ -43,27 +44,5 @@ services:
       # Прокидываем порт наружу только на 127.0.0.1 для безопасности
       - "127.0.0.1:5432:5432"
 
-  # 4. Админка базы данных
-  drizzle-studio:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    # Указываем рабочий каталог, чтобы npx понимал, где он находится
-    working_dir: /app
-    command: npx drizzle-kit studio --port 4983 --host 0.0.0.0 --config drizzle.config.json
-    restart: always
-    ports:
-      - "4983:4983"
-    env_file:
-      - .env
-    # 🔥 ВОТ ЭТОТ ТУННЕЛЬ:
-    volumes:
-      - ./drizzle.config.json:/app/drizzle.config.json
-      - ./db:/app/db
-    environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@127.0.0.1:5432/soundspa 
-    depends_on:
-      - postgres
-      # 🔥 ВОТ ЭТОГО БЛОКА НЕ ХВАТАЛО:
 volumes:
   pgdata:

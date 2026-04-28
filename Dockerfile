@@ -20,6 +20,8 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/drizzle.config.json ./drizzle.config.json
+COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 
 # Копируем папки, которые нужны для работы воркера
 COPY --from=builder /app/scripts ./scripts

@@ -32,59 +32,29 @@ Host soundspa-vps
   User root
   IdentityFile ~/.ssh/id_ed25519_garry_soundspa
   IdentitiesOnly yes
-Подключение с Макa:
-Copy
-ssh soundspa-vps
-2.2. Расположение приложения на сервере
+3. Запуск и перезапуск (docker-compose + PM2 worker)
 
-Корень приложения:
-/opt/soundspa-app
-Внутри:
-Copy
+### 3.1. Основной веб (Next.js)
+- контейнер `soundspa-app-app-1`, стартует через `docker-compose up -d app`
+- внутри контейнера командой по умолчанию остаётся `npm run start` → `next start` (порт 3000)
+- никаких pm2-конфигов для веба больше нет: веб всегда поднимается docker-compose
+
+### 3.2. Фоновый воркер (PM2)
+- внутри контейнера используется только один процесс `soundspa-worker`
+- запускаем через `npx pm2 start scripts/worker.ts --name soundspa-worker --interpreter npx --interpreter-args "tsx"`
+- чтобы автоматизировать post-deploy, есть скрипт `/opt/soundspa-app/scripts/post-deploy.sh`
+
+### 3.3. Post-deploy сценарий
+```
 cd /opt/soundspa-app
-ls
-# ожидаем:
-# app, package.json, ecosystem.config.js, node_modules, .next, ...
-3. Запуск и перезапуск (pm2 + Next.js)
-
-3.1. pm2
-
-Конфиг pm2:
-/opt/soundspa-app/ecosystem.config.js
-Содержимое (боевой вариант):
-Copy
-module.exports = {
-  apps: [{
-    name: 'soundspa-app',
-    script: 'node_modules/.bin/next',
-    args: 'start',
-    cwd: '/opt/soundspa-app',
-    exec_mode: 'fork',
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '1G',
-    env: {
-      NODE_ENV: 'production',
-      PORT: 3000,
-      SESSION_SECRET: '...секрет...',
-      ADMIN_SECRET: 'soundspa-admin-2026'
-    },
-    error_file: '/root/.pm2/logs/soundspa-app-error.log',
-    out_file: '/root/.pm2/logs/soundspa-app-out.log',
-    log_file: '/root/.pm2/logs/soundspa-app-combined.log',
-    time: true,
-    kill_timeout: 5000,
-    listen_timeout: 5000
-  }]
-};
-Важно: сейчас используем next start, НЕ standalone server.js.
-Любые переходы на output: standalone делать осознанно и отдельно документировать.
-3.2. Переменные окружения pm2
-
-Перед командами pm2 нужно добавить в PATH nvm-узел:
-Copy
-export PATH=$PATH:/root/.nvm/versions/node/v24.14.0/bin
+./scripts/post-deploy.sh
+```
+Скрипт делает:
+1. `docker-compose pull app` и `docker-compose up -d app` (поднимает веб, пока он не ответит)
+2. `docker-compose exec app npx pm2 kill || true` — останавливает старый воркер
+3. `docker-compose exec app npx pm2 start scripts/worker.ts --name soundspa-worker --interpreter npx --interpreter-args "tsx"`
+4. `docker-compose exec app npx pm2 save`
+5. `docker-compose exec app npx pm2 status` — выводит текущее состояние (должен быть только `soundspa-worker`)
 Базовые команды:
 Copy
 # статус

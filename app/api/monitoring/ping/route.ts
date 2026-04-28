@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db.pg";
-import { monitoringCurrent, monitoringLogs } from "@/db/schema/monitoring";
+import { logMonitoringEvent, upsertMonitoringCurrent } from "@/lib/monitoring/current";
 
 export async function POST(req: NextRequest) {
   try {
-    const { tenantId, status, metadata } = await req.json();
+    const {
+      tenantId,
+      status,
+      metadata = {},
+      device,
+      channelId,
+      noiseId,
+      sessionId,
+      eventType = "player_heartbeat",
+      userAgent,
+      clientType,
+      details,
+    } = await req.json();
 
     if (tenantId === undefined || tenantId === null || tenantId === "") {
       return NextResponse.json({ error: "Missing tenantId" }, { status: 400 });
@@ -17,31 +28,32 @@ export async function POST(req: NextRequest) {
 
     const currentStatus = status || "online";
 
-    // 1. Обновляем мгновенный статус
-    await db
-      .insert(monitoringCurrent)
-      .values({
-        tenantId: tId,
-        status: currentStatus,
-        lastPing: new Date(),
-        metadata: metadata || {},
-      })
-      .onConflictDoUpdate({
-        target: monitoringCurrent.tenantId,
-        set: {
-          status: currentStatus,
-          lastPing: new Date(),
-          metadata: metadata || {},
-        },
-      });
+    const enrichedMetadata = {
+      ...metadata,
+      device,
+      channelId,
+      noiseId,
+      sessionId,
+      eventType,
+    };
 
-    // 2. Пишем в историю для ИИ-аналитики
-    // Мы сохраняем metadata как строку в details, чтобы агент мог её прочитать
-    await db.insert(monitoringLogs).values({
+    await upsertMonitoringCurrent({
+      tenantId: tId,
+      status: currentStatus,
+      metadata: enrichedMetadata,
+    });
+
+    await logMonitoringEvent({
       tenantId: tId,
       event: "ping",
+      eventType,
+      sessionId,
+      channelId: channelId ? Number(channelId) : null,
+      metadata: enrichedMetadata,
       level: currentStatus === "offline" ? "warn" : "info",
-      details: metadata ? JSON.stringify(metadata) : "No extra data",
+      details,
+      userAgent,
+      clientType,
     });
 
     return NextResponse.json({ success: true });

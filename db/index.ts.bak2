@@ -12,7 +12,7 @@ const fullSchema = {
   ...schemaPg, 
   ...monitoring, 
   ...agents, 
-  ...actions, 
+  ...actions 
 };
 
 // 2. Настраиваем пул соединений (используем твой DATABASE_URL из .env)

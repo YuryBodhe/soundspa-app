@@ -1,73 +1,52 @@
 import "dotenv/config";
-import { db } from "../../db";
-import { monitoringLogs } from "@/db/schema/monitoring";
-import { agents } from "@/db/schema/agents";
 import { runAgent } from "./agent-runner";
-import { sendTelegramMessage } from "../notifications/telegram";
-import { eq, and, gte, desc } from "drizzle-orm";
+import { getLogsSince, saveMonitoringReport, getLastReportTime } from "@/lib/monitoring/reporting";
 
-async function generateSmartReport(tenantId: number) {
-  console.log(`📊 Запуск автономного аналитика для салона ID: ${tenantId}...`);
+export async function generateTenantReport(tenantId: number, options?: {
+  hoursBack?: number;
+  reportType?: string;
+  agentName?: string;
+}) {
+  const {
+    hoursBack = 6,
+    reportType = "tenant_signal",
+    agentName = "watcher",
+  } = options ?? {};
 
-  // 1. Идем в базу за твоими инструкциями (управление через Drizzle Studio)
-  const agentConfig = await db
-    .select()
-    .from(agents)
-    .where(and(
-      eq(agents.name, "watcher"),
-      eq(agents.isActive, true) // Если в базе isActive: false, отчет не пойдет
-    ))
-    .limit(1);
+  console.log(`📊 Аналитика для салона ID ${tenantId} (последние ${hoursBack}ч)...`);
 
-  if (agentConfig.length === 0) {
-    console.log("ℹ️ Агент 'watcher' не найден или деактивирован в базе (isActive: false).");
-    return;
-  }
-
-  const { systemPrompt } = agentConfig[0];
-
-  // 2. Собираем технические данные за последние 24 часа
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const logs = await db
-    .select()
-    .from(monitoringLogs)
-    .where(
-      and(
-        eq(monitoringLogs.tenantId, tenantId),
-        gte(monitoringLogs.createdAt, dayAgo)
-      )
-    )
-    .orderBy(desc(monitoringLogs.createdAt))
-    .limit(300); // Увеличили лимит, чтобы ИИ видел больше данных
-
+  const logs = await getLogsSince({ tenantId, hoursBack, limit: 500 });
   if (logs.length === 0) {
-    console.log("📭 Логов за сутки не найдено. Пропускаю.");
+    console.log("📭 Нет логов для анализа. Пропуск.");
     return;
   }
 
-  const context = logs.map(l => 
-    `[${l.createdAt?.toISOString()}] ${l.event}: ${l.details}`
-  ).join("\n");
+  const lastReportTime = await getLastReportTime(reportType, tenantId);
 
-  // 3. Запрос к ИИ с динамическим промптом
-  const report = await runAgent("watcher", `
-    ИНСТРУКЦИЯ ИЗ БАЗЫ (Drizzle Studio):
-    ${systemPrompt}
+  const context = `
+  Параметры:
+  - tenantId: ${tenantId}
+  - период: последние ${hoursBack} часов
+  - последний отчет: ${lastReportTime?.toISOString() ?? "нет"}
 
-    ДАННЫЕ ЛОГОВ:
-    ${context}
-  `);
+  Логи:
+  ${logs.map((l) => `[${l.createdAt?.toISOString()}] ${l.event}: ${l.details}`).join("\n")}
+  `;
 
-  // 4. Фильтр тишины
-  if (report.includes("SKIP") || report.trim().length < 5) {
-    console.log("🤫 ИИ проанализировал логи и решил не беспокоить согласно промпту.");
+  const report = await runAgent(agentName, context);
+
+  if (report.trim().toUpperCase() === "SKIP" || report.trim().length < 5) {
+    console.log("🤫 Агент пропустил отчет.");
     return;
   }
 
-  // 5. Отправка
-  await sendTelegramMessage(`📈 *Отчет Soundspa (AI Agent)*\n\n${report}`);
-  console.log("✅ Отчет отправлен!");
+  await saveMonitoringReport({
+    tenantId,
+    agentName,
+    type: reportType,
+    content: report,
+    status: "ok",
+  });
+
+  console.log("✅ Отчет сохранен в monitoring_reports.");
 }
-
-// Запуск для основного салона
-generateSmartReport(1);
