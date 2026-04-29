@@ -15,12 +15,14 @@ export type MonitoringEventPayload = {
   event: string;
   eventType?: string | null;
   sessionId?: string | null;
-  channelId?: number | null;
+  channelId?: string | null;
+  noiseId?: string | null;
   metadata?: MonitoringMetadata;
   level?: "info" | "warn" | "error";
   details?: string | null;
   userAgent?: string | null;
   clientType?: string | null;
+  isBuffering?: boolean;
 };
 
 export async function logMonitoringEvent(payload: MonitoringEventPayload) {
@@ -30,11 +32,13 @@ export async function logMonitoringEvent(payload: MonitoringEventPayload) {
     eventType,
     sessionId,
     channelId,
+    noiseId,
     metadata,
     level = "info",
     details,
     userAgent,
     clientType,
+    isBuffering = false,
   } = payload;
 
   await db.insert(monitoringLogs).values({
@@ -43,10 +47,12 @@ export async function logMonitoringEvent(payload: MonitoringEventPayload) {
     eventType: eventType ?? null,
     sessionId: sessionId ?? null,
     channelId: channelId ?? null,
+    noiseId: noiseId ?? null,
     level,
     details: details ?? (metadata ? JSON.stringify(metadata) : null),
     userAgent: userAgent ?? null,
     clientType: clientType ?? null,
+    isBuffering,
   });
 }
 

@@ -37,6 +37,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
 let currentTenantId: string | number = 'unknown';
 let pingInterval: ReturnType<typeof setInterval> | null = null;
+let isBuffering = false;
 
 const getValidTenantId = (): number | null => {
   const parsedTenantId = Number(currentTenantId);
@@ -123,6 +124,14 @@ const keepAudioContextAlive = () => {
   start();
 };
 
+const detectClientType = (userAgent: string): "desktop" | "mobile" | "tablet" | "other" => {
+  const ua = userAgent.toLowerCase();
+  if (/tablet|ipad|playbook|silk/.test(ua)) return "tablet";
+  if (/mobile|iphone|ipod|android/.test(ua)) return "mobile";
+  if (/macintosh|windows|linux/.test(ua)) return "desktop";
+  return "other";
+};
+
 export const soundEngine: SoundEngine = {
   initWatcher(tenantId) {
     const parsedTenantId = Number(tenantId);
@@ -140,19 +149,28 @@ export const soundEngine: SoundEngine = {
         const validTenantId = getValidTenantId();
         if (validTenantId === null) return;
 
+        const status = mainAudio && !mainAudio.paused ? "online" : "paused";
+        const userAgent = isBrowser ? navigator.userAgent : "unknown";
+        const clientType = detectClientType(userAgent);
+
         await fetch('/api/monitoring/ping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tenantId: validTenantId,
-            status: mainAudio && !mainAudio.paused ? "online" : "paused",
+            status,
             metadata: {
-              sessionId: sessionId,
-              channelId: mainChannelId,
-              noiseId: noiseId,
+              eventType: "player_heartbeat",
+              status,
+              sessionId,
+              channelId: mainChannelId ?? null,
+              noiseId: noiseId ?? null,
               device: "Desktop-Player",
-              version: "1.2.0"
-            }
+              version: "1.2.0",
+              clientType,
+              userAgent,
+              isBuffering,
+            },
           })
         });
       } catch (e) {
@@ -193,6 +211,7 @@ export const soundEngine: SoundEngine = {
     audio.crossOrigin = "anonymous";
     audio.volume = 0.001; 
     mainAudio = audio;
+    isBuffering = false;
 
     // 5. Минимальный набор слушателей (без циклов реконнекта!)
     audio.addEventListener('error', () => {
@@ -202,7 +221,16 @@ export const soundEngine: SoundEngine = {
 
     audio.addEventListener('stalled', () => {
       console.warn("[SoundEngine] Поток замер (буферизация)");
+      isBuffering = true;
       // Позволяем браузеру самому разобраться с буфером
+    });
+
+    audio.addEventListener('playing', () => {
+      isBuffering = false;
+    });
+
+    audio.addEventListener('canplay', () => {
+      isBuffering = false;
     });
 
     // 6. Запуск
@@ -231,9 +259,12 @@ export const soundEngine: SoundEngine = {
     mainAudio.onerror = null;
     mainAudio.onstalled = null;
     mainAudio.onwaiting = null;
+    mainAudio.onplaying = null;
+    mainAudio.oncanplay = null;
 
     const target = mainAudio;
     mainAudio = null; // Отвязываем ссылку сразу
+    isBuffering = false;
 
     // 3. Быстрый фейд и жесткая очистка
     // Используем 200мс, чтобы не было щелчка в динамиках

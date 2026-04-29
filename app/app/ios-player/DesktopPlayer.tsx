@@ -8,6 +8,7 @@ import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
 
 interface DesktopPlayerProps {
+  tenantId?:         number;
   tenantSlug?:       TenantSlug;
   salonName?:        string;
   subscriptionDate?: string;
@@ -20,6 +21,7 @@ interface DesktopPlayerProps {
 
 export default function DesktopPlayer({
   salonName        = 'Spaquatoria',
+  tenantId,
   tenantSlug,
   subscriptionDate = '',
   subscriptionWarn = false,
@@ -49,9 +51,9 @@ export default function DesktopPlayer({
   const canvasRef = useWaveCanvas(playing);
 
   useEffect(() => {
-    if (!tenantSlug) return;
+    if (!tenantId) return;
 
-    soundEngine.initWatcher(tenantSlug);
+    soundEngine.initWatcher(tenantId);
 
     try {
       const saved = localStorage.getItem('last_active_channel');
@@ -70,7 +72,7 @@ export default function DesktopPlayer({
       soundEngine.stopNoise();
       soundEngine.dispose();
     };
-  }, [tenantSlug]);
+  }, [tenantId]);
 
   const persistChannelSelection = (channel: Channel) => {
     try {

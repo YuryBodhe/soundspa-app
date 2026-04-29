@@ -7,6 +7,7 @@ import DesktopPlayer from "../ios-player/DesktopPlayer";
 import type { Channel, AmbientChannel, PromoCard } from "../ios-player/channels";
 
 interface Props {
+  tenantId: number;
   tenantSlug: string;
   salonName: string;
   channels: Channel[];
@@ -22,8 +23,8 @@ export function ResponsivePlayer(props: Props) {
 
   useEffect(() => {
     // Запуск мониторинга для конкретного салона
-    soundEngine.initWatcher(props.tenantSlug);
-    
+    soundEngine.initWatcher(props.tenantId);
+
     if (typeof window === "undefined") return;
 
     const check = () => {
@@ -33,7 +34,7 @@ export function ResponsivePlayer(props: Props) {
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
-  }, [props.tenantSlug]);
+  }, [props.tenantId]);
 
   if (isDesktop === null) return null;
 

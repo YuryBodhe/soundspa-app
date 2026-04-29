@@ -143,6 +143,7 @@ export default async function TenantPlayerPage({
   return (
     <main style={{ background: "#060608", minHeight: "100vh" }}>
       <ResponsivePlayer
+        tenantId={tenant.id}
         tenantSlug={tenantSlug}
         salonName={salonName}
         channels={channels}

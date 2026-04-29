@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
       eventType,
     };
 
+    const isBuffering = Boolean((metadata as { isBuffering?: boolean })?.isBuffering ?? metadata?.isBuffering);
+    const channelValue = channelId ?? (metadata as { channelId?: string })?.channelId ?? null;
+    const noiseValue = noiseId ?? (metadata as { noiseId?: string })?.noiseId ?? null;
+
     await upsertMonitoringCurrent({
       tenantId: tId,
       status: currentStatus,
@@ -48,12 +52,14 @@ export async function POST(req: NextRequest) {
       event: "ping",
       eventType,
       sessionId,
-      channelId: channelId ? Number(channelId) : null,
+      channelId: channelValue ?? null,
+      noiseId: noiseValue ?? null,
       metadata: enrichedMetadata,
       level: currentStatus === "offline" ? "warn" : "info",
       details,
       userAgent,
       clientType,
+      isBuffering,
     });
 
     return NextResponse.json({ success: true });

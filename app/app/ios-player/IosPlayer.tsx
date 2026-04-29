@@ -13,6 +13,7 @@ import { useWaveCanvas } from './useWaveCanvas';
 import s from './player.module.css';
 
 interface IosPlayerProps {
+  tenantId?:         number;
   tenantSlug?:       TenantSlug;
   salonName?:        string;
   subscriptionDate?: string;
@@ -24,6 +25,7 @@ interface IosPlayerProps {
 }
 
 export default function IosPlayer({
+  tenantId,
   tenantSlug,
   salonName        = 'Spaquatoria',
   subscriptionDate = 'Until 12 April 2026',
@@ -54,8 +56,8 @@ export default function IosPlayer({
   // ── 3. ЭФФЕКТЫ (После инициализации всех стейтов) ──
   useEffect(() => {
     // Инициализация мониторинга
-    if (tenantSlug) {
-      soundEngine.initWatcher(tenantSlug);
+    if (tenantId) {
+      soundEngine.initWatcher(tenantId);
     }
     
     // Восстановление сохраненного канала
@@ -78,7 +80,7 @@ export default function IosPlayer({
       soundEngine.stopNoise();
       soundEngine.dispose();
     };
-  }, [tenantSlug, channels]); 
+  }, [tenantId, channels]); 
 
   // ── 4. ОБРАБОТЧИКИ ──
   const handleTogglePlay = () => {

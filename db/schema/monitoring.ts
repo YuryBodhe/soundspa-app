@@ -6,6 +6,7 @@ import {
   jsonb,
   index,
   serial,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenants } from "../schema.pg";
@@ -37,7 +38,7 @@ export const monitoringLogs = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
 
-    channelId: integer("channel_id"),
+    channelId: text("channel_id"),
 
     sessionId: text("session_id"),
 
@@ -52,6 +53,10 @@ export const monitoringLogs = pgTable(
     userAgent: text("user_agent"),
 
     clientType: text("client_type"),
+
+    isBuffering: boolean("is_buffering").notNull().default(false),
+
+    noiseId: text("noise_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
