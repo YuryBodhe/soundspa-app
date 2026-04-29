@@ -15,6 +15,13 @@
       "when": 1776664807695,
       "tag": "0001_wakeful_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777469456146,
+      "tag": "0002_aberrant_korath",
+      "breakpoints": true
     }
   ]
 }
