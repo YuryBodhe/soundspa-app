@@ -1,36 +1,46 @@
-
 services:
-  # 1. Основной сайт (Next.js)
+  # ОСНОВНОЙ САЙТ (Next.js)
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     restart: always
     ports:
       - "3000:3000"
-     # - "4983:4983"
     env_file:
       - .env
     environment:
-      # Переопределяем URL базы, чтобы он смотрел на контейнер postgres
       - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
     depends_on:
       - postgres
+    command: npm run start
+    deploy:
+      resources:
+        limits:
+          memory: 1G # Сайт может быть тяжелым
 
-   # 2. ИИ-Сторож (Watcher) — ВСЁ ЗАКОММЕНТИРОВАНО
-  # watcher:
-  #   build: .
-  #   command: npx tsx --tsconfig tsconfig.json scripts/watcher.ts
-  #   working_dir: /app
-  #   restart: unless-stopped
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
-  #   depends_on:
-  #     - postgres
+  # ФОНОВЫЙ ПОМОЩНИК (Тот самый скрипт с cron)
+  worker:
+    build: .
+    # Используем твой скрипт из package.json
+    command: npm run worker 
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+    depends_on:
+      - postgres
+      - app
+    # МОНТИРУЕМ ПАПКИ: чтобы менять код воркера без rebuild
+    volumes:
+      - ./scripts:/app/scripts
+      - ./lib:/app/lib
+      - ./db:/app/db
+    deploy:
+      resources:
+        limits:
+          memory: 512M # Воркеру хватит полгигабайта
 
-  # 3. База данных
+  # БАЗА ДАННЫХ
   postgres:
     image: postgres:16-alpine
     restart: always
@@ -41,8 +51,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      # Прокидываем порт наружу только на 127.0.0.1 для безопасности
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
 
 volumes:
   pgdata:

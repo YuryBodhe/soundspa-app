@@ -2,11 +2,11 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Устанавливаем ВСЕ зависимости (включая dev для сборки и tsx)
+# Устанавливаем зависимости
 COPY package*.json ./
 RUN npm install
 
-# Копируем всё и собираем Next.js (чтобы сайт работал)
+# Копируем исходники и собираем Next.js
 COPY . .
 RUN npm run build
 
@@ -14,23 +14,24 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Копируем зависимости и результаты сборки
+# Устанавливаем системную библиотеку для Next.js
+RUN apk add --no-cache libc6-compat
+
+# Копируем всё необходимое из билдера
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
-COPY --from=builder /app/drizzle.config.json ./drizzle.config.json
-COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 
-# Копируем папки, которые нужны для работы воркера
+# Копируем папки, которые нужны воркеру (cron-задачам)
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/db ./db
 
 # Настраиваем окружение
 ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Команда по умолчанию (для сайта)
-# В docker-compose.yml для воркера мы её переопределим
+# По умолчанию запускаем сайт
 CMD ["npm", "run", "start"]
