@@ -6,11 +6,6 @@ import { randomBytes } from "crypto";
 import { sendMagicLinkEmail } from "@/lib/agentmail";
 
 const TRIAL_DAYS = 30;
-const DEFAULT_CHANNEL_CODES = [
-  "deep_relax",
-  "spaquatoria_healing",
-  "dynamic_spa",
-];
 
 
 function addDays(date: Date, days: number): Date {
@@ -156,22 +151,26 @@ export async function POST(req: Request) {
 
       const userId = userRow.id;
 
-      // Подхватываем базовый набор каналов по кодам (3 music + 3 noise)
+      // Подхватываем все музыкальные и шумовые каналы (кроме divnitsa)
       const baseChannels = await tx
         .select({
           id: channels.id,
           code: channels.code,
+          slug: channels.slug,
+          kind: channels.kind,
           defaultOrder: channels.order,
         })
         .from(channels)
-        .where(inArray(channels.code, DEFAULT_CHANNEL_CODES));
-
-      const orderedBase = DEFAULT_CHANNEL_CODES
-        .map((code) => baseChannels.find((c) => c.code === code))
-        .filter((c): c is { id: number; code: string; defaultOrder: number } => Boolean(c));
+        .where(
+          and(
+            inArray(channels.kind, ["music", "noise", "ambient"]),
+            sql`${channels.slug} != 'divnitsa'`,
+          ),
+        )
+        .orderBy(channels.order);
 
       let orderCounter = 1;
-      for (const ch of orderedBase) {
+      for (const ch of baseChannels) {
         await tx.insert(tenantChannels).values({
           tenantId,
           channelId: ch.id,

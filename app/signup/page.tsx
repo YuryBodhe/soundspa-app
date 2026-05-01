@@ -106,7 +106,7 @@ export default function SignupPage() {
             }}
           >
             Введите email, название салона и инвайт-код, чтобы создать тестовый кабинет
-            Sound Spa на 10 дней.
+            Sound Spa на 30 дней.
           </p>
         </header>
 
@@ -142,7 +142,7 @@ export default function SignupPage() {
               type="text"
               value={salonName}
               onChange={(e) => setSalonName(e.target.value)}
-              placeholder="Например, Дивница"
+              placeholder="Например, Spaquatoria"
               required
               style={{
                 marginTop: 6,
