@@ -36,6 +36,7 @@ export default function IosPlayer({
   
   // ── 1. ВСЕ СОСТОЯНИЯ (Hooks) В НАЧАЛЕ ──
   const [playing,         setPlaying]         = useState(false);
+  const [watcherStarted,  setWatcherStarted]  = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(channels[0]?.id ?? '');
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
   const [showIosHint,     setShowIosHint]     = useState(false);
@@ -54,13 +55,8 @@ export default function IosPlayer({
   const canvasRef = useWaveCanvas(playing);
 
   // ── 3. ЭФФЕКТЫ (После инициализации всех стейтов) ──
-  useEffect(() => {
-    // Инициализация мониторинга
-    if (tenantId) {
-      soundEngine.initWatcher(tenantId);
-    }
-    
-    // Восстановление сохраненного канала
+useEffect(() => {
+  // Восстановление сохраненного канала
     try {
       const saved = localStorage.getItem('last_active_channel');
       if (saved) {
@@ -80,7 +76,7 @@ export default function IosPlayer({
       soundEngine.stopNoise();
       soundEngine.dispose();
     };
-  }, [tenantId, channels]); 
+  }, [channels]); 
 
   // ── 4. ОБРАБОТЧИКИ ──
   const handleTogglePlay = () => {
@@ -91,6 +87,10 @@ export default function IosPlayer({
       setPlaying(false);
     } else {
       try {
+        if (tenantId && !watcherStarted) {
+          soundEngine.initWatcher(tenantId);
+          setWatcherStarted(true);
+        }
         soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
         setPlaying(true);
         setShowIosHint(false);
@@ -105,6 +105,10 @@ export default function IosPlayer({
     if (activeChannelId === channel.id && playing) return;
 
     setActiveChannelId(channel.id);
+    if (tenantId && !watcherStarted) {
+      soundEngine.initWatcher(tenantId);
+      setWatcherStarted(true);
+    }
     soundEngine.playChannel(channel.id, channel.streamUrl);
     setPlaying(true);
     setShowIosHint(false);

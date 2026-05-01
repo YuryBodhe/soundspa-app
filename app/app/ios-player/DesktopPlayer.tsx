@@ -34,6 +34,7 @@ export default function DesktopPlayer({
   const [sessionId] = useState(() => `desktop_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`);
 
   const [playing,         setPlaying]         = useState(false);
+  const [watcherStarted,  setWatcherStarted]  = useState(false);
   const [activeChannelId, setActiveChannelId] = useState<string>(channels[0]?.id ?? '');
   const [activeNoiseId,   setActiveNoiseId]   = useState<string | null>(null);
   const [noiseVolume,     setNoiseVolume]     = useState(0.4);
@@ -50,29 +51,27 @@ export default function DesktopPlayer({
 
   const canvasRef = useWaveCanvas(playing);
 
-  useEffect(() => {
-    if (!tenantId) return;
+useEffect(() => {
+  if (!tenantId) return;
 
-    soundEngine.initWatcher(tenantId);
-
-    try {
-      const saved = localStorage.getItem('last_active_channel');
-      if (saved) {
-        const { id } = JSON.parse(saved);
-        if (id && channelsRef.current.some((channel) => channel.id === id)) {
-          setActiveChannelId(id);
-        }
+  try {
+    const saved = localStorage.getItem('last_active_channel');
+    if (saved) {
+      const { id } = JSON.parse(saved);
+      if (id && channelsRef.current.some((channel) => channel.id === id)) {
+        setActiveChannelId(id);
       }
-    } catch (e) {
-      console.warn('Failed to restore last channel', e);
     }
+  } catch (e) {
+    console.warn('Failed to restore last channel', e);
+  }
 
-    return () => {
-      soundEngine.stopChannel();
-      soundEngine.stopNoise();
-      soundEngine.dispose();
-    };
-  }, [tenantId]);
+  return () => {
+    soundEngine.stopChannel();
+    soundEngine.stopNoise();
+    soundEngine.dispose();
+  };
+}, [tenantId]);
 
   const persistChannelSelection = (channel: Channel) => {
     try {
@@ -89,6 +88,10 @@ export default function DesktopPlayer({
       soundEngine.stopChannel();
       setPlaying(false);
     } else {
+      if (tenantId && !watcherStarted) {
+        soundEngine.initWatcher(tenantId);
+        setWatcherStarted(true);
+      }
       soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
       setPlaying(true);
       persistChannelSelection(activeChannel);
@@ -102,6 +105,10 @@ export default function DesktopPlayer({
 
     setActiveChannelId(channel.id);
     persistChannelSelection(channel);
+    if (tenantId && !watcherStarted) {
+      soundEngine.initWatcher(tenantId);
+      setWatcherStarted(true);
+    }
     soundEngine.playChannel(channel.id, channel.streamUrl);
     setPlaying(true);
   };

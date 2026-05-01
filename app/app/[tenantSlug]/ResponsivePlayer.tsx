@@ -21,20 +21,17 @@ interface Props {
 export function ResponsivePlayer(props: Props) {
   const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    // Запуск мониторинга для конкретного салона
-    soundEngine.initWatcher(props.tenantId);
+useEffect(() => {
+  if (typeof window === "undefined") return;
 
-    if (typeof window === "undefined") return;
+  const check = () => {
+    setIsDesktop(window.innerWidth >= 1024);
+  };
 
-    const check = () => {
-      setIsDesktop(window.innerWidth >= 1024);
-    };
-
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, [props.tenantId]);
+  check();
+  window.addEventListener("resize", check);
+  return () => window.removeEventListener("resize", check);
+}, []);
 
   if (isDesktop === null) return null;
 
