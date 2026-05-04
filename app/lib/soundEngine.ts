@@ -20,6 +20,9 @@ interface SoundEngine {
 
 const isBrowser = typeof window !== "undefined";
 const FADE_TIME = 3000; 
+const NOISE_FADE_IN = 4000;
+const NOISE_SWITCH_FADE_OUT = 3000;
+const NOISE_STOP_FADE = 1500;
 
 // --- Внутреннее состояние ---
 const sessionId = isBrowser ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}` : 'node';
@@ -33,6 +36,9 @@ let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
 let isNoiseTransitioning = false;
 let currentNoiseVol = 0.4; // Дефолтное значение
+let noiseCtx: AudioContext | null = null;
+let noiseSource: MediaElementAudioSourceNode | null = null;
+let noiseGain: GainNode | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null; 
 let retryCount = 0;
 let currentTenantId: string | number = 'unknown';
@@ -65,6 +71,39 @@ const cleanAudio = (audio: HTMLAudioElement | null) => {
   } catch (err) {
     console.warn("[SoundEngine] cleanAudio error", err);
   }
+};
+
+const disconnectNoiseGraph = () => {
+  if (noiseSource) {
+    try {
+      noiseSource.disconnect();
+    } catch {}
+  }
+  if (noiseGain) {
+    try {
+      noiseGain.disconnect();
+    } catch {}
+  }
+  noiseSource = null;
+  noiseGain = null;
+};
+
+const ensureNoiseContext = () => {
+  if (!isBrowser) return null;
+  if (noiseCtx) return noiseCtx;
+  const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+  if (!Ctx) return null;
+  noiseCtx = new Ctx();
+  return noiseCtx;
+};
+
+const fadeNoiseGain = (target: number, durationMs: number) => {
+  if (!noiseCtx || !noiseGain) return;
+  const now = noiseCtx.currentTime;
+  const startVal = noiseGain.gain.value;
+  noiseGain.gain.cancelScheduledValues(now);
+  noiseGain.gain.setValueAtTime(startVal, now);
+  noiseGain.gain.linearRampToValueAtTime(target, now + durationMs / 1000);
 };
 
 // --- Вспомогательная функция фейда ---
@@ -289,7 +328,7 @@ export const soundEngine: SoundEngine = {
       if (noiseAudio && noiseAudio.paused) {
         noiseAudio
           .play()
-          .then(() => internalFade(noiseAudio!, currentNoiseVol, 2000))
+          .then(() => internalFade(noiseAudio!, currentNoiseVol, NOISE_FADE_IN))
           .catch((e) => console.warn("[SoundEngine] noise resume blocked", e));
       }
       return;
@@ -297,9 +336,25 @@ export const soundEngine: SoundEngine = {
 
     isNoiseTransitioning = true;
 
-    const previous = noiseAudio;
-    if (previous) {
-      cleanAudio(previous);
+    const previousAudio = noiseAudio;
+    if (previousAudio) {
+      const prevTarget = previousAudio;
+      if (noiseGain && noiseCtx) {
+        fadeNoiseGain(0, NOISE_SWITCH_FADE_OUT);
+        setTimeout(() => {
+          cleanAudio(prevTarget);
+          if (noiseAudio === prevTarget) {
+            disconnectNoiseGraph();
+            noiseAudio = null;
+            noiseId = null;
+            noiseStreamUrl = null;
+          }
+        }, NOISE_SWITCH_FADE_OUT);
+      } else {
+        internalFade(prevTarget, 0, NOISE_SWITCH_FADE_OUT, () => {
+          cleanAudio(prevTarget);
+        });
+      }
     }
     noiseAudio = null;
     noiseId = null;
@@ -313,11 +368,29 @@ export const soundEngine: SoundEngine = {
     audio.volume = 0.001;
     noiseAudio = audio;
 
+    const ctx = ensureNoiseContext();
+    if (ctx) {
+      disconnectNoiseGraph();
+      try {
+        noiseSource = ctx.createMediaElementSource(audio);
+        noiseGain = ctx.createGain();
+        noiseGain.gain.value = 0.001;
+        noiseSource.connect(noiseGain).connect(ctx.destination);
+      } catch (err) {
+        console.warn("[SoundEngine] Failed to init noise graph", err);
+        disconnectNoiseGraph();
+      }
+    }
+
     audio
       .play()
       .then(() => {
         isNoiseTransitioning = false;
-        internalFade(audio, currentNoiseVol, 2000);
+        if (noiseGain && noiseCtx) {
+          fadeNoiseGain(currentNoiseVol, NOISE_FADE_IN);
+        } else {
+          internalFade(audio, currentNoiseVol, NOISE_FADE_IN);
+        }
       })
       .catch((e) => {
         isNoiseTransitioning = false;
@@ -327,21 +400,38 @@ export const soundEngine: SoundEngine = {
 
   setNoiseVolume(volume) {
     currentNoiseVol = Math.max(0, Math.min(1, volume));
-    if (noiseAudio) noiseAudio.volume = currentNoiseVol;
+    if (noiseGain && noiseCtx) {
+      noiseGain.gain.setValueAtTime(currentNoiseVol, noiseCtx.currentTime);
+    } else if (noiseAudio) {
+      noiseAudio.volume = currentNoiseVol;
+    }
   },
 
   stopNoise() {
     if (!noiseAudio) return;
     const target = noiseAudio;
     isNoiseTransitioning = false;
-    internalFade(target, 0, 1500, () => {
-      cleanAudio(target);
-      if (noiseAudio === target) {
-        noiseAudio = null;
-        noiseId = null;
-        noiseStreamUrl = null;
-      }
-    });
+    if (noiseGain && noiseCtx) {
+      fadeNoiseGain(0, NOISE_STOP_FADE);
+      setTimeout(() => {
+        cleanAudio(target);
+        if (noiseAudio === target) {
+          disconnectNoiseGraph();
+          noiseAudio = null;
+          noiseId = null;
+          noiseStreamUrl = null;
+        }
+      }, NOISE_STOP_FADE);
+    } else {
+      internalFade(target, 0, NOISE_STOP_FADE, () => {
+        cleanAudio(target);
+        if (noiseAudio === target) {
+          noiseAudio = null;
+          noiseId = null;
+          noiseStreamUrl = null;
+        }
+      });
+    }
   },
 
   dispose() {
@@ -352,6 +442,11 @@ export const soundEngine: SoundEngine = {
     clearReconnect();
     cleanAudio(mainAudio);
     cleanAudio(noiseAudio);
+    disconnectNoiseGraph();
+    if (noiseCtx) {
+      noiseCtx.close().catch(() => {});
+      noiseCtx = null;
+    }
     cleanAudio(silencePlayer);
     mainAudio = null;
     noiseAudio = null;
