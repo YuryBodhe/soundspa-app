@@ -19,13 +19,13 @@ interface SoundEngine {
 }
 
 const isBrowser = typeof window !== "undefined";
-const FADE_TIME = 3000; 
-const NOISE_FADE_IN = 4000;
-const NOISE_SWITCH_FADE_OUT = 3000;
-const NOISE_STOP_FADE = 1500;
+const FADE_TIME = 3000;
 
 // --- Внутреннее состояние ---
-const sessionId = isBrowser ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}` : 'node';
+const sessionId = isBrowser
+  ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`
+  : "node";
+
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
@@ -35,15 +35,134 @@ let noiseAudio: HTMLAudioElement | null = null;
 let noiseId: string | null = null;
 let noiseStreamUrl: string | null = null;
 let isNoiseTransitioning = false;
-let currentNoiseVol = 0.4; // Дефолтное значение
-let noiseCtx: AudioContext | null = null;
-let noiseSource: MediaElementAudioSourceNode | null = null;
-let noiseGain: GainNode | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null; 
+let currentNoiseVol = 0.4;
+
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let retryCount = 0;
-let currentTenantId: string | number = 'unknown';
+let currentTenantId: string | number = "unknown";
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 let isBuffering = false;
+
+// ---------------------------------------------------------------------------
+// WATCHDOG
+// ---------------------------------------------------------------------------
+// Принцип: каждые WATCHDOG_INTERVAL мс смотрим, движется ли audio.currentTime.
+// Для радио-стрима currentTime всегда растёт, пока играет живой поток.
+// Если время не сдвинулось WATCHDOG_STALL_LIMIT мс — считаем это обрывом
+// и пересоздаём Audio-элемент без каких-либо внешних уведомлений (UI не трогаем).
+//
+// Почему не слушаем события error/stalled/waiting?
+//   — Chrome при зависшем стриме часто не шлёт ни одного из них.
+//   — Если слушать их напрямую и сразу реконнектить, получаем каскад:
+//     error → reconnect → error → reconnect → CPU перегрев + console spam.
+//   — Watchdog срабатывает не чаще раза в WATCHDOG_STALL_LIMIT, поэтому
+//     даже при полном отсутствии сети цикл реконнектов медленный и безопасный.
+
+const WATCHDOG_INTERVAL = 3000;    // частота проверки, мс
+const WATCHDOG_STALL_LIMIT = 8000; // порог зависания, мс (~8 с)
+
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+let lastCurrentTime = 0;
+let lastCurrentTimeAt = 0;      // performance.now() последнего движения времени
+let isIntentionallyPaused = false; // true = пользователь сам нажал Stop
+
+const startWatchdog = () => {
+  stopWatchdog();
+  lastCurrentTime = 0;
+  lastCurrentTimeAt = performance.now();
+
+  watchdogTimer = setInterval(() => {
+    if (isMainTransitioning || isIntentionallyPaused) return;
+    if (!mainAudio || !mainStreamUrl || !mainChannelId) return;
+
+    const ct = mainAudio.currentTime;
+    const now = performance.now();
+
+    if (ct !== lastCurrentTime) {
+      lastCurrentTime = ct;
+      lastCurrentTimeAt = now;
+      return;
+    }
+
+    const stalledMs = now - lastCurrentTimeAt;
+    if (stalledMs >= WATCHDOG_STALL_LIMIT) {
+      console.warn(
+        `[SoundEngine] Watchdog: поток завис ${Math.round(stalledMs / 1000)}с — реконнект`
+      );
+      lastCurrentTimeAt = now; // сбрасываем, чтобы не стрелять повторно сразу
+      silentReconnect();
+    }
+  }, WATCHDOG_INTERVAL);
+};
+
+const stopWatchdog = () => {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
+};
+
+// Тихий реконнект: пересоздаём Audio с той же громкостью — UI не знает об этом.
+const silentReconnect = () => {
+  if (!mainStreamUrl || !mainChannelId) return;
+
+  const url = mainStreamUrl;
+  const vol = mainAudio ? mainAudio.volume : 0.8;
+
+  console.info("[SoundEngine] silentReconnect", { channelId: mainChannelId, url });
+
+  if (mainAudio) {
+    const dead = mainAudio;
+    mainAudio = null;
+    dead.onerror = null;
+    dead.onstalled = null;
+    dead.onwaiting = null;
+    dead.onplaying = null;
+    dead.oncanplay = null;
+    dead.pause();
+    // Без audio.load() — не тревожим noise-поток
+    setTimeout(() => {
+      try { dead.src = ""; dead.removeAttribute("src"); } catch (_) {}
+    }, 100);
+  }
+
+  const audio = new Audio(url);
+  audio.crossOrigin = "anonymous";
+  audio.volume = vol; // стартуем с текущей громкости — без щелчка
+  mainAudio = audio;
+  isBuffering = false;
+
+  attachMainListeners(audio);
+
+  audio.play().catch((e) => {
+    console.warn("[SoundEngine] silentReconnect play blocked", e);
+  });
+};
+
+// Слушатели для main-аудио — вынесены, чтобы не дублировать
+const forceWatchdogTick = () => {
+  // Считаем, что уже давно стоим: watchdog отработает при ближайшей проверке
+  lastCurrentTimeAt = performance.now() - WATCHDOG_STALL_LIMIT;
+};
+
+const attachMainListeners = (audio: HTMLAudioElement) => {
+  audio.addEventListener("error", () => {
+    isBuffering = true;
+    forceWatchdogTick();
+  });
+  audio.addEventListener("stalled", () => {
+    isBuffering = true;
+    forceWatchdogTick();
+  });
+  audio.addEventListener("playing", () => {
+    isBuffering = false;
+    // Сбрасываем checkpoint: после resume время снова начнёт двигаться
+    lastCurrentTimeAt = performance.now();
+  });
+  audio.addEventListener("canplay", () => { isBuffering = false; });
+};
+
+// ---------------------------------------------------------------------------
 
 const getValidTenantId = (): number | null => {
   const parsedTenantId = Number(currentTenantId);
@@ -51,18 +170,14 @@ const getValidTenantId = (): number | null => {
   return parsedTenantId;
 };
 
-// --- Вспомогательные функции ---
-
+// Жёсткая очистка — только для main/dispose (audio.load() OK здесь)
 const cleanAudio = (audio: HTMLAudioElement | null) => {
   if (!audio) return;
   try {
     audio.pause();
-    // Эти три строки критичны для разгрузки процессора и сети:
-    audio.src = ""; 
-    audio.removeAttribute('src'); 
-    audio.load(); 
-    
-    // Сбрасываем все обработчики, чтобы "мертвое" аудио не спамило в консоль
+    audio.src = "";
+    audio.removeAttribute("src");
+    audio.load();
     audio.onplay = null;
     audio.onpause = null;
     audio.onerror = null;
@@ -73,40 +188,24 @@ const cleanAudio = (audio: HTMLAudioElement | null) => {
   }
 };
 
-const disconnectNoiseGraph = () => {
-  if (noiseSource) {
-    try {
-      noiseSource.disconnect();
-    } catch {}
+// Мягкая очистка — для noise, без audio.load() (не тревожит main-поток)
+const softCleanAudio = (audio: HTMLAudioElement | null) => {
+  if (!audio) return;
+  try {
+    audio.pause();
+    audio.onplay = null;
+    audio.onpause = null;
+    audio.onerror = null;
+    audio.onstalled = null;
+    audio.onwaiting = null;
+    setTimeout(() => {
+      try { audio.src = ""; audio.removeAttribute("src"); } catch (_) {}
+    }, 100);
+  } catch (err) {
+    console.warn("[SoundEngine] softCleanAudio error", err);
   }
-  if (noiseGain) {
-    try {
-      noiseGain.disconnect();
-    } catch {}
-  }
-  noiseSource = null;
-  noiseGain = null;
 };
 
-const ensureNoiseContext = () => {
-  if (!isBrowser) return null;
-  if (noiseCtx) return noiseCtx;
-  const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-  if (!Ctx) return null;
-  noiseCtx = new Ctx();
-  return noiseCtx;
-};
-
-const fadeNoiseGain = (target: number, durationMs: number) => {
-  if (!noiseCtx || !noiseGain) return;
-  const now = noiseCtx.currentTime;
-  const startVal = noiseGain.gain.value;
-  noiseGain.gain.cancelScheduledValues(now);
-  noiseGain.gain.setValueAtTime(startVal, now);
-  noiseGain.gain.linearRampToValueAtTime(target, now + durationMs / 1000);
-};
-
-// --- Вспомогательная функция фейда ---
 const internalFade = (
   audio: HTMLAudioElement,
   targetVol: number,
@@ -117,84 +216,66 @@ const internalFade = (
   const startVol = audio.volume;
   const startTime = performance.now();
   let cancelled = false;
-
   if (onFadeStart) onFadeStart();
-
   const step = (now: number) => {
     if (cancelled) return;
-
     const elapsed = now - startTime;
     const progress = Math.min(elapsed / duration, 1);
-    
-    const newVol = startVol + (targetVol - startVol) * progress;
-    audio.volume = Math.max(0, Math.min(1, newVol));
-
+    audio.volume = Math.max(0, Math.min(1, startVol + (targetVol - startVol) * progress));
     if (progress < 1) {
       requestAnimationFrame(step);
     } else if (callback && !cancelled) {
       callback();
     }
   };
-
   requestAnimationFrame(step);
-
-  return () => {
-    cancelled = true;
-  };
+  return () => { cancelled = true; };
 };
 
 const clearReconnect = () => {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   retryCount = 0;
 };
 
-// --- SILENCE HACK ---
 let silencePlayer: HTMLAudioElement | null = null;
 const keepAudioContextAlive = () => {
   if (!isBrowser || silencePlayer) return;
-  const silentSrc = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  const silentSrc =
+    "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
   silencePlayer = new Audio(silentSrc);
   silencePlayer.loop = true;
   silencePlayer.volume = 0.001;
-  const start = () => silencePlayer?.play().catch(() => window.addEventListener('click', start, { once: true }));
+  const start = () =>
+    silencePlayer?.play().catch(() =>
+      window.addEventListener("click", start, { once: true })
+    );
   start();
 };
 
-const detectClientType = (userAgent: string): "desktop" | "mobile" | "tablet" | "other" => {
-  const ua = userAgent.toLowerCase();
-  if (/tablet|ipad|playbook|silk/.test(ua)) return "tablet";
-  if (/mobile|iphone|ipod|android/.test(ua)) return "mobile";
-  if (/macintosh|windows|linux/.test(ua)) return "desktop";
+const detectClientType = (ua: string): "desktop" | "mobile" | "tablet" | "other" => {
+  const u = ua.toLowerCase();
+  if (/tablet|ipad|playbook|silk/.test(u)) return "tablet";
+  if (/mobile|iphone|ipod|android/.test(u)) return "mobile";
+  if (/macintosh|windows|linux/.test(u)) return "desktop";
   return "other";
 };
 
 export const soundEngine: SoundEngine = {
   initWatcher(tenantId) {
-    const parsedTenantId = Number(tenantId);
-    if (Number.isInteger(parsedTenantId) && parsedTenantId > 0) {
-      currentTenantId = parsedTenantId;
-    }
+    const parsed = Number(tenantId);
+    if (Number.isInteger(parsed) && parsed > 0) currentTenantId = parsed;
     if (isBrowser) keepAudioContextAlive();
-    if (pingInterval) {
-      clearInterval(pingInterval);
-    }
+    if (pingInterval) clearInterval(pingInterval);
 
-    // Запускаем пульс мониторинга
     pingInterval = setInterval(async () => {
       try {
         const validTenantId = getValidTenantId();
         if (validTenantId === null) return;
-
         const status = mainAudio && !mainAudio.paused ? "online" : "paused";
         const userAgent = isBrowser ? navigator.userAgent : "unknown";
-        const clientType = detectClientType(userAgent);
-
-        await fetch('/api/monitoring/ping', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        await fetch("/api/monitoring/ping", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             tenantId: validTenantId,
             status,
@@ -206,30 +287,25 @@ export const soundEngine: SoundEngine = {
               noiseId: noiseId ?? null,
               device: "Desktop-Player",
               version: "1.2.0",
-              clientType,
+              clientType: detectClientType(userAgent),
               userAgent,
               isBuffering,
             },
-          })
+          }),
         });
-      } catch (e) {
-        // Не спамим в консоль, чтобы не забивать логи браузера
-      }
-    }, 60000); // Раз в минуту
+      } catch (_) {}
+    }, 60000);
   },
 
   playChannel(id, url) {
     if (!isBrowser) return;
-
-    // 1. Если уже идет переключение — не мешаем
     if (isMainTransitioning) {
       console.warn("[SoundEngine] main transition in progress");
       return;
     }
-
-    // 2. Если нажали на тот же канал, который уже играет — просто выходим или возобновляем
     if (id === mainChannelId && url === mainStreamUrl) {
       if (mainAudio && mainAudio.paused) {
+        isIntentionallyPaused = false;
         mainAudio.play()
           .then(() => internalFade(mainAudio!, 0.8, FADE_TIME))
           .catch((e) => console.warn("[SoundEngine] resume blocked", e));
@@ -238,63 +314,41 @@ export const soundEngine: SoundEngine = {
     }
 
     isMainTransitioning = true;
-
-    // 3. Жестко останавливаем и чистим всё старое перед запуском нового
-    this.stopChannel(); 
+    isIntentionallyPaused = false;
+    this.stopChannel();
 
     mainChannelId = id;
     mainStreamUrl = url;
 
-    // 4. Создаем новый объект
     const audio = new Audio(url);
     audio.crossOrigin = "anonymous";
-    audio.volume = 0.001; 
+    audio.volume = 0.001;
     mainAudio = audio;
     isBuffering = false;
 
-    // 5. Минимальный набор слушателей (без циклов реконнекта!)
-    audio.addEventListener('error', () => {
-      console.error("[SoundEngine] Критическая ошибка потока");
-      this.stopChannel(); // Просто гасим плеер, если стрим "умер"
-    });
+    attachMainListeners(audio);
 
-    audio.addEventListener('stalled', () => {
-      console.warn("[SoundEngine] Поток замер (буферизация)");
-      isBuffering = true;
-      // Позволяем браузеру самому разобраться с буфером
-    });
-
-    audio.addEventListener('playing', () => {
-      isBuffering = false;
-    });
-
-    audio.addEventListener('canplay', () => {
-      isBuffering = false;
-    });
-
-    // 6. Запуск
     audio.play()
       .then(() => {
         isMainTransitioning = false;
         internalFade(audio, 0.8, FADE_TIME);
+        startWatchdog(); // только после успешного старта
       })
-      .catch(e => {
+      .catch((e) => {
         isMainTransitioning = false;
         console.warn("Main play blocked by browser", e);
-        // Если браузер запретил автоплей, ждем клика пользователя
-        window.addEventListener('click', () => audio.play(), { once: true });
+        window.addEventListener("click", () => audio.play(), { once: true });
       });
   },
 
   stopChannel() {
-    // 1. Сбрасываем флаги сразу, чтобы интерфейс мгновенно отреагировал
     isMainTransitioning = false;
+    isIntentionallyPaused = true; // явная остановка — watchdog не реконнектит
+    stopWatchdog();
     mainChannelId = null;
     mainStreamUrl = null;
 
     if (!mainAudio) return;
-
-    // 2. Снимаем всех слушателей
     mainAudio.onerror = null;
     mainAudio.onstalled = null;
     mainAudio.onwaiting = null;
@@ -302,14 +356,10 @@ export const soundEngine: SoundEngine = {
     mainAudio.oncanplay = null;
 
     const target = mainAudio;
-    mainAudio = null; // Отвязываем ссылку сразу
+    mainAudio = null;
     isBuffering = false;
 
-    // 3. Быстрый фейд и жесткая очистка
-    // Используем 200мс, чтобы не было щелчка в динамиках
-    internalFade(target, 0, 200, () => {
-      cleanAudio(target);
-    });
+    internalFade(target, 0, 200, () => cleanAudio(target));
   },
 
   setMainVolume(vol) {
@@ -318,48 +368,22 @@ export const soundEngine: SoundEngine = {
 
   setNoise(id, url) {
     if (!isBrowser || !url) return;
-
     if (isNoiseTransitioning) {
       console.warn("[SoundEngine] noise transition in progress");
       return;
     }
-
     if (id === noiseId && url === noiseStreamUrl) {
       if (noiseAudio && noiseAudio.paused) {
-        noiseAudio
-          .play()
-          .then(() => internalFade(noiseAudio!, currentNoiseVol, NOISE_FADE_IN))
+        noiseAudio.play()
+          .then(() => internalFade(noiseAudio!, currentNoiseVol, 2000))
           .catch((e) => console.warn("[SoundEngine] noise resume blocked", e));
       }
       return;
     }
 
     isNoiseTransitioning = true;
-
-    const previousAudio = noiseAudio;
-    if (previousAudio) {
-      const prevTarget = previousAudio;
-      if (noiseGain && noiseCtx) {
-        fadeNoiseGain(0, NOISE_SWITCH_FADE_OUT);
-        setTimeout(() => {
-          cleanAudio(prevTarget);
-          if (noiseAudio === prevTarget) {
-            disconnectNoiseGraph();
-            noiseAudio = null;
-            noiseId = null;
-            noiseStreamUrl = null;
-          }
-        }, NOISE_SWITCH_FADE_OUT);
-      } else {
-        internalFade(prevTarget, 0, NOISE_SWITCH_FADE_OUT, () => {
-          cleanAudio(prevTarget);
-        });
-      }
-    }
+    const previous = noiseAudio;
     noiseAudio = null;
-    noiseId = null;
-    noiseStreamUrl = null;
-
     noiseId = id;
     noiseStreamUrl = url;
 
@@ -368,85 +392,49 @@ export const soundEngine: SoundEngine = {
     audio.volume = 0.001;
     noiseAudio = audio;
 
-    const ctx = ensureNoiseContext();
-    if (ctx) {
-      disconnectNoiseGraph();
-      try {
-        noiseSource = ctx.createMediaElementSource(audio);
-        noiseGain = ctx.createGain();
-        noiseGain.gain.value = 0.001;
-        noiseSource.connect(noiseGain).connect(ctx.destination);
-      } catch (err) {
-        console.warn("[SoundEngine] Failed to init noise graph", err);
-        disconnectNoiseGraph();
-      }
-    }
+    const startNew = () => {
+      audio.play()
+        .then(() => {
+          isNoiseTransitioning = false;
+          internalFade(audio, currentNoiseVol, 2000);
+        })
+        .catch((e) => {
+          isNoiseTransitioning = false;
+          console.warn("Noise blocked", e);
+        });
+    };
 
-    audio
-      .play()
-      .then(() => {
-        isNoiseTransitioning = false;
-        if (noiseGain && noiseCtx) {
-          fadeNoiseGain(currentNoiseVol, NOISE_FADE_IN);
-        } else {
-          internalFade(audio, currentNoiseVol, NOISE_FADE_IN);
-        }
-      })
-      .catch((e) => {
-        isNoiseTransitioning = false;
-        console.warn("Noise blocked", e);
+    if (previous) {
+      internalFade(previous, 0, 600, () => {
+        softCleanAudio(previous);
+        startNew();
       });
+    } else {
+      startNew();
+    }
   },
 
   setNoiseVolume(volume) {
     currentNoiseVol = Math.max(0, Math.min(1, volume));
-    if (noiseGain && noiseCtx) {
-      noiseGain.gain.setValueAtTime(currentNoiseVol, noiseCtx.currentTime);
-    } else if (noiseAudio) {
-      noiseAudio.volume = currentNoiseVol;
-    }
+    if (noiseAudio) noiseAudio.volume = currentNoiseVol;
   },
 
   stopNoise() {
     if (!noiseAudio) return;
     const target = noiseAudio;
+    noiseAudio = null;
+    noiseId = null;
+    noiseStreamUrl = null;
     isNoiseTransitioning = false;
-    if (noiseGain && noiseCtx) {
-      fadeNoiseGain(0, NOISE_STOP_FADE);
-      setTimeout(() => {
-        cleanAudio(target);
-        if (noiseAudio === target) {
-          disconnectNoiseGraph();
-          noiseAudio = null;
-          noiseId = null;
-          noiseStreamUrl = null;
-        }
-      }, NOISE_STOP_FADE);
-    } else {
-      internalFade(target, 0, NOISE_STOP_FADE, () => {
-        cleanAudio(target);
-        if (noiseAudio === target) {
-          noiseAudio = null;
-          noiseId = null;
-          noiseStreamUrl = null;
-        }
-      });
-    }
+    internalFade(target, 0, 1500, () => softCleanAudio(target));
   },
 
   dispose() {
-    if (pingInterval) {
-      clearInterval(pingInterval);
-      pingInterval = null;
-    }
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+    stopWatchdog();
     clearReconnect();
     cleanAudio(mainAudio);
     cleanAudio(noiseAudio);
-    disconnectNoiseGraph();
-    if (noiseCtx) {
-      noiseCtx.close().catch(() => {});
-      noiseCtx = null;
-    }
     cleanAudio(silencePlayer);
     mainAudio = null;
     noiseAudio = null;
@@ -457,6 +445,7 @@ export const soundEngine: SoundEngine = {
     noiseStreamUrl = null;
     isMainTransitioning = false;
     isNoiseTransitioning = false;
+    isIntentionallyPaused = false;
   },
 
   getState() {
@@ -465,5 +454,5 @@ export const soundEngine: SoundEngine = {
       channelId: mainChannelId,
       noiseId: noiseId,
     };
-  }
+  },
 };

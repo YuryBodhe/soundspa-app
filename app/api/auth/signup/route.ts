@@ -4,6 +4,7 @@ import { tenants, users, invites, loginTokens, tenantChannels, channels } from "
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { sendMagicLinkEmail } from "@/lib/agentmail";
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
 
 const TRIAL_DAYS = 30;
 
@@ -18,11 +19,27 @@ function toIso(date: Date): string {
   return date.toISOString();
 }
 
+const cyrillicMap: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "yo", ж: "zh", з: "z",
+  и: "i", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r",
+  с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts", ч: "ch", ш: "sh", щ: "sch",
+  ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+};
+
 function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\u0400-\u04FF]+/g, "-")
+  const lower = name.toLowerCase().trim();
+  let translit = "";
+
+  for (const char of lower) {
+    if (cyrillicMap[char]) {
+      translit += cyrillicMap[char];
+    } else {
+      translit += char;
+    }
+  }
+
+  return translit
+    .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "tenant";
 }
@@ -218,6 +235,17 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
+    // Telegram уведомление о новой регистрации (не блокирует ответ)
+    sendTelegramMessage(
+      [
+        `🆕 *Новая регистрация*`,
+        `Салон: ${salonName}`,
+        `Email: ${email}`,
+        `Tenant ID: ${result.tenantId}`,
+        `Trial до: ${trialEnds.toISOString().slice(0, 10)}`,
+      ].join("\n"),
+    ).catch((err) => console.error("Failed to send Telegram signup notify", err));
 
     return NextResponse.json({
       ok: true,
