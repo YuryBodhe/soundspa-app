@@ -1,7 +1,7 @@
-// app/app/ios-player/channels.ts
 import { db } from "@/lib/db.pg";
 import { eq, and } from "drizzle-orm"; // Убедись, что 'and' здесь есть
-import { tenants, tenantChannels, channels } from "@/db"; 
+import { tenants, tenantChannels, channels } from "@/db";
+
 // Добавляем эту строку здесь:
 export const revalidate = 0;
 
@@ -39,6 +39,29 @@ export interface PromoCard {
 }
 
 // ── МУЗЫКАЛЬНЫЕ КАНАЛЫ (HLS) ─────────────────────────
+function resolveStreamUrl(raw: string, isRu: boolean): string {
+  if (!isRu) return raw;
+
+  try {
+    const url = new URL(raw);
+    if (url.hostname === "radio.bodhemusic.com") {
+      url.protocol = "https:";
+      url.hostname = "ru-radio.bodhemusic.com";
+      url.port = ""; // используем стандартный HTTPS-порт
+
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts[0] === "listen" && parts[1]) {
+        url.pathname = `/${parts[1]}`;
+      }
+
+      return url.toString();
+    }
+    return raw;
+  } catch (err) {
+    return raw;
+  }
+}
+
 export async function getChannelsForTenant(tenantSlug: TenantSlug): Promise<Channel[]> {
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.slug, tenantSlug),
@@ -75,12 +98,14 @@ export async function getChannelsForTenant(tenantSlug: TenantSlug): Promise<Chan
     return oa - ob;
   });
 
+  const isRu = !!tenant.isRu;
+
   return sorted.map(r => ({
     id: String(r.id),
     slug: r.slug,
     title: r.displayName,
     mood: r.mood,
-    streamUrl: r.streamUrl,
+    streamUrl: resolveStreamUrl(r.streamUrl, isRu),
     image: r.image,
     order: r.tenantOrder ?? r.channelOrder ?? 0,
     isNew: !!r.isNew,
@@ -114,11 +139,13 @@ export async function getNoiseChannelsForTenant(tenantSlug: string): Promise<Amb
       )
     );
 
+  const isRu = !!tenant.isRu;
+
   return rows.map(ch => ({
     id:        ch.id.toString(),
     slug:      ch.slug,
     title:     ch.displayName,
-    streamUrl: ch.streamUrl,
+    streamUrl: resolveStreamUrl(ch.streamUrl, isRu),
     order:     ch.tenantOrder ?? ch.channelOrder ?? 0,
     enabled:   true,
     image:     ch.image

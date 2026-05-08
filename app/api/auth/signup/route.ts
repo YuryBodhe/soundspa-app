@@ -74,6 +74,8 @@ export async function POST(req: Request) {
     const email = (body.email as string | undefined)?.trim().toLowerCase();
     const salonName = (body.salonName as string | undefined)?.trim();
     const inviteCode = (body.inviteCode as string | undefined)?.trim();
+    const countryCode = req.headers.get("cf-ipcountry")?.toUpperCase() ?? null;
+    const isRu = countryCode === "RU";
 
     if (!email || !salonName || !inviteCode) {
       return NextResponse.json(
@@ -141,6 +143,7 @@ export async function POST(req: Request) {
           trialStartedAt: now.toISOString(),
           trialEndsAt: trialEnds.toISOString(),
           paidTill: null,
+          isRu,
         })
         .returning({ id: tenants.id });
 

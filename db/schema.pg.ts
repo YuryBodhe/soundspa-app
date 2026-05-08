@@ -19,6 +19,8 @@ export const tenants = pgTable("tenants", {
   slug: text("slug").notNull().unique(),
   // Красивое название для отображения внутри плеера
   brandName: text("brand_name"),
+  // Признак, что салон обслуживается через RU-релей
+  isRu: boolean("is_ru").notNull().default(false),
   
   // Даты триала
   trialStartedAt: timestamp("trial_started_at", {

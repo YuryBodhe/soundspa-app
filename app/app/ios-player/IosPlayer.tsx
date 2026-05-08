@@ -122,7 +122,7 @@ useEffect(() => {
     } else {
       setActiveNoiseId(noise.id);
       soundEngine.setNoise(noise.id, noise.streamUrl);
-      soundEngine.setNoiseVolume(0.5); 
+      soundEngine.setNoiseVolume(0.3); 
     }
   };
 

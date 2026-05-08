@@ -1,0 +1,1 @@
+ALTER TABLE "tenants" ADD COLUMN "is_ru" boolean DEFAULT false NOT NULL;

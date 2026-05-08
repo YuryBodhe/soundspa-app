@@ -97,7 +97,8 @@ export default async function TenantDetailPage({
             "use server";
             await updateTenant(id, {
               brandName: formData.get("brandName") as string,
-              paidTill:  formData.get("paidTill") as string,
+              paidTill:  (formData.get("paidTill") as string) ?? "",
+              isRu:      (formData.get("isRu") as string | null) ?? undefined,
             });
           }}
         >
@@ -118,6 +119,15 @@ export default async function TenantDetailPage({
               type="date"
               defaultValue={toDateInputValue(paidTill)}
             />
+          </div>
+          <div className="form-row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              id="isRu"
+              name="isRu"
+              type="checkbox"
+              defaultChecked={!!tenant.isRu}
+            />
+            <label htmlFor="isRu" style={{ margin: 0 }}>Use RU relay (ru-radio.bodhemusic.com:8000)</label>
           </div>
           <div className="form-actions">
             <button type="submit" className="btn btn-primary">Save</button>

@@ -60,11 +60,13 @@ let isBuffering = false;
 
 const WATCHDOG_INTERVAL = 3000;    // частота проверки, мс
 const WATCHDOG_STALL_LIMIT = 8000; // порог зависания, мс (~8 с)
+const FORCED_RECONNECT_COOLDOWN = 15000; // не чаще одного принудительного реконнекта в 15с
 
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let lastCurrentTime = 0;
 let lastCurrentTimeAt = 0;      // performance.now() последнего движения времени
 let isIntentionallyPaused = false; // true = пользователь сам нажал Stop
+let lastForcedReconnectAt = 0;
 
 const startWatchdog = () => {
   stopWatchdog();
@@ -145,14 +147,25 @@ const forceWatchdogTick = () => {
   lastCurrentTimeAt = performance.now() - WATCHDOG_STALL_LIMIT;
 };
 
+const maybeForceReconnect = () => {
+  const now = performance.now();
+  if (now - lastForcedReconnectAt < FORCED_RECONNECT_COOLDOWN) {
+    forceWatchdogTick();
+    return;
+  }
+  lastForcedReconnectAt = now;
+  console.warn("[SoundEngine] Forced reconnect triggered by error/stalled");
+  silentReconnect();
+};
+
 const attachMainListeners = (audio: HTMLAudioElement) => {
   audio.addEventListener("error", () => {
     isBuffering = true;
-    forceWatchdogTick();
+    maybeForceReconnect();
   });
   audio.addEventListener("stalled", () => {
     isBuffering = true;
-    forceWatchdogTick();
+    maybeForceReconnect();
   });
   audio.addEventListener("playing", () => {
     isBuffering = false;

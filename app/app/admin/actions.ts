@@ -9,15 +9,17 @@ import { tenants, channels, tenantChannels, users } from "@/db";
 
 export async function updateTenant(
   tenantId: number,
-  data: { brandName: string; paidTill: string },
+  data: { brandName: string; paidTill: string; isRu?: string },
 ) {
   const paidTillStr = data.paidTill || null;
+  const isRuFlag = data.isRu === "on";
 
   await db
     .update(tenants)
     .set({
       brandName: data.brandName,
       paidTill: paidTillStr,
+      isRu: isRuFlag,
     })
     .where(eq(tenants.id, tenantId));
 
