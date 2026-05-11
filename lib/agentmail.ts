@@ -1,90 +1,43 @@
-import "server-only";
-import { AgentMailClient } from "agentmail";
+import { Resend } from 'resend';
 
-const AGENTMAIL_API_KEY = process.env.AGENTMAIL_API_KEY;
-const AGENTMAIL_FROM = process.env.AGENTMAIL_FROM || "soundspa@agentmail.to";
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-if (!AGENTMAIL_API_KEY) {
-  console.warn("[agentmail] AGENTMAIL_API_KEY is not set; email sending will fail.");
-}
+export async function sendMagicLinkEmail(params: { 
+  to: string; 
+  url?: string; 
+  magicLink?: string; 
+  context: string;
+  [key: string]: any;
+}) {
+  const finalLink = params.url || params.magicLink;
+  const subject = params.context === "login" ? "Вход в Sound Spa" : "Добро пожаловать в Sound Spa";
 
-const client = AGENTMAIL_API_KEY
-  ? new AgentMailClient({ apiKey: AGENTMAIL_API_KEY })
-  : null;
+  try {
+    const { data, error } = await resend.emails.send({
+      // ТЕПЕРЬ МЫ ШЛЕМ ОТ ИМЕНИ ТВОЕГО ДОМЕНА
+      from: 'Sound Spa <send@bodhemusic.com>',
+      to: [params.to],
+      subject: subject,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.5;">
+          <h2 style="color: #000;">Привет!</h2>
+          <p>Нажми на кнопку ниже, чтобы войти в свой аккаунт <strong>Sound Spa</strong>:</p>
+          <div style="margin: 30px 0;">
+            <a href="${finalLink}" style="background-color: #000; color: #fff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Войти в Sound Spa</a>
+          </div>
+          <p style="font-size: 12px; color: #888;">Если кнопка не открывается, скопируй эту ссылку в браузер:</p>
+          <p style="font-size: 12px; color: #888; word-break: break-all;">${finalLink}</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin-top: 30px;">
+          <p style="font-size: 11px; color: #aaa;">Это письмо отправлено автоматически. Если ты его не ждал, просто проигнорируй.</p>
+        </div>
+      `,
+    });
 
-type SendMagicLinkParams = {
-  to: string;
-  magicLink: string;
-  salonName?: string;
-  context?: "signup" | "login" | "admin-login";
-};
-
-function buildHtml({ magicLink, salonName, context }: SendMagicLinkParams) {
-  const title = context === "login" ? "Вход в Sound Spa" : "Добро пожаловать в Sound Spa";
-  const intro =
-    context === "login"
-      ? "Вот ваша ссылка для входа в кабинет Sound Spa."
-      : `Для салона "${salonName ?? "ваш салон"}" мы создали новый кабинет с тестовым доступом.`;
-
-  return `
-    <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#f4f4f5; padding:24px;">
-      <div style="max-width:480px; margin:0 auto; background:#fff; border-radius:16px; padding:24px; box-shadow:0 12px 30px rgba(15, 23, 42, 0.08);">
-        <h1 style="font-size:22px; margin:0 0 12px;">${title}</h1>
-        <p style="margin:0 0 16px; color:#4b5563;">${intro}</p>
-        <p style="margin:0 0 24px; color:#4b5563;">
-          Нажмите на кнопку ниже, чтобы открыть кабинет. Ссылка сработает на этом устройстве и действует ограниченное время.
-        </p>
-        <p style="text-align:center; margin:0 0 24px;">
-          <a href="${magicLink}" style="display:inline-block; padding:12px 24px; border-radius:999px; background:#111827; color:#fff; text-decoration:none; font-weight:600;">
-            Открыть кабинет Sound Spa
-          </a>
-        </p>
-        <p style="margin:0 0 8px; font-size:13px; color:#6b7280;">
-          Если кнопка не работает, скопируйте и вставьте эту ссылку в адресную строку браузера:
-        </p>
-        <p style="margin:0; font-size:13px; color:#4b5563; word-break:break-all;">
-          ${magicLink}
-        </p>
-      </div>
-    </div>
-  `;
-}
-
-function buildText({ magicLink, salonName, context }: SendMagicLinkParams) {
-  const title = context === "login" ? "Вход в Sound Spa" : "Добро пожаловать в Sound Spa";
-  const intro =
-    context === "login"
-      ? "Вот ваша ссылка для входа в кабинет Sound Spa."
-      : `Для салона "${salonName ?? "ваш салон"}" мы создали новый кабинет с тестовым доступом.`;
-
-  return [
-    title,
-    "",
-    intro,
-    "",
-    "Перейдите по ссылке, чтобы войти:",
-    magicLink,
-  ].join("\n");
-}
-
-export async function sendMagicLinkEmail(params: SendMagicLinkParams) {
-  if (!client) {
-    throw new Error("AgentMail client is not configured");
+    if (error) {
+      return console.error("❌ [Resend Error]:", error);
+    }
+    console.log("✅ [Resend Success]: Email sent!", data?.id);
+  } catch (error) {
+    console.error("🚨 [Resend Connection Error]:", error);
   }
-
-  const subject =
-    params.context === "login" ? "Вход в Sound Spa" : "Добро пожаловать в Sound Spa";
-
-  const sent = await client.inboxes.messages.send(AGENTMAIL_FROM, {
-    to: params.to,
-    subject,
-    text: buildText(params),
-    html: buildHtml(params),
-  });
-
-  console.log(
-    "[agentmail] message sent",
-    // разные версии SDK могут называть поле id по-разному
-    (sent as any)?.id || (sent as any)?.message_id || "(no id)",
-  );
 }

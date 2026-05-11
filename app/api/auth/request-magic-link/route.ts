@@ -57,7 +57,7 @@ export async function POST(req: Request) {
     try {
       await sendMagicLinkEmail({
         to: email,
-        magicLink,
+        url: magicLink,
         context: "login",
       });
     } catch (e) {

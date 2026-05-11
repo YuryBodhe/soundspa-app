@@ -16,6 +16,7 @@
   "cleanup:logs": "tsx scripts/monitoring/cleanup-logs.ts"
  },
  "dependencies": {
+    "nodemailer": "^6.9.13",
   "@types/node-cron": "^3.0.11",
   "@x402/fetch": "^2.9.0",
   "agentmail": "^0.4.18",
@@ -31,9 +32,11 @@
   "pg": "^8.20.0",
   "react": "19.2.4",
   "react-dom": "19.2.4",
+  "resend": "^3.2.0",
   "zod": "^4.3.6"
  },
  "devDependencies": {
+    "@types/nodemailer": "^6.4.14",
   "@types/better-sqlite3": "^7.6.13",
   "@types/howler": "^2.2.12",
   "@types/node": "^20.19.39",

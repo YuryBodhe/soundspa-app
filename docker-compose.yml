@@ -1,36 +1,48 @@
 services:
+  # ПРОКСИ-СЕРВЕР (Швейцар)
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "8081:80"   # Снаружи будет 8081, внутри контейнера 80
+      - "8444:443"  # Снаружи будет 8444, внутри контейнера 443
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - app
+      
   # ОСНОВНОЙ САЙТ (Next.js)
   app:
     build: .
     restart: always
-    ports:
-      - "3000:3000"
+    # Порты теперь закрыты снаружи, Nginx общается с app внутри сети Docker
+    expose:
+      - "3000"
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+      - DATABASE_URL=postgresql://soundspa_admin:NjYUr9B7rjR4VR7XBMFSDupIk2Q0@postgres:5432/soundspa_main
     depends_on:
       - postgres
     command: npm run start
     deploy:
       resources:
         limits:
-          memory: 1G # Сайт может быть тяжелым
+          memory: 1G
 
-  # ФОНОВЫЙ ПОМОЩНИК (Тот самый скрипт с cron)
+  # ФОНОВЫЙ ПОМОЩНИК
   worker:
     build: .
-    # Используем твой скрипт из package.json
     command: npm run worker 
     restart: always
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://soundspa:QQyo7zDqJMukdveU3C1LuJPyCAdDehbU@postgres:5432/soundspa
+      - DATABASE_URL=postgresql://soundspa_admin:NjYUr9B7rjR4VR7XBMFSDupIk2Q0@postgres:5432/soundspa_main
     depends_on:
       - postgres
       - app
-    # МОНТИРУЕМ ПАПКИ: чтобы менять код воркера без rebuild
     volumes:
       - ./scripts:/app/scripts
       - ./lib:/app/lib
@@ -38,20 +50,15 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M # Воркеру хватит полгигабайта
+          memory: 512M
 
   # БАЗА ДАННЫХ
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     restart: always
     environment:
-      POSTGRES_USER: soundspa
-      POSTGRES_PASSWORD: QQyo7zDqJMukdveU3C1LuJPyCAdDehbU 
-      POSTGRES_DB: soundspa
+      POSTGRES_USER: soundspa_admin
+      POSTGRES_PASSWORD: NjYUr9B7rjR4VR7XBMFSDupIk2Q0
+      POSTGRES_DB: soundspa_main
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-volumes:
-  pgdata:
+      - ./postgres_data:/var/lib/postgresql/data
