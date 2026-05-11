@@ -22,3 +22,7 @@ backups
 *.backup*
 *.bak
 BACKUP
+
+# Docker/Postgres artifacts
+postgres_data/
+*.pid
