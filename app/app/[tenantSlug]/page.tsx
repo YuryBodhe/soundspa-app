@@ -109,7 +109,7 @@ export default async function TenantPlayerPage({
               transition: "transform 0.2s ease"
             }}
           >
-            Продлить доступ — 3000₽
+            Продлить доступ
           </a>
           
           <div style={{ marginTop: 24, fontSize: 12, opacity: 0.4 }}>

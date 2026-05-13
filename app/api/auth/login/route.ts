@@ -3,6 +3,7 @@ import { db } from "@/lib/db.pg";
 import { users, tenants } from "@/db";
 import { eq } from 'drizzle-orm';
 import { createSessionToken } from '@/lib/session';
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
 
 export async function POST(request: Request) {
   try {
@@ -49,6 +50,17 @@ export async function POST(request: Request) {
     });
 
     console.log(`✅ Login successful for user ${user.id}`);
+
+    sendTelegramMessage(
+      [
+        "🔓 *Успешный логин*",
+        `Tenant: ${user.tenant?.name || user.tenant?.slug}`,
+        `Tenant ID: ${user.tenantId}`,
+        `Email: ${user.email}`,
+        `User ID: ${user.id}`,
+      ].join("\n"),
+    ).catch((err) => console.error("Failed to send Telegram login notify", err));
+
     return response;
 
   } catch (error) {

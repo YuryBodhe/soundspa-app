@@ -26,3 +26,7 @@ BACKUP
 # Docker/Postgres artifacts
 postgres_data/
 *.pid
+# Дополнительные data-директории
+mysql_data/
+redis_data/
+.docker-data/
