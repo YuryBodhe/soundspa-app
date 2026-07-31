@@ -3,14 +3,14 @@ import { db } from "@/lib/db.pg";
 import { users, tenants } from "@/db";
 import { eq } from 'drizzle-orm';
 import { createSessionToken } from '@/lib/session';
-import { sendTelegramMessage } from "@/lib/notifications/telegram";
+import { monitoringLogs } from "@/db/schema/monitoring"; 
 
 export async function POST(request: Request) {
   try {
     const { email, password } = await request.json();
     console.log(`🔐 Login attempt: ${email}`);
 
-    // Найти пользователя по email и паролю
+    // 1. Поиск пользователя
     const user = await db.query.users.findFirst({
       where: eq(users.email, email),
       with: {
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // Создаем токен сессии
+    // 2. Создание токена сессии
     const sessionToken = createSessionToken({
       userId: user.id,
       tenantId: user.tenantId,
@@ -40,27 +40,34 @@ export async function POST(request: Request) {
       tenantSlug: user.tenant.slug
     });
 
-    // Устанавливаем куку с токеном сессии
+    // 3. Установка кук
     response.cookies.set("soundspa_session", sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 24 * 30  // 30 дней
+      maxAge: 60 * 60 * 24 * 30 
     });
 
     console.log(`✅ Login successful for user ${user.id}`);
 
-    sendTelegramMessage(
-      [
-        "🔓 *Успешный логин*",
-        `Tenant: ${user.tenant?.name || user.tenant?.slug}`,
-        `Tenant ID: ${user.tenantId}`,
-        `Email: ${user.email}`,
-        `User ID: ${user.id}`,
-      ].join("\n"),
-    ).catch((err) => console.error("Failed to send Telegram login notify", err));
+    // 4. БЕЗОПАСНАЯ ЗАПИСЬ В БАЗУ ДЛЯ ВОРКЕРА
+    try {
+      const tenantName = user.tenant?.name || user.tenant?.slug || "Unknown Tenant";
+      
+      await db.insert(monitoringLogs).values({
+        tenantId: user.tenantId,
+        eventType: "auth_login",
+        event: `Пользователь *${user.email}* вошел в салон *${tenantName}*`,
+        level: "info",
+        details: `ID Пользователя: ${user.id} | Tenant ID: ${user.tenantId}`,
+      });
+      console.log(`📝 Logged auth_login event for user ${user.id} to monitoring_logs`);
+    } catch (dbLogError) {
+      console.error("⚠️ Failed to write login log to DB:", dbLogError);
+    }
 
+    // 5. Возвращаем ответ клиенту
     return response;
 
   } catch (error) {

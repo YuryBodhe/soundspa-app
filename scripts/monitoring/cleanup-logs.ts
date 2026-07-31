@@ -4,6 +4,9 @@ import { monitoringLogs } from "@/db/schema/monitoring";
 import { monitoringReports } from "@/db/schema/monitoring"; // Наша новая таблица
 import { lt, sql } from "drizzle-orm";
 
+const BATCH_SIZE = Number(process.env.CLEANUP_BATCH_SIZE ?? 10000);
+const BATCH_PAUSE_MS = Number(process.env.CLEANUP_BATCH_PAUSE_MS ?? 200);
+
 export async function runCleanup(keepDays: number = 14, dryRun: boolean = false) {
   const msPerDay = 24 * 60 * 60 * 1000;
   const cutoff = new Date(Date.now() - keepDays * msPerDay);
@@ -24,26 +27,48 @@ export async function runCleanup(keepDays: number = 14, dryRun: boolean = false)
     return { success: true, deleted: 0, message: "Nothing to delete." };
   }
 
-  // Удаляем
-  const deletion = await db.execute<{ count: number }>(sql`
-    WITH deleted AS (
-      DELETE FROM ${monitoringLogs}
-      WHERE "created_at" < ${cutoff}
-      RETURNING 1
-    )
-    SELECT COUNT(*)::int AS count FROM deleted;
-  `);
+  let totalDeleted = 0;
+  let batch = 0;
 
-  const deleted = deletion.rows?.[0]?.count ?? 0;
+  while (true) {
+    batch += 1;
+    const deletion = await db.execute<{ count: number }>(sql`
+      WITH to_delete AS (
+        SELECT "id"
+        FROM ${monitoringLogs}
+        WHERE "created_at" < ${cutoff}
+        ORDER BY "created_at"
+        LIMIT ${BATCH_SIZE}
+      )
+      DELETE FROM ${monitoringLogs}
+      WHERE "id" IN (SELECT "id" FROM to_delete)
+      RETURNING 1;
+    `);
+
+    const deleted = deletion.rows?.length ?? 0;
+    totalDeleted += deleted;
+
+    console.log(
+      `🧹 Cleanup batch #${batch}: deleted ${deleted} rows (total ${totalDeleted}/${candidates}).`,
+    );
+
+    if (deleted < BATCH_SIZE) {
+      break; // меньше batch size — больше нечего удалять
+    }
+
+    if (BATCH_PAUSE_MS > 0) {
+      await new Promise((resolve) => setTimeout(resolve, BATCH_PAUSE_MS));
+    }
+  }
 
   // ЛОГИРУЕМ В ТАБЛИЦУ ОТЧЕТОВ
   await db.insert(monitoringReports).values({
     agentName: "System Cleaner",
     status: "ok",
-    content: `Успешная очистка логов. Удалено строк: ${deleted}. Глубина хранения: ${keepDays} дней.`,
+    content: `Очистка логов (батчи). Удалено строк: ${totalDeleted}. Глубина хранения: ${keepDays} дней.`,
   });
 
-  return { success: true, deleted, message: `Deleted ${deleted} rows.` };
+  return { success: true, deleted: totalDeleted, message: `Deleted ${totalDeleted} rows.` };
 }
 
 // Позволяет запускать файл напрямую через npx tsx

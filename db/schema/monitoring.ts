@@ -83,3 +83,21 @@ export const monitoringReports = pgTable("monitoring_reports", {
 
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// ---------- telegram_queue ----------
+
+export const telegramQueue = pgTable("telegram_queue", {
+  id: serial("id").primaryKey(),
+
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+
+  status: text("status").notNull().default("pending"),
+
+  attempts: integer("attempts").notNull().default(0),
+
+  payload: text("payload").notNull(),
+
+  lastError: text("last_error"),
+});

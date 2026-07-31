@@ -16,12 +16,16 @@ services:
   app:
     build: .
     restart: always
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     # Порты теперь закрыты снаружи, Nginx общается с app внутри сети Docker
     expose:
       - "3000"
     env_file:
       - .env
     environment:
+      - NODE_OPTIONS=--dns-result-order=ipv4first
       - DATABASE_URL=postgresql://soundspa_admin:NjYUr9B7rjR4VR7XBMFSDupIk2Q0@postgres:5432/soundspa_main
     depends_on:
       - postgres
@@ -36,10 +40,15 @@ services:
     build: .
     command: npm run worker 
     restart: always
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     env_file:
       - .env
     environment:
+      - NODE_OPTIONS=--dns-result-order=ipv4first
       - DATABASE_URL=postgresql://soundspa_admin:NjYUr9B7rjR4VR7XBMFSDupIk2Q0@postgres:5432/soundspa_main
+
     depends_on:
       - postgres
       - app
@@ -60,5 +69,7 @@ services:
       POSTGRES_USER: soundspa_admin
       POSTGRES_PASSWORD: NjYUr9B7rjR4VR7XBMFSDupIk2Q0
       POSTGRES_DB: soundspa_main
+    ports:
+      - "5432:5432"    
     volumes:
       - ./postgres_data:/var/lib/postgresql/data

@@ -4,7 +4,7 @@ import { tenants, users, invites, loginTokens, tenantChannels, channels } from "
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { sendMagicLinkEmail } from "@/lib/agentmail";
-import { sendTelegramMessage } from "@/lib/notifications/telegram";
+/*import { sendTelegramMessage } from "@/lib/notifications/telegram";*/
 
 const TRIAL_DAYS = 30;
 
@@ -238,7 +238,7 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
+     /*
     // Telegram уведомление о новой регистрации (не блокирует ответ)
     sendTelegramMessage(
       [
@@ -248,8 +248,8 @@ export async function POST(req: Request) {
         `Tenant ID: ${result.tenantId}`,
         `Trial до: ${trialEnds.toISOString().slice(0, 10)}`,
       ].join("\n"),
-    ).catch((err) => console.error("Failed to send Telegram signup notify", err));
-
+    ).catch((err) => console.error("Failed to send Telegram signup notify", err)); 
+    */
     return NextResponse.json({
       ok: true,
       message:
@@ -258,7 +258,7 @@ export async function POST(req: Request) {
       ...(process.env.NODE_ENV !== "production" ? { magicLink } : {}),
     });
   } catch (error) {
-    console.error("🚨 Signup error:", error);
+    console.error("🚨 Signup error:", error); 
     return NextResponse.json(
       { error: "Внутренняя ошибка сервера" },
       { status: 500 }

@@ -29,6 +29,13 @@
       "when": 1778094667399,
       "tag": "0003_sharp_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779375474952,
+      "tag": "0004_light_echo",
+      "breakpoints": true
     }
   ]
 }

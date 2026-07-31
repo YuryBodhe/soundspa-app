@@ -3,6 +3,8 @@ import { db } from "@/lib/db.pg";
 import { loginTokens, users, tenants } from "@/db";
 import { eq } from "drizzle-orm";
 import { createSessionToken } from "@/lib/session";
+import { sendTelegramMessage } from "@/lib/notifications/telegram";
+import { monitoringLogs } from "@/db/schema/monitoring";
 
 export async function POST(req: Request) {
   try {
@@ -81,6 +83,28 @@ export async function POST(req: Request) {
       maxAge: 60 * 60 * 24 * 30,
     });
 
+    // Логируем для воркера
+    try {
+      await db.insert(monitoringLogs).values({
+        tenantId: user.tenantId,
+        eventType: "auth_login",
+        event: `Magic-link login: *${user.email}* в салон *${user.tenant?.name || user.tenant?.slug}*`,
+        level: "info",
+        details: `User ID: ${user.id}, Tenant ID: ${user.tenantId}`,
+      });
+    } catch (logErr) {
+      console.error("⚠️ Failed to log magic link auth_login:", logErr);
+    }
+    sendTelegramMessage(
+      [
+        "🔓 *Успешный логин (magic link)*",
+        `Tenant: ${user.tenant?.name || user.tenant?.slug}`,
+        `Tenant ID: ${user.tenantId}`,
+        `Email: ${user.email}`,
+        `User ID: ${user.id}`,
+      ].join("\n"),
+    ).catch((err) => console.error("Failed to send Telegram magic-link login notify", err));
+    
     return response;
   } catch (error) {
     console.error("🚨 consume-magic-link error:", error);
