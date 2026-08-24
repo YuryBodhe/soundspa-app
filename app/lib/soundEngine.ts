@@ -21,6 +21,14 @@ interface SoundEngine {
 const isBrowser = typeof window !== "undefined";
 const FADE_TIME = 3000;
 
+// Static audio files are not live streams.
+// Safari may emit "stalled" during normal progressive MP3 loading,
+// so they must not use the aggressive live-stream reconnect watchdog.
+const isStaticFileSource = (url: string | null): boolean => {
+  if (!url) return false;
+  return /\.(mp3|m4a|aac|ogg)(?:$|[?#])/i.test(url);
+};
+
 // --- Внутреннее состояние ---
 const sessionId = isBrowser
   ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`
@@ -70,6 +78,8 @@ let lastForcedReconnectAt = 0;
 
 const startWatchdog = () => {
   stopWatchdog();
+   // Watchdog is only for endless live streams such as AzuraCast.
+  if (isStaticFileSource(mainStreamUrl)) return;
   lastCurrentTime = 0;
   lastCurrentTimeAt = performance.now();
 
@@ -148,6 +158,16 @@ const forceWatchdogTick = () => {
 };
 
 const maybeForceReconnect = () => {
+  // Safari may emit stalled while progressively loading a normal MP3.
+  // Do not recreate the Audio element for static files.
+  if (isStaticFileSource(mainStreamUrl)) {
+    console.info(
+      "[SoundEngine] Static file buffering event — reconnect suppressed",
+      { url: mainStreamUrl }
+    );
+    return;
+  }
+
   const now = performance.now();
   if (now - lastForcedReconnectAt < FORCED_RECONNECT_COOLDOWN) {
     forceWatchdogTick();
