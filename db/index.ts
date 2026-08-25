@@ -6,13 +6,15 @@ import * as schemaPg from "./schema.pg";
 import * as monitoring from "./schema/monitoring";
 import * as agents from "./schema/agents";
 import * as actions from "./schema/actions";
+import * as media from "./schema/media";
 
 // Собираем общую схему для Drizzle
 const fullSchema = { 
   ...schemaPg, 
   ...monitoring, 
   ...agents, 
-  ...actions, 
+  ...actions,
+  ...media,
 };
 
 // 2. Настраиваем пул соединений (используем твой DATABASE_URL из .env)
@@ -28,3 +30,4 @@ export * from "./schema.pg";
 export * from "./schema/monitoring";
 export * from "./schema/agents";
 export * from "./schema/actions";
+export * from "./schema/media";
