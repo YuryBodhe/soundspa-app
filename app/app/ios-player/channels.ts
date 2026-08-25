@@ -1,6 +1,12 @@
 import { db } from "@/lib/db.pg";
-import { eq, and } from "drizzle-orm"; // Убедись, что 'and' здесь есть
-import { tenants, tenantChannels, channels } from "@/db";
+import { eq, and, inArray } from "drizzle-orm"; // Убедись, что 'and' здесь есть
+import {
+  tenants,
+  tenantChannels,
+  channels,
+  playlistItems,
+  mediaFiles,
+} from "@/db";
 
 // Добавляем эту строку здесь:
 export const revalidate = 0;
@@ -14,6 +20,7 @@ export interface Channel {
   title: string;
   mood: string | null;
   streamUrl: string;
+  playlist?: string[];
   image?: string | null;
   order: number;
   isNew?: boolean;
@@ -98,18 +105,50 @@ export async function getChannelsForTenant(tenantSlug: TenantSlug): Promise<Chan
     return oa - ob;
   });
 
+  const channelIds = sorted.map((channel) => channel.id);
+  const playlistRows = channelIds.length
+    ? await db
+        .select({
+          channelId: playlistItems.channelId,
+          publicUrl: mediaFiles.publicUrl,
+          position: playlistItems.position,
+        })
+        .from(playlistItems)
+        .innerJoin(mediaFiles, eq(playlistItems.mediaFileId, mediaFiles.id))
+        .where(
+          and(
+            inArray(playlistItems.channelId, channelIds),
+            eq(playlistItems.isActive, true)
+          )
+        )
+        .orderBy(playlistItems.channelId, playlistItems.position)
+    : [];
+
+  const playlistsByChannel = new Map<number, string[]>();
+
+  for (const item of playlistRows) {
+    const playlist = playlistsByChannel.get(item.channelId) ?? [];
+    playlist.push(item.publicUrl);
+    playlistsByChannel.set(item.channelId, playlist);
+  }
+
   const isRu = !!tenant.isRu;
 
-  return sorted.map(r => ({
-    id: String(r.id),
-    slug: r.slug,
-    title: r.displayName,
-    mood: r.mood,
-    streamUrl: resolveStreamUrl(r.streamUrl, isRu),
-    image: r.image,
-    order: r.tenantOrder ?? r.channelOrder ?? 0,
-    isNew: !!r.isNew,
-  }));
+  return sorted.map(r => {
+    const playlist = playlistsByChannel.get(r.id);
+
+    return {
+      id: String(r.id),
+      slug: r.slug,
+      title: r.displayName,
+      mood: r.mood,
+      streamUrl: resolveStreamUrl(r.streamUrl, isRu),
+      playlist: playlist?.map((url) => resolveStreamUrl(url, isRu)),
+      image: r.image,
+      order: r.tenantOrder ?? r.channelOrder ?? 0,
+      isNew: !!r.isNew,
+    };
+  });
 }
 
 // ── ШУМОВЫЕ КАНАЛЫ (HLS ИЗ БАЗЫ ПО ТЕНАНТУ) ───────────────────────────
