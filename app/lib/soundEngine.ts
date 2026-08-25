@@ -29,6 +29,57 @@ const isStaticFileSource = (url: string | null): boolean => {
   return /\.(mp3|m4a|aac|ogg)(?:$|[?#])/i.test(url);
 };
 
+const getStaticPlaylist = (url: string): string[] | null => {
+  const match = url.match(
+    /^(.*\/audio\/divnitsa\/)divnitsa-mix-(?:01|02)\.mp3([?#].*)?$/i
+  );
+
+  if (!match) return null;
+
+  const base = match[1];
+  const suffix = match[2] ?? "";
+
+  return [
+    `${base}divnitsa-mix-01.mp3${suffix}`,
+    `${base}divnitsa-mix-02.mp3${suffix}`,
+  ];
+};
+
+// In-memory cache for prefetched static audio files.
+// Key = original public URL, value = local Blob URL.
+const prefetchedAudio = new Map<string, string>();
+
+const prefetchAudioFile = async (url: string): Promise<void> => {
+  if (prefetchedAudio.has(url)) return;
+
+  try {
+    console.info("[SoundEngine] Prefetch start", { url });
+
+    const response = await fetch(url, {
+      cache: "force-cache",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    prefetchedAudio.set(url, blobUrl);
+
+    console.info("[SoundEngine] Prefetch complete", {
+      url,
+      bytes: blob.size,
+    });
+  } catch (error) {
+    console.warn("[SoundEngine] Prefetch failed", {
+      url,
+      error,
+    });
+  }
+};
+
 // --- Внутреннее состояние ---
 const sessionId = isBrowser
   ? `sess_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`
@@ -193,6 +244,37 @@ const attachMainListeners = (audio: HTMLAudioElement) => {
     lastCurrentTimeAt = performance.now();
   });
   audio.addEventListener("canplay", () => { isBuffering = false; });
+  audio.addEventListener("ended", () => {
+    if (audio !== mainAudio || !mainStreamUrl) return;
+
+    const playlist = getStaticPlaylist(mainStreamUrl);
+    if (!playlist) return;
+
+    const currentIndex = playlist.indexOf(mainStreamUrl);
+    const nextIndex =
+      currentIndex >= 0 ? (currentIndex + 1) % playlist.length : 0;
+
+    const nextUrl = playlist[nextIndex];
+
+    console.info("[SoundEngine] Playlist next", {
+      from: mainStreamUrl,
+      to: nextUrl,
+    });
+
+    const cachedUrl = prefetchedAudio.get(nextUrl);
+    const playbackUrl = cachedUrl ?? nextUrl;
+
+    mainStreamUrl = nextUrl;
+    audio.src = playbackUrl;
+    audio.load();
+
+    const followingIndex = (nextIndex + 1) % playlist.length;
+    void prefetchAudioFile(playlist[followingIndex]);
+
+    audio.play().catch((e) => {
+      console.warn("[SoundEngine] Playlist next play failed", e);
+    });
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -352,6 +434,16 @@ export const soundEngine: SoundEngine = {
 
     mainChannelId = id;
     mainStreamUrl = url;
+
+    const playlist = getStaticPlaylist(url);
+
+    if (playlist) {
+      // Для пилота заранее скачиваем весь маленький playlist.
+      // Позже заменим это на управляемое окно cache/prefetch.
+      playlist.forEach((itemUrl) => {
+        void prefetchAudioFile(itemUrl);
+      });
+    }
 
     const audio = new Audio(url);
     audio.crossOrigin = "anonymous";
