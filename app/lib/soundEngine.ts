@@ -26,7 +26,7 @@ const FADE_TIME = 3000;
 // so they must not use the aggressive live-stream reconnect watchdog.
 const isStaticFileSource = (url: string | null): boolean => {
   if (!url) return false;
-  return /\.(mp3|m4a|aac|ogg)(?:$|[?#])/i.test(url);
+  return /\/audio\/.*\.(mp3|m4a|aac|ogg)(?:$|[?#])/i.test(url);
 };
 
 const getStaticPlaylist = (url: string): string[] | null => {
