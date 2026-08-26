@@ -92,7 +92,11 @@ useEffect(() => {
         soundEngine.initWatcher(tenantId);
         setWatcherStarted(true);
       }
-      soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
+      soundEngine.playChannel(
+        activeChannel.id,
+        activeChannel.streamUrl,
+        activeChannel.playlist
+      );
       setPlaying(true);
       persistChannelSelection(activeChannel);
     }
@@ -109,7 +113,7 @@ useEffect(() => {
       soundEngine.initWatcher(tenantId);
       setWatcherStarted(true);
     }
-    soundEngine.playChannel(channel.id, channel.streamUrl);
+    soundEngine.playChannel(channel.id, channel.streamUrl, channel.playlist);
     setPlaying(true);
   };
 

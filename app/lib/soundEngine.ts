@@ -3,7 +3,11 @@ type ChannelId = string;
 type NoiseId = string;
 
 interface SoundEngine {
-  playChannel: (id: ChannelId, streamUrl: string) => void;
+  playChannel: (
+    id: ChannelId,
+    streamUrl: string,
+    playlist?: string[]
+  ) => void;
   stopChannel: () => void;
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
@@ -88,6 +92,7 @@ const sessionId = isBrowser
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
+let mainPlaylist: string[] | null = null;
 let isMainTransitioning = false;
 
 let noiseAudio: HTMLAudioElement | null = null;
@@ -247,7 +252,7 @@ const attachMainListeners = (audio: HTMLAudioElement) => {
   audio.addEventListener("ended", () => {
     if (audio !== mainAudio || !mainStreamUrl) return;
 
-    const playlist = getStaticPlaylist(mainStreamUrl);
+    const playlist = mainPlaylist ?? getStaticPlaylist(mainStreamUrl);
     if (!playlist) return;
 
     const currentIndex = playlist.indexOf(mainStreamUrl);
@@ -412,7 +417,7 @@ export const soundEngine: SoundEngine = {
     }, 60000);
   },
 
-  playChannel(id, url) {
+  playChannel(id, url, playlistFromDb) {
     if (!isBrowser) return;
     if (isMainTransitioning) {
       console.warn("[SoundEngine] main transition in progress");
@@ -434,8 +439,12 @@ export const soundEngine: SoundEngine = {
 
     mainChannelId = id;
     mainStreamUrl = url;
+    mainPlaylist =
+      playlistFromDb && playlistFromDb.length > 0
+        ? playlistFromDb
+        : null;
 
-    const playlist = getStaticPlaylist(url);
+    const playlist = mainPlaylist ?? getStaticPlaylist(url);
 
     if (playlist) {
       // Для пилота заранее скачиваем весь маленький playlist.
@@ -472,6 +481,7 @@ export const soundEngine: SoundEngine = {
     stopWatchdog();
     mainChannelId = null;
     mainStreamUrl = null;
+    mainPlaylist = null;
 
     if (!mainAudio) return;
     mainAudio.onerror = null;
@@ -566,6 +576,7 @@ export const soundEngine: SoundEngine = {
     silencePlayer = null;
     mainChannelId = null;
     mainStreamUrl = null;
+    mainPlaylist = null;
     noiseId = null;
     noiseStreamUrl = null;
     isMainTransitioning = false;
