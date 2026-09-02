@@ -1,0 +1,326 @@
+.shell {
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: #07070a;
+  color: #c8c0b0;
+  font-family: "Jost", sans-serif;
+  font-weight: 300;
+}
+
+.shell * { box-sizing: border-box; }
+
+.header,
+.main,
+.footer {
+  width: min(100%, 700px);
+  margin-inline: auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 9px 32px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.brand {
+  color: #d8d0c0;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 20px;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+}
+
+.platformTag,
+.nowPlayingLabel,
+.channelMood,
+.sectionLabel,
+.statusLine,
+.footerLabel {
+  text-transform: uppercase;
+}
+
+.platformTag {
+  margin-top: 4px;
+  color: #3a3530;
+  font-size: 8px;
+  letter-spacing: 0.32em;
+}
+
+.badge {
+  padding: 4px 10px;
+  border: 1px solid rgba(80, 160, 110, 0.18);
+  border-radius: 20px;
+  background: rgba(80, 160, 110, 0.08);
+  color: #4a8a68;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(20px, 3vh, 32px);
+  padding: 5px 32px 28px;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 0;
+}
+
+.nowPlayingLabel {
+  margin-bottom: 6px;
+  color: #7a7670;
+  font-size: 9px;
+  letter-spacing: 0.28em;
+}
+
+.channelName {
+  margin: 0 0 4px;
+  color: #d4c9b0;
+  font-family: "Cormorant Garamond", serif;
+  font-size: clamp(24px, 2vw, 28px);
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+}
+
+.channelMood {
+  margin-bottom: clamp(12px, 2vh, 20px);
+  color: #8a9e82;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+}
+
+.yinYangButton {
+  position: relative;
+  display: grid;
+  width: clamp(198px, 27vh, 240px);
+  height: clamp(198px, 27vh, 240px);
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.yinYangImage {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 10px rgba(150, 185, 215, 0.1));
+  transition: filter 0.6s;
+  user-select: none;
+}
+
+.halo,
+.ambientGlow {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.halo { border: 1px solid rgba(170, 195, 220, 0.12); }
+.haloOne { inset: -12%; }
+.haloTwo { inset: -6%; }
+.haloThree { inset: -2%; }
+.ambientGlow { inset: -20%; background: radial-gradient(circle, rgba(140, 175, 210, 0.07), transparent 70%); }
+.yinYangPlaying .haloOne { animation: haloPulse 4.5s ease-in-out infinite; }
+.yinYangPlaying .haloTwo { animation: haloPulse 4.5s ease-in-out 0.7s infinite; }
+.yinYangPlaying .haloThree { animation: haloPulse 3.2s ease-in-out 1.4s infinite; }
+.yinYangPlaying .ambientGlow { animation: ambientPulse 3s ease-in-out infinite; }
+.yinYangPlaying .yinYangImage { animation: spin 12s linear infinite; filter: drop-shadow(0 0 20px rgba(150, 185, 215, 0.22)); }
+
+@keyframes haloPulse { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+@keyframes ambientPulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.waveZone {
+  width: min(100%, 360px);
+  height: 60px;
+  margin-top: clamp(6px, 1.3vh, 12px);
+  overflow: hidden;
+}
+
+.waveCanvas {
+  display: block;
+  width: 100%;
+  height: 60px;
+  margin: 0 auto;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+
+.waveCanvasVisible { opacity: 1; }
+
+.statusLine {
+  display: flex;
+  height: 16px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: #7a7670;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+
+.statusDot { width: 5px; height: 5px; border-radius: 50%; background: #6d7468; }
+.statusDotPlaying { animation: dotPulse 2s ease-in-out infinite; background: #8a9e82; }
+.statusPlaying { color: #8a9e82; }
+@keyframes dotPulse { 50% { opacity: 0.4; } }
+
+.section { min-width: 0; }
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.sectionLabel { color: #7a7670; font-size: 9px; letter-spacing: 0.26em; }
+.sectionCount,
+.ambientValue { color: #7a7670; font-size: 10px; letter-spacing: 0.06em; }
+.ambientValue { color: #8a9e82; }
+
+.cardsRow {
+  display: flex;
+  gap: 16px;
+  padding: 2px 6px 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.cardsRow::-webkit-scrollbar { display: none; }
+
+.card {
+  display: flex;
+  width: 160px;
+  min-width: 160px;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 12px;
+  background: #0a0a0d;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.25s, transform 0.25s;
+}
+.card:hover { border-color: rgba(255, 255, 255, 0.13); transform: translateY(-1px); }
+.musicCardActive { border-color: rgba(145, 175, 205, 0.3); }
+.ambientCardActive { border-color: rgba(138, 158, 130, 0.4); }
+
+.cardImage { position: relative; display: block; height: 120px; overflow: hidden; }
+.cardImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cardOverlay { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(5, 5, 8, 0.72)); }
+.cardBody { display: block; min-height: 47px; padding: 8px 10px 9px; }
+.cardTitle { display: block; color: #cfc5b3; font-family: "Cormorant Garamond", serif; font-size: 15px; line-height: 1.1; }
+.cardMood { display: block; margin-top: 4px; overflow: hidden; color: #6e6b65; font-size: 7px; letter-spacing: 0.15em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+
+.playingIndicator { position: absolute; right: 9px; bottom: 9px; z-index: 2; display: flex; height: 12px; align-items: end; gap: 2px; opacity: 0; }
+.playingIndicatorVisible { opacity: 1; }
+.playingIndicator i { width: 2px; height: 5px; border-radius: 1px; background: rgba(155, 185, 215, 0.85); animation: bars 0.8s ease-in-out infinite alternate; }
+.playingIndicator i:nth-child(2) { height: 10px; animation-delay: 0.15s; }
+.playingIndicator i:nth-child(3) { height: 7px; animation-delay: 0.3s; }
+.playingIndicator i:nth-child(4) { height: 11px; animation-delay: 0.45s; }
+@keyframes bars { to { height: 3px; opacity: 0.45; } }
+
+.sliderWrap {
+  position: relative;
+  display: flex;
+  width: 59%;
+  height: 24px;
+  align-items: center;
+  margin: 0 auto 10px;
+}
+.sliderTrack,
+.sliderFill { position: absolute; left: 0; height: 1px; border-radius: 1px; }
+.sliderTrack { right: 0; background: rgba(138, 158, 130, 0.25); }
+.sliderFill { background: #8a9e82; }
+.sliderThumb { position: absolute; display: grid; width: 20px; height: 20px; place-items: center; border: 1px solid #8a9e82; border-radius: 50%; background: #161714; transform: translateX(-50%); }
+.sliderThumb span { width: 5px; height: 5px; border-radius: 50%; background: #8a9e82; }
+.sliderInput { position: absolute; inset: 0; z-index: 2; width: 100%; height: 24px; opacity: 0; cursor: pointer; }
+
+.footer {
+  padding: 14px 32px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.footerLabel { margin-bottom: 4px; color: #7a7670; font-size: 8px; letter-spacing: 0.22em; }
+.footerText { color: #d4c9b0; font-family: "Cormorant Garamond", serif; font-size: 14px; }
+
+@media (max-height: 950px) and (min-width: 700px) {
+  .header { padding-block: 5px 4px; }
+  .main { gap: 12px; padding-block: 1px 16px; }
+  .waveZone { height: 52px; margin-top: 4px; }
+  .waveCanvas { height: 52px; }
+  .statusLine { margin-top: 0; }
+  .sectionHeader { margin-bottom: 7px; }
+  .sliderWrap { margin-bottom: 6px; }
+  .footer { padding-block: 8px 12px; }
+}
+
+@media (max-height: 850px) and (min-width: 700px) {
+  .header { padding-block: 7px 6px; }
+  .main { gap: 14px; padding-block: 4px 18px; }
+  .hero { padding-top: 0; }
+  .nowPlayingLabel { margin-bottom: 3px; }
+  .channelMood { margin-bottom: 8px; }
+  .yinYangButton { width: clamp(174px, 23vh, 198px); height: clamp(174px, 23vh, 198px); }
+  .waveZone { height: 48px; margin-top: 2px; }
+  .waveCanvas { height: 48px; }
+  .statusLine { margin-top: 0; }
+  .sectionHeader { margin-bottom: 7px; }
+  .cardImage { height: 110px; }
+  .cardBody { min-height: 43px; padding-block: 7px; }
+  .sliderWrap { margin-bottom: 6px; }
+  .footer { padding-block: 10px 14px; }
+}
+
+@media (max-width: 699px) {
+  .header { padding: 12px 18px 10px; }
+  .badge { padding-inline: 8px; }
+  .main { width: 100%; gap: 18px; padding: 12px 0 22px; }
+  .hero { padding-inline: 18px; }
+  .nowPlayingLabel { margin-bottom: 4px; }
+  .channelName { font-size: 25px; }
+  .channelMood { margin-bottom: 10px; }
+  .yinYangButton { width: clamp(154px, 43vw, 170px); height: clamp(154px, 43vw, 170px); }
+  .waveZone { width: min(82vw, 280px); height: 48px; margin-top: 4px; }
+  .waveCanvas { height: 48px; }
+  .statusLine { margin-top: 1px; }
+  .sectionHeader { margin: 0 18px 8px; }
+  .cardsRow { gap: 11px; padding: 2px 18px 8px; scroll-padding-inline: 18px; }
+  .card { width: 142px; min-width: 142px; }
+  .cardImage { height: 108px; }
+  .cardBody { min-height: 45px; }
+  .ambientSection { margin-top: -2px; }
+  .sliderWrap { width: auto; height: 22px; margin: 0 22px 8px; }
+  .sliderInput { height: 22px; }
+  .footer { padding: 12px 18px 16px; }
+}
+
+@media (max-width: 380px) {
+  .card { width: 136px; min-width: 136px; }
+  .cardImage { height: 104px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yinYangPlaying .yinYangImage,
+  .yinYangPlaying .halo,
+  .yinYangPlaying .ambientGlow,
+  .playingIndicator i,
+  .statusDotPlaying { animation-duration: 0.001ms; animation-iteration-count: 1; }
+}
