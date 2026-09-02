@@ -81,6 +81,15 @@ useEffect(() => {
     }
   };
 
+  const playSelectedChannel = (channel: Channel) => {
+    if (channel.slug === 'offline-stream') {
+      soundEngine.playOfflineChannel(channel.id, channel.streamUrl);
+      return;
+    }
+
+    soundEngine.playChannel(channel.id, channel.streamUrl);
+  };
+
   const handleTogglePlay = () => {
     if (!activeChannel) return;
 
@@ -92,7 +101,7 @@ useEffect(() => {
         soundEngine.initWatcher(tenantId);
         setWatcherStarted(true);
       }
-      soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
+      playSelectedChannel(activeChannel);
       setPlaying(true);
       persistChannelSelection(activeChannel);
     }
@@ -109,7 +118,7 @@ useEffect(() => {
       soundEngine.initWatcher(tenantId);
       setWatcherStarted(true);
     }
-    soundEngine.playChannel(channel.id, channel.streamUrl);
+    playSelectedChannel(channel);
     setPlaying(true);
   };
 

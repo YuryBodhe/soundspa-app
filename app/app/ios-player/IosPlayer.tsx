@@ -79,6 +79,15 @@ useEffect(() => {
   }, [channels]); 
 
   // ── 4. ОБРАБОТЧИКИ ──
+  const playSelectedChannel = (channel: Channel) => {
+    if (channel.slug === 'offline-stream') {
+      soundEngine.playOfflineChannel(channel.id, channel.streamUrl);
+      return;
+    }
+
+    soundEngine.playChannel(channel.id, channel.streamUrl);
+  };
+
   const handleTogglePlay = () => {
     if (!activeChannel) return;
 
@@ -91,7 +100,7 @@ useEffect(() => {
           soundEngine.initWatcher(tenantId);
           setWatcherStarted(true);
         }
-        soundEngine.playChannel(activeChannel.id, activeChannel.streamUrl);
+        playSelectedChannel(activeChannel);
         setPlaying(true);
         setShowIosHint(false);
       } catch (err) {
@@ -109,7 +118,7 @@ useEffect(() => {
       soundEngine.initWatcher(tenantId);
       setWatcherStarted(true);
     }
-    soundEngine.playChannel(channel.id, channel.streamUrl);
+    playSelectedChannel(channel);
     setPlaying(true);
     setShowIosHint(false);
     localStorage.setItem('last_active_channel', JSON.stringify({ id: channel.id, url: channel.streamUrl }));
