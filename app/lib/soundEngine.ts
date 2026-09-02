@@ -30,6 +30,7 @@ const sessionId = isBrowser
 let mainAudio: HTMLAudioElement | null = null;
 let mainChannelId: string | null = null;
 let mainStreamUrl: string | null = null;
+let mainOfflineBlobUrl: string | null = null;
 let isMainTransitioning = false;
 
 let noiseAudio: HTMLAudioElement | null = null;
@@ -311,7 +312,7 @@ export const soundEngine: SoundEngine = {
     }, 60000);
   },
 
-  playOfflineChannel(id, streamUrl) {
+  async playOfflineChannel(id, streamUrl) {
     if (!isBrowser) return;
     if (isMainTransitioning) {
       console.warn("[SoundEngine] main transition in progress");
@@ -334,7 +335,36 @@ export const soundEngine: SoundEngine = {
     mainChannelId = id;
     mainStreamUrl = streamUrl;
 
-    const audio = new Audio(streamUrl);
+    let blob: Blob;
+    try {
+      const response = await fetch(streamUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      blob = await response.blob();
+    } catch (e) {
+      if (mainChannelId === id && mainStreamUrl === streamUrl) {
+        isMainTransitioning = false;
+        mainChannelId = null;
+        mainStreamUrl = null;
+      }
+      console.warn("Offline audio download failed", e);
+      return;
+    }
+
+    const blobUrl = URL.createObjectURL(blob);
+    if (
+      !isMainTransitioning ||
+      mainChannelId !== id ||
+      mainStreamUrl !== streamUrl
+    ) {
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
+
+    mainOfflineBlobUrl = blobUrl;
+
+    const audio = new Audio(blobUrl);
     audio.crossOrigin = "anonymous";
     audio.volume = 0.001;
     mainAudio = audio;
@@ -342,13 +372,17 @@ export const soundEngine: SoundEngine = {
 
     audio.play()
       .then(() => {
+        if (audio !== mainAudio) return;
         isMainTransitioning = false;
         internalFade(audio, 0.8, FADE_TIME);
       })
       .catch((e) => {
+        if (audio !== mainAudio) return;
         isMainTransitioning = false;
         console.warn("Offline play blocked by browser", e);
-        window.addEventListener("click", () => audio.play(), { once: true });
+        window.addEventListener("click", () => {
+          if (audio === mainAudio) void audio.play();
+        }, { once: true });
       });
   },
 
@@ -411,10 +445,15 @@ export const soundEngine: SoundEngine = {
     mainAudio.oncanplay = null;
 
     const target = mainAudio;
+    const offlineBlobUrl = mainOfflineBlobUrl;
     mainAudio = null;
+    mainOfflineBlobUrl = null;
     isBuffering = false;
 
-    internalFade(target, 0, 200, () => cleanAudio(target));
+    internalFade(target, 0, 200, () => {
+      cleanAudio(target);
+      if (offlineBlobUrl) URL.revokeObjectURL(offlineBlobUrl);
+    });
   },
 
   setMainVolume(vol) {
@@ -491,7 +530,9 @@ export const soundEngine: SoundEngine = {
     cleanAudio(mainAudio);
     cleanAudio(noiseAudio);
     cleanAudio(silencePlayer);
+    if (mainOfflineBlobUrl) URL.revokeObjectURL(mainOfflineBlobUrl);
     mainAudio = null;
+    mainOfflineBlobUrl = null;
     noiseAudio = null;
     silencePlayer = null;
     mainChannelId = null;
