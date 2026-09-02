@@ -4,6 +4,7 @@ type NoiseId = string;
 
 interface SoundEngine {
   playChannel: (id: ChannelId, streamUrl: string) => void;
+  playOfflineChannel: (id: ChannelId, streamUrl: string) => void;
   stopChannel: () => void;
   setNoise: (id: NoiseId | null, streamUrl?: string) => void;
   setNoiseVolume: (volume: number) => void;
@@ -308,6 +309,47 @@ export const soundEngine: SoundEngine = {
         });
       } catch (_) {}
     }, 60000);
+  },
+
+  playOfflineChannel(id, streamUrl) {
+    if (!isBrowser) return;
+    if (isMainTransitioning) {
+      console.warn("[SoundEngine] main transition in progress");
+      return;
+    }
+    if (id === mainChannelId && streamUrl === mainStreamUrl) {
+      if (mainAudio && mainAudio.paused) {
+        isIntentionallyPaused = false;
+        mainAudio.play()
+          .then(() => internalFade(mainAudio!, 0.8, FADE_TIME))
+          .catch((e) => console.warn("[SoundEngine] resume blocked", e));
+      }
+      return;
+    }
+
+    this.stopChannel();
+    isMainTransitioning = true;
+    isIntentionallyPaused = false;
+
+    mainChannelId = id;
+    mainStreamUrl = streamUrl;
+
+    const audio = new Audio(streamUrl);
+    audio.crossOrigin = "anonymous";
+    audio.volume = 0.001;
+    mainAudio = audio;
+    isBuffering = false;
+
+    audio.play()
+      .then(() => {
+        isMainTransitioning = false;
+        internalFade(audio, 0.8, FADE_TIME);
+      })
+      .catch((e) => {
+        isMainTransitioning = false;
+        console.warn("Offline play blocked by browser", e);
+        window.addEventListener("click", () => audio.play(), { once: true });
+      });
   },
 
   playChannel(id, url) {
