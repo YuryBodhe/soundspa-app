@@ -116,11 +116,7 @@ const silentReconnect = () => {
   if (mainAudio) {
     const dead = mainAudio;
     mainAudio = null;
-    dead.onerror = null;
-    dead.onstalled = null;
-    dead.onwaiting = null;
-    dead.onplaying = null;
-    dead.oncanplay = null;
+    detachMainListeners(dead);
     dead.pause();
     // Без audio.load() — не тревожим noise-поток
     setTimeout(() => {
@@ -159,20 +155,45 @@ const maybeForceReconnect = () => {
 };
 
 const attachMainListeners = (audio: HTMLAudioElement) => {
-  audio.addEventListener("error", () => {
+  const onError = () => {
+    if (audio !== mainAudio) return;
     isBuffering = true;
     maybeForceReconnect();
-  });
-  audio.addEventListener("stalled", () => {
+  };
+  const onStalled = () => {
+    if (audio !== mainAudio) return;
     isBuffering = true;
     maybeForceReconnect();
-  });
-  audio.addEventListener("playing", () => {
+  };
+  const onPlaying = () => {
+    if (audio !== mainAudio) return;
     isBuffering = false;
     // Сбрасываем checkpoint: после resume время снова начнёт двигаться
     lastCurrentTimeAt = performance.now();
+  };
+  const onCanPlay = () => {
+    if (audio !== mainAudio) return;
+    isBuffering = false;
+  };
+
+  audio.addEventListener("error", onError);
+  audio.addEventListener("stalled", onStalled);
+  audio.addEventListener("playing", onPlaying);
+  audio.addEventListener("canplay", onCanPlay);
+
+  mainListenerCleanups.set(audio, () => {
+    audio.removeEventListener("error", onError);
+    audio.removeEventListener("stalled", onStalled);
+    audio.removeEventListener("playing", onPlaying);
+    audio.removeEventListener("canplay", onCanPlay);
   });
-  audio.addEventListener("canplay", () => { isBuffering = false; });
+};
+
+const mainListenerCleanups = new WeakMap<HTMLAudioElement, () => void>();
+
+const detachMainListeners = (audio: HTMLAudioElement) => {
+  mainListenerCleanups.get(audio)?.();
+  mainListenerCleanups.delete(audio);
 };
 
 // ---------------------------------------------------------------------------
@@ -187,6 +208,7 @@ const getValidTenantId = (): number | null => {
 const cleanAudio = (audio: HTMLAudioElement | null) => {
   if (!audio) return;
   try {
+    detachMainListeners(audio);
     audio.pause();
     audio.src = "";
     audio.removeAttribute("src");
@@ -273,6 +295,29 @@ const detectClientType = (ua: string): "desktop" | "mobile" | "tablet" | "other"
   return "other";
 };
 
+const clearMainChannel = (intentionalStop: boolean) => {
+  if (intentionalStop) {
+    isMainTransitioning = false;
+    isIntentionallyPaused = true;
+  }
+
+  stopWatchdog();
+  mainChannelId = null;
+  mainStreamUrl = null;
+
+  if (!mainAudio) {
+    isBuffering = false;
+    return;
+  }
+
+  const target = mainAudio;
+  mainAudio = null;
+  detachMainListeners(target);
+  isBuffering = false;
+
+  internalFade(target, 0, 200, () => cleanAudio(target));
+};
+
 export const soundEngine: SoundEngine = {
   initWatcher(tenantId) {
     const parsed = Number(tenantId);
@@ -328,7 +373,7 @@ export const soundEngine: SoundEngine = {
 
     isMainTransitioning = true;
     isIntentionallyPaused = false;
-    this.stopChannel();
+    clearMainChannel(false);
 
     mainChannelId = id;
     mainStreamUrl = url;
@@ -355,24 +400,7 @@ export const soundEngine: SoundEngine = {
   },
 
   stopChannel() {
-    isMainTransitioning = false;
-    isIntentionallyPaused = true; // явная остановка — watchdog не реконнектит
-    stopWatchdog();
-    mainChannelId = null;
-    mainStreamUrl = null;
-
-    if (!mainAudio) return;
-    mainAudio.onerror = null;
-    mainAudio.onstalled = null;
-    mainAudio.onwaiting = null;
-    mainAudio.onplaying = null;
-    mainAudio.oncanplay = null;
-
-    const target = mainAudio;
-    mainAudio = null;
-    isBuffering = false;
-
-    internalFade(target, 0, 200, () => cleanAudio(target));
+    clearMainChannel(true);
   },
 
   setMainVolume(vol) {
