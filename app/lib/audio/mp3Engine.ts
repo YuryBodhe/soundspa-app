@@ -13,6 +13,8 @@ type CachedTrack = { index: number; objectUrl: string; cachedAt: number };
 type SlotIndex = 0 | 1;
 type Listener = () => void;
 type AudibleSource = { kind: "network" | "blob"; trackIndex: number; slot: SlotIndex | null };
+type PlaybackPhase = "idle" | "startup-buffering" | "starting-audible" | "audible-network" | "audible-blob";
+type BufferHealth = "unknown" | "healthy" | "low" | "critical";
 
 const INITIAL_STATE: Mp3EngineState = { status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null };
 const RETRY_DELAYS_MS = [15_000, 30_000, 60_000, 120_000] as const;
@@ -20,6 +22,16 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const HANDOFF_GRACE_MS = 10_000;
 const HANDOFF_PROGRESS_EPSILON_SECONDS = 0.25;
 const METADATA_TIMEOUT_MS = 15_000;
+const BUFFER_SAMPLE_INTERVAL_MS = 500;
+const STARTUP_BUFFER_SECONDS = 5;
+const PROGRESSION_FREEZE_MS = 3_000;
+const PROGRESSION_EPSILON_SECONDS = 0.25;
+const BUFFER_RANGE_EPSILON_SECONDS = 0.1;
+const BUFFER_HEALTHY_ENTER_SECONDS = 30;
+const BUFFER_HEALTHY_EXIT_SECONDS = 20;
+const BUFFER_CRITICAL_ENTER_SECONDS = 8;
+const BUFFER_CRITICAL_EXIT_SECONDS = 12;
+const CACHE_HEALTHY_STABILITY_MS = 7_000;
 
 class TrackRequestError extends Error {
   constructor(readonly status: number) { super(`MP3 request failed with ${status}`); }
@@ -43,6 +55,16 @@ export class Mp3Engine {
   private handoffTimer: ReturnType<typeof setTimeout> | null = null;
   private handoffStartTime = 0;
   private handoffInProgress = false;
+  private phase: PlaybackPhase = "idle";
+  private bufferHealth: BufferHealth = "unknown";
+  private bufferSampleTimer: ReturnType<typeof setInterval> | null = null;
+  private lastObservedCurrentTime = 0;
+  private lastProgressAt = 0;
+  private healthySince: number | null = null;
+  private networkPressure = false;
+  private startupId = 0;
+  private startupCompletionInProgress = false;
+  private cacheRetryNotBefore = 0;
   private sourceListenersCleanup: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private state: Mp3EngineState = INITIAL_STATE;
@@ -66,7 +88,21 @@ export class Mp3Engine {
   play = async () => {
     if (this.disposed || typeof window === "undefined") return;
     this.wantsPlayback = true;
-    if (this.audio && this.audibleSource) return this.playCurrentAudio();
+    if (this.audio && this.audibleSource) {
+      if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
+        return this.resumeStartupBuffering();
+      }
+      if (this.audibleSource.kind === "network") {
+        this.bufferHealth = "unknown";
+        this.healthySince = null;
+        this.lastObservedCurrentTime = this.audio.currentTime;
+        this.lastProgressAt = performance.now();
+        this.networkPressure = false;
+        this.update({ status: "loading", currentTime: this.audio.currentTime, error: null });
+      }
+      this.startBufferSampler();
+      return this.playCurrentAudio();
+    }
     this.desiredNextIndex = this.tracks.length > 1 ? 1 : 0;
     return this.startNetworkTrack(0);
   };
@@ -76,11 +112,22 @@ export class Mp3Engine {
     this.playRequestId += 1;
     this.clearHandoffTimer();
     this.clearRetryTimer();
+    this.stopBufferSampler();
     if (!this.audio) {
       if (this.state.status === "loading") this.update({ status: "paused" });
       return;
     }
     this.audio.pause();
+    if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
+      this.startupId += 1;
+      this.startupCompletionInProgress = false;
+      this.phase = "startup-buffering";
+      this.audio.currentTime = 0;
+    } else if (this.audibleSource?.kind === "network") {
+      this.bufferHealth = "unknown";
+      this.healthySince = null;
+      this.networkPressure = false;
+    }
     this.update({ status: "paused", currentTime: this.audio.currentTime });
   };
 
@@ -92,6 +139,8 @@ export class Mp3Engine {
     this.sourceVersion += 1;
     this.cacheRequestId += 1;
     this.playRequestId += 1;
+    this.startupId += 1;
+    this.stopBufferSampler();
     this.clearHandoffTimer();
     this.clearRetryTimer();
     this.cacheAbortReason = "dispose";
@@ -110,15 +159,23 @@ export class Mp3Engine {
     new Set(this.slots.flatMap((slot) => slot ? [slot.objectUrl] : [])).forEach((url) => this.revoke(url));
     this.slots = [null, null];
     this.audibleSource = null;
+    this.phase = "idle";
     this.listeners.clear();
   };
 
   private startNetworkTrack = async (index: number) => {
     const audio = this.ensureAudio();
     this.assignSource(audio, { kind: "network", trackIndex: index, slot: null }, this.tracks[index].url);
+    this.phase = "startup-buffering";
+    this.bufferHealth = "unknown";
+    this.lastObservedCurrentTime = 0;
+    this.lastProgressAt = performance.now();
+    this.healthySince = null;
+    this.networkPressure = false;
+    audio.muted = false;
     this.update({ status: this.wantsPlayback ? "loading" : "paused", currentTrackIndex: index, sourceKind: "network", currentTime: 0, error: null });
     this.updatePreparedTrackIndex();
-    if (this.wantsPlayback) await this.playCurrentAudio();
+    if (this.wantsPlayback) this.resumeStartupBuffering();
   };
 
   private startBlobTrack = async (slot: SlotIndex, position = 0) => {
@@ -126,6 +183,9 @@ export class Mp3Engine {
     if (!cached) return;
     const audio = this.ensureAudio();
     this.assignSource(audio, { kind: "blob", trackIndex: cached.index, slot }, cached.objectUrl);
+    this.phase = "audible-blob";
+    audio.muted = false;
+    this.stopBufferSampler();
     if (position > 0) {
       const version = this.sourceVersion;
       try { await this.waitForMetadata(audio, version); }
@@ -149,6 +209,9 @@ export class Mp3Engine {
 
   private assignSource(audio: HTMLAudioElement, source: AudibleSource, url: string) {
     this.clearHandoffTimer();
+    this.stopBufferSampler();
+    this.startupId += 1;
+    this.startupCompletionInProgress = false;
     this.sourceListenersCleanup?.();
     this.sourceVersion += 1;
     const version = this.sourceVersion;
@@ -163,26 +226,173 @@ export class Mp3Engine {
     const onEnded = guarded(() => { void this.handleEnded(); });
     const onError = guarded(() => { void this.handleAudioError(); });
     const onPlaying = guarded(this.handlePlaybackProgress);
-    const onCanPlay = guarded(this.handleCanPlay);
     const onTimeUpdate = guarded(this.handleTimeUpdate);
+    const onProgress = guarded(this.evaluateBufferState);
     const onWaiting = guarded(this.handleBuffering);
     const onStalled = guarded(this.handleBuffering);
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
     audio.addEventListener("playing", onPlaying);
-    audio.addEventListener("canplay", onCanPlay);
     audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("progress", onProgress);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("stalled", onStalled);
     return () => {
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
       audio.removeEventListener("playing", onPlaying);
-      audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("progress", onProgress);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("stalled", onStalled);
     };
+  }
+
+  private resumeStartupBuffering = () => {
+    const audio = this.audio;
+    if (!audio || this.audibleSource?.kind !== "network") return;
+    this.startupId += 1;
+    this.phase = "startup-buffering";
+    this.startupCompletionInProgress = false;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    this.update({ status: "loading", currentTime: 0, error: null });
+    this.startBufferSampler();
+  };
+
+  private completeStartup = async () => {
+    const audio = this.audio;
+    if (!audio || this.audibleSource?.kind !== "network" || this.startupCompletionInProgress) return;
+    const generation = this.generation;
+    const sourceVersion = this.sourceVersion;
+    const startupId = this.startupId;
+    const playRequestId = ++this.playRequestId;
+    this.startupCompletionInProgress = true;
+    this.phase = "starting-audible";
+    audio.currentTime = 0;
+    audio.muted = false;
+    this.lastObservedCurrentTime = 0;
+    this.lastProgressAt = performance.now();
+    this.update({ status: "loading", currentTime: 0, error: null });
+
+    try {
+      await audio.play();
+      if (!this.isStartupOperationCurrent(audio, generation, sourceVersion, startupId, playRequestId)) return;
+      if (!this.wantsPlayback) audio.pause();
+    } catch (error) {
+      if (!this.isStartupOperationCurrent(audio, generation, sourceVersion, startupId, playRequestId) || !this.wantsPlayback) return;
+      this.handlePlayError(error);
+    } finally {
+      if (this.isSourceCurrent(audio, sourceVersion) && startupId === this.startupId) {
+        this.startupCompletionInProgress = false;
+      }
+    }
+  };
+
+  private startBufferSampler() {
+    if (this.bufferSampleTimer || this.audibleSource?.kind !== "network") return;
+    this.evaluateBufferState();
+    this.bufferSampleTimer = setInterval(this.evaluateBufferState, BUFFER_SAMPLE_INTERVAL_MS);
+  }
+
+  private stopBufferSampler() {
+    if (this.bufferSampleTimer) clearInterval(this.bufferSampleTimer);
+    this.bufferSampleTimer = null;
+  }
+
+  private evaluateBufferState = () => {
+    const audio = this.audio;
+    if (this.disposed || !this.wantsPlayback || !audio || this.audibleSource?.kind !== "network") return;
+    const now = performance.now();
+    const currentTime = audio.currentTime;
+    const startupBufferedSeconds = this.getStartupBufferedSeconds(audio);
+    const bufferAhead = this.getBufferAhead(audio);
+
+    if (currentTime >= this.lastObservedCurrentTime + PROGRESSION_EPSILON_SECONDS) {
+      this.lastObservedCurrentTime = currentTime;
+      this.lastProgressAt = now;
+      this.networkPressure = false;
+      this.clearHandoffTimer();
+      if (this.phase === "starting-audible") {
+        this.phase = "audible-network";
+        this.update({ status: "playing", currentTime, error: null });
+      } else if (this.phase === "audible-network" && this.state.status !== "playing") {
+        this.update({ status: "playing", currentTime, error: null });
+      }
+    }
+
+    if (this.phase === "startup-buffering") {
+      if (startupBufferedSeconds >= STARTUP_BUFFER_SECONDS) {
+        void this.completeStartup();
+      }
+      return;
+    }
+
+    if (this.phase !== "starting-audible" && this.phase !== "audible-network") return;
+    const frozen = now - this.lastProgressAt >= PROGRESSION_FREEZE_MS;
+    this.updateBufferHealth(bufferAhead, now, frozen);
+    if (frozen) {
+      this.update({ status: "loading", currentTime });
+      this.yieldCacheToPlayback();
+      this.handleBuffering();
+      return;
+    }
+
+    this.update({ currentTime });
+    if (this.canRunCache(now)) void this.ensureCachePipeline();
+  };
+
+  private getStartupBufferedSeconds(audio: HTMLAudioElement) {
+    for (let index = 0; index < audio.buffered.length; index += 1) {
+      if (audio.buffered.start(index) <= BUFFER_RANGE_EPSILON_SECONDS) return audio.buffered.end(index);
+    }
+    return 0;
+  }
+
+  private getBufferAhead(audio: HTMLAudioElement) {
+    const currentTime = audio.currentTime;
+    for (let index = 0; index < audio.buffered.length; index += 1) {
+      if (
+        audio.buffered.start(index) <= currentTime + BUFFER_RANGE_EPSILON_SECONDS
+        && audio.buffered.end(index) >= currentTime
+      ) return Math.max(0, audio.buffered.end(index) - currentTime);
+    }
+    return 0;
+  }
+
+  private updateBufferHealth(bufferAhead: number, now: number, frozen: boolean) {
+    let nextHealth = this.bufferHealth;
+    if (frozen || bufferAhead < BUFFER_CRITICAL_ENTER_SECONDS) nextHealth = "critical";
+    else if (this.bufferHealth === "critical" && bufferAhead < BUFFER_CRITICAL_EXIT_SECONDS) nextHealth = "critical";
+    else if (this.bufferHealth === "healthy" && bufferAhead >= BUFFER_HEALTHY_EXIT_SECONDS) nextHealth = "healthy";
+    else if (bufferAhead >= BUFFER_HEALTHY_ENTER_SECONDS) nextHealth = "healthy";
+    else nextHealth = "low";
+
+    if (nextHealth === "healthy") {
+      if (this.bufferHealth !== "healthy") this.healthySince = now;
+    } else {
+      this.healthySince = null;
+      this.yieldCacheToPlayback();
+    }
+    this.bufferHealth = nextHealth;
+  }
+
+  private canRunCache(now = performance.now()) {
+    if (!this.wantsPlayback || this.cachePromise || now < this.cacheRetryNotBefore) return false;
+    if (this.audibleSource?.kind === "blob") return this.phase === "audible-blob";
+    return this.phase === "audible-network"
+      && this.bufferHealth === "healthy"
+      && this.healthySince !== null
+      && now - this.healthySince >= CACHE_HEALTHY_STABILITY_MS
+      && !this.networkPressure
+      && now - this.lastProgressAt < PROGRESSION_FREEZE_MS;
+  }
+
+  private yieldCacheToPlayback() {
+    if (!this.cacheController) return;
+    this.cacheAbortReason = "playback";
+    this.cacheController.abort();
   }
 
   private playCurrentAudio = async () => {
@@ -195,9 +405,15 @@ export class Mp3Engine {
       await audio.play();
       if (!this.isAudioOperationCurrent(audio, generation, sourceVersion, playRequestId)) return;
       if (!this.wantsPlayback) { audio.pause(); return; }
-      this.update({ status: "playing", currentTime: audio.currentTime, error: null });
-      this.clearHandoffTimer();
-      void this.ensureCachePipeline();
+      if (this.audibleSource.kind === "network") {
+        this.lastObservedCurrentTime = audio.currentTime;
+        this.lastProgressAt = performance.now();
+        this.update({ status: "loading", currentTime: audio.currentTime, error: null });
+      } else {
+        this.update({ status: "playing", currentTime: audio.currentTime, error: null });
+        this.clearHandoffTimer();
+        void this.ensureCachePipeline();
+      }
     } catch (error) {
       if (!this.isAudioOperationCurrent(audio, generation, sourceVersion, playRequestId) || !this.wantsPlayback) return;
       this.handlePlayError(error);
@@ -205,7 +421,7 @@ export class Mp3Engine {
   };
 
   private ensureCachePipeline = async () => {
-    if (this.disposed || !this.wantsPlayback || this.cachePromise || !this.audibleSource) return;
+    if (this.disposed || !this.audibleSource || !this.canRunCache()) return;
     const currentIndex = this.audibleSource.trackIndex;
     const targetIndex = this.findSlotByTrackIndex(currentIndex) === null ? currentIndex : this.desiredNextIndex;
     if (this.findSlotByTrackIndex(targetIndex) !== null) {
@@ -226,7 +442,7 @@ export class Mp3Engine {
         const displaced = this.slots[replacementSlot];
         this.slots[replacementSlot] = cached;
         cacheSucceeded = true;
-        this.clearRetryTimer(); this.retryAttempt = 0; this.updatePreparedTrackIndex();
+        this.clearRetryTimer(); this.retryAttempt = 0; this.cacheRetryNotBefore = 0; this.updatePreparedTrackIndex();
         if (displaced && displaced.objectUrl !== cached.objectUrl) this.revoke(displaced.objectUrl);
       })
       .catch((error) => {
@@ -264,6 +480,11 @@ export class Mp3Engine {
 
   private handleEnded = async () => {
     if (this.disposed || !this.audio || !this.audibleSource) return;
+    if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
+      this.audio.currentTime = 0;
+      if (this.phase === "startup-buffering" && this.wantsPlayback) void this.completeStartup();
+      return;
+    }
     const logicalNextIndex = this.desiredNextIndex;
     const logicalNextSlot = this.findSlotByTrackIndex(logicalNextIndex);
     if (logicalNextSlot !== null) {
@@ -293,34 +514,40 @@ export class Mp3Engine {
 
   private handlePlaybackProgress = () => {
     if (!this.audio || !this.audibleSource) return;
-    this.clearHandoffTimer();
-    if (this.wantsPlayback && !this.audio.paused) {
-      this.update({ status: "playing", currentTime: this.audio.currentTime, error: null });
-      void this.ensureCachePipeline();
+    if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
+      this.evaluateBufferState();
+      return;
     }
-  };
-
-  private handleCanPlay = () => {
-    if (this.audio && !this.audio.paused) this.clearHandoffTimer();
+    if (this.phase === "audible-network") {
+      this.evaluateBufferState();
+      return;
+    }
+    this.clearHandoffTimer();
+    if (this.wantsPlayback && !this.audio.paused) this.update({ status: "playing", currentTime: this.audio.currentTime, error: null });
   };
 
   private handleTimeUpdate = () => {
     if (!this.audio) return;
+    if (this.phase === "startup-buffering" || this.phase === "starting-audible") return;
     if (this.handoffTimer && this.audio.currentTime > this.handoffStartTime + HANDOFF_PROGRESS_EPSILON_SECONDS) this.clearHandoffTimer();
     this.update({ currentTime: this.audio.currentTime });
   };
 
   private handleBuffering = () => {
-    if (this.disposed || !this.wantsPlayback || !this.audio || this.audibleSource?.kind !== "network" || this.handoffTimer || this.handoffInProgress) return;
+    if (
+      this.disposed
+      || !this.wantsPlayback
+      || !this.audio
+      || this.audibleSource?.kind !== "network"
+      || (this.phase !== "starting-audible" && this.phase !== "audible-network")
+    ) return;
     const audio = this.audio;
     const generation = this.generation;
     const sourceVersion = this.sourceVersion;
     const trackIndex = this.audibleSource.trackIndex;
-    this.update({ status: "loading", currentTime: audio.currentTime });
-    if (this.cacheController) {
-      this.cacheAbortReason = "playback";
-      this.cacheController.abort();
-    }
+    this.networkPressure = true;
+    this.yieldCacheToPlayback();
+    if (this.handoffTimer || this.handoffInProgress) return;
     this.handoffStartTime = audio.currentTime;
     this.handoffTimer = setTimeout(() => {
       this.handoffTimer = null;
@@ -351,8 +578,7 @@ export class Mp3Engine {
 
   private handleOnline = () => {
     if (this.disposed || !this.wantsPlayback || !this.audibleSource || this.cachePromise) return;
-    this.clearRetryTimer();
-    void this.ensureCachePipeline();
+    if (performance.now() >= this.cacheRetryNotBefore && this.canRunCache()) void this.ensureCachePipeline();
   };
 
   private scheduleRecoveryRetry() {
@@ -360,6 +586,7 @@ export class Mp3Engine {
     const baseDelay = RETRY_DELAYS_MS[Math.min(this.retryAttempt, RETRY_DELAYS_MS.length - 1)];
     const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
     this.retryAttempt += 1;
+    this.cacheRetryNotBefore = performance.now() + delay;
     this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.ensureCachePipeline(); }, delay);
   }
 
@@ -423,8 +650,19 @@ export class Mp3Engine {
   private isAudioOperationCurrent(audio: HTMLAudioElement, generation: number, version: number, playRequestId: number) {
     return generation === this.generation && playRequestId === this.playRequestId && this.isSourceCurrent(audio, version);
   }
+  private isStartupOperationCurrent(
+    audio: HTMLAudioElement,
+    generation: number,
+    version: number,
+    startupId: number,
+    playRequestId: number,
+  ) {
+    return startupId === this.startupId
+      && this.isAudioOperationCurrent(audio, generation, version, playRequestId);
+  }
   private handlePlayError(error: unknown) {
     this.wantsPlayback = false;
+    this.stopBufferSampler();
     this.clearHandoffTimer();
     this.clearRetryTimer();
     this.update({ status: "error", error: error instanceof Error ? error.message : "Unable to load or play this MP3." });
