@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3101:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+    command: npm run start
+    mem_limit: 1g
