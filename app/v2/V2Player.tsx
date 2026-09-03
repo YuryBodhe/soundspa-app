@@ -90,7 +90,7 @@ export default function V2Player() {
   const playbackLabel = activeChannelId !== "divnitsa"
     ? "Phase 1 · Divnitsa only"
     : playback.status === "loading"
-      ? "Loading full track"
+      ? "Buffering"
       : playback.status === "error"
         ? "Playback error"
         : playing

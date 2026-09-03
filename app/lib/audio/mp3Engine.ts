@@ -64,6 +64,7 @@ export class Mp3Engine {
   private networkPressure = false;
   private startupId = 0;
   private startupCompletionInProgress = false;
+  private cachePreparationStarted = false;
   private cacheRetryNotBefore = 0;
   private sourceListenersCleanup: (() => void) | null = null;
   private listeners = new Set<Listener>();
@@ -93,6 +94,7 @@ export class Mp3Engine {
         return this.resumeStartupBuffering();
       }
       if (this.audibleSource.kind === "network") {
+        if (this.cachePromise) this.yieldCacheToPlayback();
         this.bufferHealth = "unknown";
         this.healthySince = null;
         this.lastObservedCurrentTime = this.audio.currentTime;
@@ -111,7 +113,6 @@ export class Mp3Engine {
     this.wantsPlayback = false;
     this.playRequestId += 1;
     this.clearHandoffTimer();
-    this.clearRetryTimer();
     this.stopBufferSampler();
     if (!this.audio) {
       if (this.state.status === "loading") this.update({ status: "paused" });
@@ -129,6 +130,7 @@ export class Mp3Engine {
       this.networkPressure = false;
     }
     this.update({ status: "paused", currentTime: this.audio.currentTime });
+    if (this.cachePreparationStarted) void this.ensureCachePipeline();
   };
 
   dispose = () => {
@@ -316,6 +318,7 @@ export class Mp3Engine {
       this.clearHandoffTimer();
       if (this.phase === "starting-audible") {
         this.phase = "audible-network";
+        this.cachePreparationStarted = true;
         this.update({ status: "playing", currentTime, error: null });
       } else if (this.phase === "audible-network" && this.state.status !== "playing") {
         this.update({ status: "playing", currentTime, error: null });
@@ -379,7 +382,8 @@ export class Mp3Engine {
   }
 
   private canRunCache(now = performance.now()) {
-    if (!this.wantsPlayback || this.cachePromise || now < this.cacheRetryNotBefore) return false;
+    if (!this.cachePreparationStarted || this.cachePromise || now < this.cacheRetryNotBefore) return false;
+    if (!this.wantsPlayback) return this.state.status === "paused";
     if (this.audibleSource?.kind === "blob") return this.phase === "audible-blob";
     return this.phase === "audible-network"
       && this.bufferHealth === "healthy"
@@ -458,7 +462,7 @@ export class Mp3Engine {
           this.cacheController = null;
           this.cacheAbortReason = null;
           this.cachePromise = null;
-          if (!this.disposed && this.wantsPlayback && cacheSucceeded) queueMicrotask(() => { void this.ensureCachePipeline(); });
+          if (!this.disposed && this.cachePreparationStarted && cacheSucceeded) queueMicrotask(() => { void this.ensureCachePipeline(); });
         }
       });
     this.cachePromise = promise;
@@ -577,12 +581,12 @@ export class Mp3Engine {
   };
 
   private handleOnline = () => {
-    if (this.disposed || !this.wantsPlayback || !this.audibleSource || this.cachePromise) return;
+    if (this.disposed || !this.cachePreparationStarted || !this.audibleSource || this.cachePromise) return;
     if (performance.now() >= this.cacheRetryNotBefore && this.canRunCache()) void this.ensureCachePipeline();
   };
 
   private scheduleRecoveryRetry() {
-    if (this.disposed || !this.wantsPlayback || this.retryTimer) return;
+    if (this.disposed || !this.cachePreparationStarted || this.retryTimer) return;
     const baseDelay = RETRY_DELAYS_MS[Math.min(this.retryAttempt, RETRY_DELAYS_MS.length - 1)];
     const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
     this.retryAttempt += 1;
