@@ -1,7 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngine";
+import { Mp3Engine, type Mp3EngineState } from "../lib/audio/mp3Engine";
+import { DIVNITSA_PLAYLIST } from "./divnitsaPlaylist";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import { AMBIENT_CHANNELS, MUSIC_CHANNELS, type V2AmbientChannel, type V2MusicChannel } from "./mockData";
@@ -38,23 +41,83 @@ function WaveVisualization({ playing }: { playing: boolean }) {
 }
 
 export default function V2Player() {
-  const [playing, setPlaying] = useState(false);
+  const engineRef = useRef<Mp3Engine | null>(null);
+  const ambientEngineRef = useRef<AmbientEngine | null>(null);
+  const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
+  const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState(MUSIC_CHANNELS[0].id);
-  const [activeAmbientId, setActiveAmbientId] = useState<string | null>(null);
-  const [ambientVolume, setAmbientVolume] = useState(40);
   const activeChannel = useMemo(() => MUSIC_CHANNELS.find((channel) => channel.id === activeChannelId) ?? MUSIC_CHANNELS[0], [activeChannelId]);
+  const playing = activeChannelId === "divnitsa" && playback.status === "playing";
+  const ambientVolume = Math.round(ambientPlayback.volume * 100);
+
+  useEffect(() => {
+    const engine = new Mp3Engine(DIVNITSA_PLAYLIST);
+    engineRef.current = engine;
+    const unsubscribe = engine.subscribe(() => setPlayback(engine.getSnapshot()));
+    return () => {
+      unsubscribe();
+      engine.dispose();
+      if (engineRef.current === engine) engineRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const engine = new AmbientEngine();
+    ambientEngineRef.current = engine;
+    const unsubscribe = engine.subscribe(() => setAmbientPlayback(engine.getSnapshot()));
+    return () => {
+      unsubscribe();
+      engine.dispose();
+      if (ambientEngineRef.current === engine) ambientEngineRef.current = null;
+    };
+  }, []);
+
+  const toggleDivnitsaPlayback = () => {
+    if (playback.status === "playing" || playback.status === "loading") engineRef.current?.pause();
+    else void engineRef.current?.play();
+  };
 
   const selectMusic = (channel: V2MusicChannel) => {
     setActiveChannelId(channel.id);
-    setPlaying(true);
+    if (channel.id === "divnitsa") toggleDivnitsaPlayback();
+    else engineRef.current?.pause();
   };
 
+  const togglePlayback = () => {
+    if (activeChannelId === "divnitsa") toggleDivnitsaPlayback();
+  };
+
+  const playbackLabel = activeChannelId !== "divnitsa"
+    ? "Phase 1 · Divnitsa only"
+    : playback.status === "loading"
+      ? "Loading full track"
+      : playback.status === "error"
+        ? "Playback error"
+        : playing
+          ? `Playing track ${playback.currentTrackIndex + 1}`
+          : playback.status === "paused"
+            ? "Preview paused"
+            : "Ready to play";
+
   const toggleAmbient = (channel: V2AmbientChannel) => {
-    setActiveAmbientId((current) => current === channel.id ? null : channel.id);
+    void ambientEngineRef.current?.toggle({ id: channel.id, url: `/noise/${channel.id}.mp3` });
   };
 
   return (
-    <div className={s.shell} data-testid="v2-player">
+    <div
+      className={s.shell}
+      data-testid="v2-player"
+      data-playback-status={playback.status}
+      data-source-kind={playback.sourceKind ?? "none"}
+      data-track-index={playback.currentTrackIndex}
+      data-prepared-track-index={playback.preparedTrackIndex ?? "none"}
+      data-current-time={playback.currentTime}
+      data-ambient-status={ambientPlayback.status}
+      data-ambient-source-kind={ambientPlayback.sourceKind ?? "none"}
+      data-ambient-track-id={ambientPlayback.activeTrackId ?? "none"}
+      data-ambient-volume={ambientPlayback.volume}
+      data-ambient-current-time={ambientPlayback.currentTime}
+    >
       <header className={s.header}>
         <div><div className={s.brand}>Sound Spa 2</div><div className={s.platformTag}>Local prototype</div></div>
         <div className={s.badge}>Test mode</div>
@@ -65,13 +128,13 @@ export default function V2Player() {
           <div className={s.nowPlayingLabel}>Now selected</div>
           <h1 className={s.channelName}>{activeChannel.title}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""}`} onClick={() => setPlaying((current) => !current)} aria-label={playing ? "Pause preview" : "Play preview"} aria-pressed={playing}>
+          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""}`} onClick={togglePlayback} aria-label={playing ? "Pause Divnitsa" : "Play Divnitsa"} aria-pressed={playing}>
             <span className={s.ambientGlow} />
             <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
             <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
           </button>
           <WaveVisualization playing={playing} />
-          <div className={s.statusLine}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""}`} /><span className={playing ? s.statusPlaying : ""}>{playing ? "Preview active" : "Preview paused"}</span></div>
+          <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""}`} /><span className={playing ? s.statusPlaying : ""}>{playbackLabel}</span></div>
         </section>
 
         <section className={s.section}>
@@ -81,15 +144,15 @@ export default function V2Player() {
           </div>
         </section>
 
-        <section className={`${s.section} ${s.ambientSection}`}>
+        <section className={`${s.section} ${s.ambientSection}`} title={ambientPlayback.error ?? undefined}>
           <div className={s.sectionHeader}><div className={s.sectionLabel}>Ambient</div><div className={s.ambientValue}>{ambientVolume}%</div></div>
           <div className={s.sliderWrap}>
             <div className={s.sliderTrack} /><div className={s.sliderFill} style={{ width: `${ambientVolume}%` }} />
             <div className={s.sliderThumb} style={{ left: `${ambientVolume}%` }}><span /></div>
-            <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => setAmbientVolume(Number(event.currentTarget.value))} className={s.sliderInput} aria-label="Ambient volume" />
+            <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label="Ambient volume" />
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
-            {AMBIENT_CHANNELS.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.id === activeAmbientId} onSelect={() => toggleAmbient(channel)} />)}
+            {AMBIENT_CHANNELS.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.id === ambientPlayback.activeTrackId} onSelect={() => toggleAmbient(channel)} />)}
           </div>
         </section>
       </main>

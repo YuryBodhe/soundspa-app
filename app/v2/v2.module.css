@@ -223,7 +223,7 @@
 .musicCardActive { border-color: rgba(145, 175, 205, 0.3); }
 .ambientCardActive { border-color: rgba(138, 158, 130, 0.4); }
 
-.cardImage { position: relative; display: block; height: 120px; overflow: hidden; }
+.cardImage { position: relative; display: block; width: 100%; height: 120px; overflow: hidden; }
 .cardImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cardOverlay { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 45%, rgba(5, 5, 8, 0.72)); }
 .cardBody { display: block; min-height: 47px; padding: 8px 10px 9px; }
