@@ -66,6 +66,9 @@ export class Mp3Engine {
   private startupCompletionInProgress = false;
   private cachePreparationStarted = false;
   private cacheRetryNotBefore = 0;
+  private failedStartRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private failedStartRetryAttempt = 0;
+  private failedStartTrackIndex: number | null = null;
   private sourceListenersCleanup: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private state: Mp3EngineState = INITIAL_STATE;
@@ -90,6 +93,14 @@ export class Mp3Engine {
     if (this.disposed || typeof window === "undefined") return;
     this.wantsPlayback = true;
     if (this.audio && this.audibleSource) {
+      if (
+        this.failedStartTrackIndex !== null
+        && this.audibleSource.kind === "network"
+        && this.audibleSource.trackIndex === this.failedStartTrackIndex
+      ) {
+        this.clearFailedStartRetryTimer();
+        return this.startNetworkTrack(this.failedStartTrackIndex, true);
+      }
       if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
         return this.resumeStartupBuffering();
       }
@@ -112,6 +123,7 @@ export class Mp3Engine {
   pause = () => {
     this.wantsPlayback = false;
     this.playRequestId += 1;
+    this.clearFailedStartRetryTimer();
     this.clearHandoffTimer();
     this.stopBufferSampler();
     if (!this.audio) {
@@ -145,6 +157,7 @@ export class Mp3Engine {
     this.stopBufferSampler();
     this.clearHandoffTimer();
     this.clearRetryTimer();
+    this.clearFailedStartRecovery();
     this.cacheAbortReason = "dispose";
     this.cacheController?.abort();
     this.cacheController = null;
@@ -165,8 +178,9 @@ export class Mp3Engine {
     this.listeners.clear();
   };
 
-  private startNetworkTrack = async (index: number) => {
-    const audio = this.ensureAudio();
+  private startNetworkTrack = async (index: number, recoveringFailedStart = false) => {
+    if (!recoveringFailedStart) this.clearFailedStartRecovery();
+    const audio = recoveringFailedStart ? this.recreateAudio() : this.ensureAudio();
     this.assignSource(audio, { kind: "network", trackIndex: index, slot: null }, this.tracks[index].url);
     this.phase = "startup-buffering";
     this.bufferHealth = "unknown";
@@ -183,6 +197,7 @@ export class Mp3Engine {
   private startBlobTrack = async (slot: SlotIndex, position = 0) => {
     const cached = this.slots[slot];
     if (!cached) return;
+    this.clearFailedStartRecovery();
     const audio = this.ensureAudio();
     this.assignSource(audio, { kind: "blob", trackIndex: cached.index, slot }, cached.objectUrl);
     this.phase = "audible-blob";
@@ -206,6 +221,19 @@ export class Mp3Engine {
 
   private ensureAudio() {
     if (!this.audio) { this.audio = new Audio(); this.audio.preload = "auto"; }
+    return this.audio;
+  }
+
+  private recreateAudio() {
+    this.sourceListenersCleanup?.();
+    this.sourceListenersCleanup = null;
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.removeAttribute("src");
+      this.audio.load();
+    }
+    this.audio = new Audio();
+    this.audio.preload = "auto";
     return this.audio;
   }
 
@@ -317,6 +345,7 @@ export class Mp3Engine {
       this.networkPressure = false;
       this.clearHandoffTimer();
       if (this.phase === "starting-audible") {
+        this.clearFailedStartRecovery();
         this.phase = "audible-network";
         this.cachePreparationStarted = true;
         this.update({ status: "playing", currentTime, error: null });
@@ -327,6 +356,7 @@ export class Mp3Engine {
 
     if (this.phase === "startup-buffering") {
       if (startupBufferedSeconds >= STARTUP_BUFFER_SECONDS) {
+        this.clearFailedStartRetryTimer();
         void this.completeStartup();
       }
       return;
@@ -512,6 +542,14 @@ export class Mp3Engine {
         await this.startBlobTrack(fallbackSlot);
         return;
       }
+      if (
+        this.wantsPlayback
+        && (this.phase === "startup-buffering" || this.phase === "starting-audible")
+        && this.lastObservedCurrentTime < PROGRESSION_EPSILON_SECONDS
+      ) {
+        this.scheduleFailedStartRecovery(failedTrackIndex);
+        return;
+      }
     }
     if (this.wantsPlayback) this.handlePlayError(new Error("The browser could not play this MP3."));
   };
@@ -538,6 +576,17 @@ export class Mp3Engine {
   };
 
   private handleBuffering = () => {
+    if (
+      !this.disposed
+      && this.wantsPlayback
+      && this.audio
+      && this.audibleSource?.kind === "network"
+      && (this.phase === "startup-buffering" || this.phase === "starting-audible")
+      && this.lastObservedCurrentTime < PROGRESSION_EPSILON_SECONDS
+    ) {
+      this.scheduleFailedStartRecovery(this.audibleSource.trackIndex);
+      return;
+    }
     if (
       this.disposed
       || !this.wantsPlayback
@@ -581,6 +630,18 @@ export class Mp3Engine {
   };
 
   private handleOnline = () => {
+    if (
+      this.failedStartRetryTimer
+      && this.failedStartTrackIndex !== null
+      && this.wantsPlayback
+      && this.audibleSource?.kind === "network"
+      && this.audibleSource.trackIndex === this.failedStartTrackIndex
+    ) {
+      const trackIndex = this.failedStartTrackIndex;
+      this.clearFailedStartRetryTimer();
+      void this.startNetworkTrack(trackIndex, true);
+      return;
+    }
     if (this.disposed || !this.cachePreparationStarted || !this.audibleSource || this.cachePromise) return;
     if (performance.now() >= this.cacheRetryNotBefore && this.canRunCache()) void this.ensureCachePipeline();
   };
@@ -592,6 +653,49 @@ export class Mp3Engine {
     this.retryAttempt += 1;
     this.cacheRetryNotBefore = performance.now() + delay;
     this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.ensureCachePipeline(); }, delay);
+  }
+
+  private scheduleFailedStartRecovery(trackIndex: number) {
+    if (this.disposed || !this.wantsPlayback || this.failedStartRetryTimer) return;
+    this.failedStartTrackIndex = trackIndex;
+    this.startupCompletionInProgress = false;
+    this.phase = "startup-buffering";
+    this.update({ status: "loading", currentTime: 0, error: null });
+    const generation = this.generation;
+    const audio = this.audio;
+    const bufferedAtSchedule = audio ? this.getStartupBufferedSeconds(audio) : 0;
+    const baseDelay = RETRY_DELAYS_MS[Math.min(this.failedStartRetryAttempt, RETRY_DELAYS_MS.length - 1)];
+    const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
+    this.failedStartRetryAttempt += 1;
+    this.failedStartRetryTimer = setTimeout(() => {
+      this.failedStartRetryTimer = null;
+      if (
+        this.disposed
+        || !this.wantsPlayback
+        || generation !== this.generation
+        || this.failedStartTrackIndex !== trackIndex
+        || this.audibleSource?.kind !== "network"
+        || this.audibleSource.trackIndex !== trackIndex
+      ) return;
+      const bufferedNow = this.audio ? this.getStartupBufferedSeconds(this.audio) : 0;
+      if (bufferedNow > bufferedAtSchedule + BUFFER_RANGE_EPSILON_SECONDS) {
+        this.failedStartRetryAttempt = 0;
+        this.scheduleFailedStartRecovery(trackIndex);
+        return;
+      }
+      void this.startNetworkTrack(trackIndex, true);
+    }, delay);
+  }
+
+  private clearFailedStartRetryTimer() {
+    if (this.failedStartRetryTimer) clearTimeout(this.failedStartRetryTimer);
+    this.failedStartRetryTimer = null;
+  }
+
+  private clearFailedStartRecovery() {
+    this.clearFailedStartRetryTimer();
+    this.failedStartRetryAttempt = 0;
+    this.failedStartTrackIndex = null;
   }
 
   private clearRetryTimer() { if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = null; }
@@ -669,6 +773,7 @@ export class Mp3Engine {
     this.stopBufferSampler();
     this.clearHandoffTimer();
     this.clearRetryTimer();
+    this.clearFailedStartRecovery();
     this.update({ status: "error", error: error instanceof Error ? error.message : "Unable to load or play this MP3." });
   }
   private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }
