@@ -71,6 +71,8 @@ export class Mp3Engine {
   private networkRetryAttempt = 0;
   private networkRecoveryTarget: NetworkRecoveryTarget | null = null;
   private startupPosition = 0;
+  private recoveryAttemptSourceVersion: number | null = null;
+  private freezeLoggedSourceVersion: number | null = null;
   private sourceListenersCleanup: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private state: Mp3EngineState = INITIAL_STATE;
@@ -93,6 +95,14 @@ export class Mp3Engine {
 
   play = async () => {
     if (this.disposed || typeof window === "undefined") return;
+    if (this.networkRecoveryTarget || this.state.status === "loading" || this.state.status === "error") {
+      let path = "reuse-current-audio";
+      if (this.networkRecoveryTarget && this.findSlotByTrackIndex(this.networkRecoveryTarget.trackIndex) !== null) path = "cached-blob";
+      else if (this.networkRecoveryTarget && this.selectFallbackSlot() !== null) path = "cached-blob";
+      else if (this.networkRecoveryTarget) path = "fresh-network-audio";
+      else if (this.phase === "startup-buffering" || this.phase === "starting-audible") path = "resume-startup-buffering";
+      this.logRecovery("explicit-play-during-recovery", { path, status: this.state.status, phase: this.phase });
+    }
     this.wantsPlayback = true;
     if (this.audio && this.audibleSource) {
       if (
@@ -186,6 +196,10 @@ export class Mp3Engine {
     const audio = recovering ? this.recreateAudio() : this.ensureAudio();
     this.assignSource(audio, { kind: "network", trackIndex: index, slot: null }, this.tracks[index].url);
     const version = this.sourceVersion;
+    if (recovering) {
+      this.recoveryAttemptSourceVersion = version;
+      this.logRecovery("new-audio-created", { sourceVersion: version, trackIndex: index, recoveryPosition: position });
+    }
     this.phase = "startup-buffering";
     this.startupPosition = Math.max(0, position);
     this.bufferHealth = "unknown";
@@ -205,6 +219,7 @@ export class Mp3Engine {
       if (!this.isSourceCurrent(audio, version)) return;
       const maximum = Number.isFinite(audio.duration) ? Math.max(0, audio.duration - 0.1) : this.startupPosition;
       audio.currentTime = Math.min(this.startupPosition, maximum);
+      if (recovering) this.logRecovery("seek-restored", { requestedPosition: this.startupPosition, resultingCurrentTime: audio.currentTime });
     }
     if (this.wantsPlayback) this.resumeStartupBuffering();
   };
@@ -243,6 +258,12 @@ export class Mp3Engine {
     this.sourceListenersCleanup?.();
     this.sourceListenersCleanup = null;
     if (this.audio) {
+      this.logRecovery("old-audio-destroyed", {
+        oldSourceVersion: this.sourceVersion,
+        currentTime: this.audio.currentTime,
+        readyState: this.audio.readyState,
+        networkState: this.audio.networkState,
+      });
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
@@ -259,6 +280,7 @@ export class Mp3Engine {
     this.startupCompletionInProgress = false;
     this.sourceListenersCleanup?.();
     this.sourceVersion += 1;
+    this.freezeLoggedSourceVersion = null;
     const version = this.sourceVersion;
     this.audibleSource = source;
     audio.src = url;
@@ -271,6 +293,11 @@ export class Mp3Engine {
     const onEnded = guarded(() => { void this.handleEnded(); });
     const onError = guarded(() => { void this.handleAudioError(); });
     const onPlaying = guarded(this.handlePlaybackProgress);
+    const onLoadedMetadata = guarded(() => {
+      if (this.recoveryAttemptSourceVersion === version) {
+        this.logRecovery("metadata-loaded", { duration: audio.duration, intendedSeekPosition: this.startupPosition });
+      }
+    });
     const onTimeUpdate = guarded(this.handleTimeUpdate);
     const onProgress = guarded(this.evaluateBufferState);
     const onWaiting = guarded(this.handleBuffering);
@@ -278,6 +305,7 @@ export class Mp3Engine {
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
     audio.addEventListener("playing", onPlaying);
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("progress", onProgress);
     audio.addEventListener("waiting", onWaiting);
@@ -286,6 +314,7 @@ export class Mp3Engine {
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
       audio.removeEventListener("playing", onPlaying);
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("progress", onProgress);
       audio.removeEventListener("waiting", onWaiting);
@@ -320,12 +349,24 @@ export class Mp3Engine {
     this.lastObservedCurrentTime = this.startupPosition;
     this.lastProgressAt = performance.now();
     this.update({ status: "loading", currentTime: this.startupPosition, error: null });
+    const isRecoveryAttempt = this.recoveryAttemptSourceVersion === sourceVersion;
+    if (isRecoveryAttempt) this.logRecovery("recovery-play-requested", { sourceVersion, phase: this.phase });
 
     try {
       await audio.play();
+      if (isRecoveryAttempt) this.logRecovery("recovery-play-resolved", { sourceVersion, phase: this.phase });
       if (!this.isStartupOperationCurrent(audio, generation, sourceVersion, startupId, playRequestId)) return;
       if (!this.wantsPlayback) audio.pause();
     } catch (error) {
+      if (isRecoveryAttempt) {
+        this.logRecovery("recovery-play-rejected", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          errorMessage: error instanceof Error ? error.message : String(error),
+          wantsPlayback: this.wantsPlayback,
+          phase: this.phase,
+          hasRecoveryTarget: this.networkRecoveryTarget !== null,
+        });
+      }
       if (!this.isStartupOperationCurrent(audio, generation, sourceVersion, startupId, playRequestId) || !this.wantsPlayback) return;
       this.handlePlayError(error);
     } finally {
@@ -355,10 +396,19 @@ export class Mp3Engine {
     const bufferAhead = this.getBufferAhead(audio);
 
     if (currentTime >= this.lastObservedCurrentTime + PROGRESSION_EPSILON_SECONDS) {
+      this.freezeLoggedSourceVersion = null;
       this.lastObservedCurrentTime = currentTime;
       this.lastProgressAt = now;
       this.networkPressure = false;
       this.clearHandoffTimer();
+      if (this.recoveryAttemptSourceVersion === this.sourceVersion) {
+        this.logRecovery("real-progression-restored", {
+          sourceVersion: this.sourceVersion,
+          trackIndex: this.audibleSource.trackIndex,
+          currentTime,
+        });
+        this.recoveryAttemptSourceVersion = null;
+      }
       if (this.networkRecoveryTarget?.trackIndex === this.audibleSource.trackIndex) this.clearNetworkRecovery();
       if (this.phase === "starting-audible") {
         this.clearNetworkRecovery();
@@ -373,6 +423,7 @@ export class Mp3Engine {
     if (this.phase === "startup-buffering") {
       const startupReserve = this.startupPosition > BUFFER_RANGE_EPSILON_SECONDS ? bufferAhead : startupBufferedSeconds;
       if (startupReserve >= STARTUP_BUFFER_SECONDS) {
+        this.logRecovery("startup-buffer-ready", { currentTime, bufferAhead, sourceVersion: this.sourceVersion });
         this.clearNetworkRetryTimer();
         void this.completeStartup();
       }
@@ -383,6 +434,20 @@ export class Mp3Engine {
     const frozen = now - this.lastProgressAt >= PROGRESSION_FREEZE_MS;
     this.updateBufferHealth(bufferAhead, now, frozen);
     if (frozen) {
+      if (this.freezeLoggedSourceVersion !== this.sourceVersion) {
+        this.freezeLoggedSourceVersion = this.sourceVersion;
+        this.logRecovery("freeze-detected", {
+          trackIndex: this.audibleSource.trackIndex,
+          phase: this.phase,
+          sourceKind: this.audibleSource.kind,
+          currentTime,
+          bufferAhead,
+          readyState: audio.readyState,
+          networkState: audio.networkState,
+          paused: audio.paused,
+          wantsPlayback: this.wantsPlayback,
+        });
+      }
       this.update({ status: "loading", currentTime });
       this.yieldCacheToPlayback();
       this.handleBuffering();
@@ -640,10 +705,40 @@ export class Mp3Engine {
     this.yieldCacheToPlayback();
     if (this.handoffTimer || this.handoffInProgress) return;
     this.handoffStartTime = audio.currentTime;
+    this.logRecovery("handoff-grace-started", { currentTime: audio.currentTime, bufferAhead: this.getBufferAhead(audio) });
     this.handoffTimer = setTimeout(() => {
       this.handoffTimer = null;
-      if (!this.isSourceCurrent(audio, sourceVersion) || generation !== this.generation || !this.wantsPlayback || this.audibleSource?.kind !== "network" || this.audibleSource.trackIndex !== trackIndex || audio.currentTime > this.handoffStartTime + HANDOFF_PROGRESS_EPSILON_SECONDS) return;
       const cachedSlot = this.findSlotByTrackIndex(trackIndex);
+      const guardState = {
+        sourceCurrent: this.isSourceCurrent(audio, sourceVersion),
+        generationMatches: generation === this.generation,
+        wantsPlayback: this.wantsPlayback,
+        sourceKind: this.audibleSource?.kind ?? null,
+        trackIndex: this.audibleSource?.trackIndex ?? null,
+        expectedTrackIndex: trackIndex,
+        progressed: audio.currentTime > this.handoffStartTime + HANDOFF_PROGRESS_EPSILON_SECONDS,
+        phase: this.phase,
+        paused: audio.paused,
+        sourceVersion: this.sourceVersion,
+        expectedSourceVersion: sourceVersion,
+      };
+      this.logRecovery("handoff-grace-fired", {
+        currentTime: audio.currentTime,
+        bufferAhead: this.getBufferAhead(audio),
+        blobAvailable: this.slots.some((slot) => slot !== null),
+        sameTrackBlobAvailable: cachedSlot !== null,
+        ...guardState,
+      });
+      const skipReason = !guardState.sourceCurrent ? "source-not-current"
+        : !guardState.generationMatches ? "generation-mismatch"
+          : !guardState.wantsPlayback ? "playback-not-wanted"
+            : guardState.sourceKind !== "network" ? "source-not-network"
+              : guardState.trackIndex !== trackIndex ? "track-mismatch"
+                : guardState.progressed ? "playback-progressed" : null;
+      if (skipReason) {
+        this.logRecovery("handoff-grace-skipped", { reason: skipReason, ...guardState });
+        return;
+      }
       if (cachedSlot !== null) {
         void this.handoffToBlob(cachedSlot);
         return;
@@ -670,6 +765,15 @@ export class Mp3Engine {
   };
 
   private handleOnline = () => {
+    this.logRecovery("online-received", {
+      wantsPlayback: this.wantsPlayback,
+      sourceKind: this.audibleSource?.kind ?? null,
+      phase: this.phase,
+      hasRecoveryTarget: this.networkRecoveryTarget !== null,
+      hasNetworkRetryTimer: this.networkRetryTimer !== null,
+      currentTime: this.audio?.currentTime ?? null,
+      bufferAhead: this.audio ? this.getBufferAhead(this.audio) : 0,
+    });
     if (
       this.networkRetryTimer
       && this.networkRecoveryTarget !== null
@@ -714,39 +818,74 @@ export class Mp3Engine {
     const generation = this.generation;
     const audio = this.audio;
     const bufferedAtSchedule = audio ? this.getBufferAhead(audio) : 0;
+    const currentTimeAtSchedule = audio?.currentTime ?? target.position;
     const baseDelay = RETRY_DELAYS_MS[Math.min(this.networkRetryAttempt, RETRY_DELAYS_MS.length - 1)];
     const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
     this.networkRetryAttempt += 1;
+    this.logRecovery("network-retry-scheduled", {
+      retryAttempt: this.networkRetryAttempt,
+      delay,
+      savedPosition: target.position,
+    });
     this.networkRetryTimer = setTimeout(() => {
       this.networkRetryTimer = null;
-      if (
-        this.disposed
-        || !this.wantsPlayback
-        || generation !== this.generation
-        || this.networkRecoveryTarget?.trackIndex !== trackIndex
-      ) return;
+      const currentTimeNow = this.audio?.currentTime ?? target.position;
+      const bufferedNow = this.audio ? this.getBufferAhead(this.audio) : 0;
+      this.logRecovery("network-retry-fired", {
+        bufferedAtSchedule,
+        bufferedNow,
+        bufferDelta: bufferedNow - bufferedAtSchedule,
+        currentTimeAtSchedule,
+        currentTimeNow,
+        realPlaybackProgression: currentTimeNow >= currentTimeAtSchedule + PROGRESSION_EPSILON_SECONDS,
+      });
+      const skipReason = this.disposed ? "disposed"
+        : !this.wantsPlayback ? "playback-not-wanted"
+          : generation !== this.generation ? "generation-mismatch"
+            : this.networkRecoveryTarget?.trackIndex !== trackIndex ? "recovery-target-mismatch" : null;
+      if (skipReason) {
+        this.logRecovery("network-retry-skipped", { reason: skipReason });
+        return;
+      }
+      const recoveryTarget = this.networkRecoveryTarget;
+      if (!recoveryTarget) return;
       if (this.audibleSource?.kind === "blob") {
+        this.logRecovery("network-retry-skipped", { reason: "audible-blob-kept-playing" });
         void this.ensureCachePipeline();
         return;
       }
-      if (this.audibleSource?.trackIndex !== trackIndex) return;
-      const bufferedNow = this.audio ? this.getBufferAhead(this.audio) : 0;
+      if (this.audibleSource?.trackIndex !== trackIndex) {
+        this.logRecovery("network-retry-skipped", { reason: "audible-track-mismatch" });
+        return;
+      }
       if (bufferedNow > bufferedAtSchedule + BUFFER_RANGE_EPSILON_SECONDS) {
+        this.logRecovery("retry-postponed-buffer-growth", {
+          bufferedAtSchedule,
+          bufferedNow,
+          bufferDelta: bufferedNow - bufferedAtSchedule,
+          currentTimeAtSchedule,
+          currentTimeNow,
+        });
         this.networkRetryAttempt = 0;
         this.scheduleNetworkRecovery(trackIndex, this.getRecoveryPosition());
         return;
       }
-      void this.recoverToBestAvailable(this.networkRecoveryTarget, true);
+      void this.recoverToBestAvailable(recoveryTarget, true);
     }, delay);
   }
 
   private setNetworkRecoveryTarget(trackIndex: number, position: number) {
     if (this.networkRecoveryTarget?.trackIndex === trackIndex) {
+      const previousPosition = this.networkRecoveryTarget.position;
       this.networkRecoveryTarget.position = Math.max(this.networkRecoveryTarget.position, position);
+      if (this.networkRecoveryTarget.position !== previousPosition) {
+        this.logRecovery("recovery-target-set", { trackIndex, savedPosition: this.networkRecoveryTarget.position });
+      }
       return this.networkRecoveryTarget;
     }
     const target = { trackIndex, position: Math.max(0, position) };
     this.networkRecoveryTarget = target;
+    this.logRecovery("recovery-target-set", { trackIndex, savedPosition: target.position });
     return target;
   }
 
@@ -865,6 +1004,15 @@ export class Mp3Engine {
       && this.isAudioOperationCurrent(audio, generation, version, playRequestId);
   }
   private handlePlayError(error: unknown) {
+    this.logRecovery("terminal-handlePlayError", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error),
+      phase: this.phase,
+      sourceKind: this.audibleSource?.kind ?? null,
+      wantsPlaybackBeforeReset: this.wantsPlayback,
+      hasRecoveryTarget: this.networkRecoveryTarget !== null,
+      sourceVersion: this.sourceVersion,
+    });
     this.wantsPlayback = false;
     this.stopBufferSampler();
     this.clearHandoffTimer();
@@ -873,5 +1021,6 @@ export class Mp3Engine {
     this.update({ status: "error", error: error instanceof Error ? error.message : "Unable to load or play this MP3." });
   }
   private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }
+  private logRecovery(event: string, details: Record<string, unknown>) { console.info(`[Mp3Recovery] ${event}`, details); }
   private revoke(objectUrl: string | null) { if (objectUrl) URL.revokeObjectURL(objectUrl); }
 }
