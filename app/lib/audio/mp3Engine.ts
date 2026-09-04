@@ -90,7 +90,9 @@ export class Mp3Engine {
     private readonly sessionCache: MusicSessionCache = musicSessionCache,
   ) {
     if (tracks.length === 0) throw new Error("MP3 playlist must contain at least one track");
+    this.sessionCache.logSnapshot("engine-created-before-restore");
     this.hydrateSlotsFromSessionCache();
+    this.sessionCache.logSnapshot("engine-created-after-restore");
     if (typeof window !== "undefined") window.addEventListener("online", this.handleOnline);
   }
 
@@ -169,6 +171,7 @@ export class Mp3Engine {
 
   dispose = () => {
     if (this.disposed) return;
+    this.sessionCache.logSnapshot("engine-dispose-before-cleanup");
     this.disposed = true;
     this.wantsPlayback = false;
     this.generation += 1;
@@ -572,8 +575,11 @@ export class Mp3Engine {
     this.cacheController = controller;
     this.cacheAbortReason = null;
     let cacheSucceeded = false;
+    const targetUrl = this.tracks[targetIndex].url;
+    this.logMusicCache("full-fetch-start", { trackIndex: targetIndex, trackUrl: targetUrl });
     const promise = this.fetchTrack(targetIndex, controller)
       .then((blob) => {
+        this.logMusicCache("full-fetch-complete", { trackIndex: targetIndex, trackUrl: targetUrl, blobSize: blob.size });
         if (!this.isCacheRequestCurrent(generation, requestId)) return;
         if (this.findSlotByTrackIndex(targetIndex) !== null) return;
         const replacementSlot = this.selectReplacementSlot();
@@ -596,6 +602,12 @@ export class Mp3Engine {
         }
       })
       .catch((error) => {
+        const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        this.logMusicCache(this.isAbortError(error) ? "full-fetch-abort" : "full-fetch-failed", {
+          trackIndex: targetIndex,
+          trackUrl: targetUrl,
+          reason: this.isAbortError(error) ? this.cacheAbortReason ?? reason : reason,
+        });
         if (!this.isCacheRequestCurrent(generation, requestId)) return;
         if (this.isAbortError(error)) {
           if (this.cacheAbortReason === "playback") this.scheduleRecoveryRetry();
@@ -1053,6 +1065,12 @@ export class Mp3Engine {
     const cacheKey = this.tracks[index]?.url;
     if (!cacheKey) return null;
     const blob = this.sessionCache.get(cacheKey);
+    this.logMusicCache("engine-cache-restore", {
+      trackIndex: index,
+      trackUrl: cacheKey,
+      hit: blob !== null,
+      ...(blob ? { blobSize: blob.size } : {}),
+    });
     if (!blob) return null;
     const replacementSlot = this.selectReplacementSlot();
     if (replacementSlot === null) return null;
@@ -1118,5 +1136,6 @@ export class Mp3Engine {
   }
   private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }
   private logRecovery(event: string, details: Record<string, unknown>) { console.info(`[Mp3Recovery] ${event}`, details); }
+  private logMusicCache(event: string, details: Record<string, unknown>) { console.info(`[MusicSessionCache] ${event}`, details); }
   private revoke(objectUrl: string | null) { if (objectUrl) URL.revokeObjectURL(objectUrl); }
 }

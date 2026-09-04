@@ -14,13 +14,20 @@ export class MusicSessionCache {
 
   get(key: string) {
     const entry = this.entries.get(key);
-    if (!entry) return null;
+    if (!entry) {
+      this.log("cache-get", { key, hit: false, entryCount: this.entries.size, sizeBytes: this.totalBytes });
+      return null;
+    }
     entry.lastUsed = ++this.useSequence;
+    this.log("cache-get", { key, hit: true, blobSize: entry.blob.size, entryCount: this.entries.size, sizeBytes: this.totalBytes });
     return entry.blob;
   }
 
   put(key: string, blob: Blob, protectedKeys: ReadonlySet<string> = new Set()) {
-    if (blob.size > this.maxBytes) return false;
+    if (blob.size > this.maxBytes) {
+      this.log("cache-put", { key, blobSize: blob.size, stored: false, entryCount: this.entries.size, sizeBytes: this.totalBytes });
+      return false;
+    }
 
     const previous = this.entries.get(key);
     if (previous) this.totalBytes -= previous.blob.size;
@@ -35,9 +42,21 @@ export class MusicSessionCache {
       const [candidateKey, candidateEntry] = candidate;
       this.entries.delete(candidateKey);
       this.totalBytes -= candidateEntry.blob.size;
+      this.log("cache-evict", { key: candidateKey, blobSize: candidateEntry.blob.size, reason: "capacity" });
     }
 
-    return this.entries.has(key);
+    const stored = this.entries.has(key);
+    this.log("cache-put", { key, blobSize: blob.size, stored, entryCount: this.entries.size, sizeBytes: this.totalBytes });
+    return stored;
+  }
+
+  logSnapshot(context: string) {
+    this.log("cache-snapshot", {
+      context,
+      entries: [...this.entries.entries()].map(([key, entry]) => ({ key, blobSize: entry.blob.size })),
+      entryCount: this.entries.size,
+      sizeBytes: this.totalBytes,
+    });
   }
 
   get sizeBytes() {
@@ -46,6 +65,10 @@ export class MusicSessionCache {
 
   get entryCount() {
     return this.entries.size;
+  }
+
+  private log(event: string, details: Record<string, unknown>) {
+    console.info(`[MusicSessionCache] ${event}`, details);
   }
 }
 
