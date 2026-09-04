@@ -139,9 +139,13 @@
 .yinYangPlaying .haloThree { animation: haloPulse 3.2s ease-in-out 1.4s infinite; }
 .yinYangPlaying .ambientGlow { animation: ambientPulse 3s ease-in-out infinite; }
 .yinYangPlaying .yinYangImage { animation: spin 12s linear infinite; filter: drop-shadow(0 0 20px rgba(150, 185, 215, 0.22)); }
+.yinYangBuffering .haloTwo { animation: bufferingPulse 1.8s ease-in-out infinite; }
+.yinYangBuffering .ambientGlow { animation: ambientPulse 1.8s ease-in-out infinite; }
+.yinYangBuffering .yinYangImage { filter: drop-shadow(0 0 16px rgba(150, 185, 215, 0.18)); }
 
 @keyframes haloPulse { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
 @keyframes ambientPulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes bufferingPulse { 0%, 100% { opacity: 0.2; transform: scale(0.98); } 50% { opacity: 0.8; transform: scale(1.04); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .waveZone {
@@ -175,7 +179,9 @@
 
 .statusDot { width: 5px; height: 5px; border-radius: 50%; background: #6d7468; }
 .statusDotPlaying { animation: dotPulse 2s ease-in-out infinite; background: #8a9e82; }
+.statusDotBuffering { animation: dotPulse 1.2s ease-in-out infinite; background: #8a9e82; }
 .statusPlaying { color: #8a9e82; }
+.statusBuffering { color: #8a9e82; }
 @keyframes dotPulse { 50% { opacity: 0.4; } }
 
 .section { min-width: 0; }
@@ -321,6 +327,9 @@
   .yinYangPlaying .yinYangImage,
   .yinYangPlaying .halo,
   .yinYangPlaying .ambientGlow,
+  .yinYangBuffering .halo,
+  .yinYangBuffering .ambientGlow,
   .playingIndicator i,
-  .statusDotPlaying { animation-duration: 0.001ms; animation-iteration-count: 1; }
+  .statusDotPlaying,
+  .statusDotBuffering { animation-duration: 0.001ms; animation-iteration-count: 1; }
 }

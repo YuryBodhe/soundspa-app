@@ -50,6 +50,7 @@ export default function V2Player() {
   const [activeChannelId, setActiveChannelId] = useState(MUSIC_CHANNELS[0].id);
   const activeChannel = useMemo(() => MUSIC_CHANNELS.find((channel) => channel.id === activeChannelId) ?? MUSIC_CHANNELS[0], [activeChannelId]);
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
+  const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
 
   const replaceMusicEngine = useCallback((channelId: string, playlist: ConstructorParameters<typeof Mp3Engine>[0]) => {
@@ -154,13 +155,13 @@ export default function V2Player() {
           <div className={s.nowPlayingLabel}>Now selected</div>
           <h1 className={s.channelName}>{activeChannel.title}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""}`} onClick={togglePlayback} aria-label={playing ? `Pause ${activeChannel.title}` : `Play ${activeChannel.title}`} aria-pressed={playing}>
+          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={buffering ? `Pause buffering ${activeChannel.title}` : playing ? `Pause ${activeChannel.title}` : `Play ${activeChannel.title}`} aria-pressed={playing} aria-busy={buffering}>
             <span className={s.ambientGlow} />
             <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
             <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
           </button>
           <WaveVisualization playing={playing} />
-          <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""}`} /><span className={playing ? s.statusPlaying : ""}>{playbackLabel}</span></div>
+          <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={playing ? s.statusPlaying : buffering ? s.statusBuffering : ""}>{playbackLabel}</span></div>
         </section>
 
         <section className={s.section}>
