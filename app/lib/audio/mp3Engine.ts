@@ -1,3 +1,5 @@
+import { MusicSessionCache, musicSessionCache } from "./musicSessionCache";
+
 export interface Mp3Track { id: string; url: string }
 export type Mp3PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error";
 export interface Mp3EngineState {
@@ -9,7 +11,7 @@ export interface Mp3EngineState {
   error: string | null;
 }
 
-type CachedTrack = { index: number; objectUrl: string; cachedAt: number };
+type CachedTrack = { index: number; cacheKey: string; objectUrl: string; cachedAt: number };
 type SlotIndex = 0 | 1;
 type Listener = () => void;
 type AudibleSource = { kind: "network" | "blob"; trackIndex: number; slot: SlotIndex | null };
@@ -83,8 +85,12 @@ export class Mp3Engine {
   private wantsPlayback = false;
   private disposed = false;
 
-  constructor(private readonly tracks: readonly Mp3Track[]) {
+  constructor(
+    private readonly tracks: readonly Mp3Track[],
+    private readonly sessionCache: MusicSessionCache = musicSessionCache,
+  ) {
     if (tracks.length === 0) throw new Error("MP3 playlist must contain at least one track");
+    this.hydrateSlotsFromSessionCache();
     if (typeof window !== "undefined") window.addEventListener("online", this.handleOnline);
   }
 
@@ -131,6 +137,8 @@ export class Mp3Engine {
       return this.playCurrentAudio();
     }
     this.desiredNextIndex = this.tracks.length > 1 ? 1 : 0;
+    const cachedInitialSlot = this.findSlotByTrackIndex(0) ?? this.restoreTrackFromSessionCache(0);
+    if (cachedInitialSlot !== null) return this.startBlobTrack(cachedInitialSlot);
     return this.startNetworkTrack(0);
   };
 
@@ -553,6 +561,11 @@ export class Mp3Engine {
     if (this.findSlotByTrackIndex(targetIndex) !== null) {
       this.clearRetryTimer(); this.retryAttempt = 0; this.updatePreparedTrackIndex(); return;
     }
+    if (this.restoreTrackFromSessionCache(targetIndex) !== null) {
+      this.clearRetryTimer(); this.retryAttempt = 0; this.updatePreparedTrackIndex();
+      queueMicrotask(() => { void this.ensureCachePipeline(); });
+      return;
+    }
     const generation = this.generation;
     const requestId = ++this.cacheRequestId;
     const controller = new AbortController();
@@ -560,11 +573,14 @@ export class Mp3Engine {
     this.cacheAbortReason = null;
     let cacheSucceeded = false;
     const promise = this.fetchTrack(targetIndex, controller)
-      .then((cached) => {
-        if (!this.isCacheRequestCurrent(generation, requestId)) { this.revoke(cached.objectUrl); return; }
-        if (this.findSlotByTrackIndex(targetIndex) !== null) { this.revoke(cached.objectUrl); return; }
+      .then((blob) => {
+        if (!this.isCacheRequestCurrent(generation, requestId)) return;
+        if (this.findSlotByTrackIndex(targetIndex) !== null) return;
         const replacementSlot = this.selectReplacementSlot();
-        if (replacementSlot === null) { this.revoke(cached.objectUrl); return; }
+        if (replacementSlot === null) return;
+        const cacheKey = this.tracks[targetIndex].url;
+        this.sessionCache.put(cacheKey, blob, this.getProtectedCacheKeys());
+        const cached = this.createCachedTrack(targetIndex, cacheKey, blob);
         const displaced = this.slots[replacementSlot];
         this.slots[replacementSlot] = cached;
         cacheSucceeded = true;
@@ -599,7 +615,7 @@ export class Mp3Engine {
     await promise;
   };
 
-  private fetchTrack = async (index: number, controller: AbortController): Promise<CachedTrack> => {
+  private fetchTrack = async (index: number, controller: AbortController): Promise<Blob> => {
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DOWNLOAD_TIMEOUT_MS);
     try {
@@ -607,7 +623,7 @@ export class Mp3Engine {
       if (!response.ok) throw new TrackRequestError(response.status);
       const blob = await response.blob();
       if (timedOut) throw new TrackTimeoutError();
-      return { index, objectUrl: URL.createObjectURL(blob), cachedAt: ++this.cacheSequence };
+      return blob;
     } catch (error) { if (timedOut) throw new TrackTimeoutError(); throw error; }
     finally { clearTimeout(timeout); }
   };
@@ -1023,6 +1039,38 @@ export class Mp3Engine {
   private getProtectedSlot(): SlotIndex | null {
     if (this.audibleSource?.kind === "blob") return this.audibleSource.slot;
     return this.audibleSource ? this.findSlotByTrackIndex(this.audibleSource.trackIndex) : null;
+  }
+
+  private hydrateSlotsFromSessionCache() {
+    for (let index = 0; index < this.tracks.length && this.slots.some((slot) => slot === null); index += 1) {
+      this.restoreTrackFromSessionCache(index);
+    }
+  }
+
+  private restoreTrackFromSessionCache(index: number): SlotIndex | null {
+    const existingSlot = this.findSlotByTrackIndex(index);
+    if (existingSlot !== null) return existingSlot;
+    const cacheKey = this.tracks[index]?.url;
+    if (!cacheKey) return null;
+    const blob = this.sessionCache.get(cacheKey);
+    if (!blob) return null;
+    const replacementSlot = this.selectReplacementSlot();
+    if (replacementSlot === null) return null;
+    const displaced = this.slots[replacementSlot];
+    this.slots[replacementSlot] = this.createCachedTrack(index, cacheKey, blob);
+    if (displaced) this.revoke(displaced.objectUrl);
+    return replacementSlot;
+  }
+
+  private createCachedTrack(index: number, cacheKey: string, blob: Blob): CachedTrack {
+    return { index, cacheKey, objectUrl: URL.createObjectURL(blob), cachedAt: ++this.cacheSequence };
+  }
+
+  private getProtectedCacheKeys() {
+    const protectedKeys = new Set<string>();
+    const protectedSlot = this.getProtectedSlot();
+    if (protectedSlot !== null) protectedKeys.add(this.slots[protectedSlot]!.cacheKey);
+    return protectedKeys;
   }
 
   private updatePreparedTrackIndex() {
