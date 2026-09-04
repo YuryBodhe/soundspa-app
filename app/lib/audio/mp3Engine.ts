@@ -52,6 +52,11 @@ export class Mp3Engine {
   private cacheController: AbortController | null = null;
   private cacheAbortReason: "playback" | "dispose" | null = null;
   private cacheRequestId = 0;
+  private cacheRequestStartedAt: number | null = null;
+  private cacheRequestGeneration: number | null = null;
+  private cacheActiveRequestId: number | null = null;
+  private cacheRequestTrackIndex: number | null = null;
+  private cacheRequestTrackUrl: string | null = null;
   private cacheSequence = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
@@ -184,6 +189,7 @@ export class Mp3Engine {
     this.clearRetryTimer();
     this.clearNetworkRecovery();
     this.cacheAbortReason = "dispose";
+    this.logCacheAbortRequested("dispose");
     this.cacheController?.abort();
     this.cacheController = null;
     this.cachePromise = null;
@@ -529,6 +535,7 @@ export class Mp3Engine {
   private yieldCacheToPlayback() {
     if (!this.cacheController) return;
     this.cacheAbortReason = "playback";
+    this.logCacheAbortRequested("playback");
     this.cacheController.abort();
   }
 
@@ -576,14 +583,42 @@ export class Mp3Engine {
     this.cacheAbortReason = null;
     let cacheSucceeded = false;
     const targetUrl = this.tracks[targetIndex].url;
-    this.logMusicCache("full-fetch-start", { trackIndex: targetIndex, trackUrl: targetUrl });
-    const promise = this.fetchTrack(targetIndex, controller)
+    const startedAt = performance.now();
+    this.cacheRequestStartedAt = startedAt;
+    this.cacheRequestGeneration = generation;
+    this.cacheActiveRequestId = requestId;
+    this.cacheRequestTrackIndex = targetIndex;
+    this.cacheRequestTrackUrl = targetUrl;
+    this.logMusicCache("full-fetch-start", { trackIndex: targetIndex, trackUrl: targetUrl, generation, requestId, startedAtMs: startedAt });
+    const promise = this.fetchTrack(targetIndex, controller, generation, requestId, startedAt)
       .then((blob) => {
-        this.logMusicCache("full-fetch-complete", { trackIndex: targetIndex, trackUrl: targetUrl, blobSize: blob.size });
-        if (!this.isCacheRequestCurrent(generation, requestId)) return;
-        if (this.findSlotByTrackIndex(targetIndex) !== null) return;
+        this.logMusicCache("full-fetch-complete", { trackIndex: targetIndex, trackUrl: targetUrl, blobSize: blob.size, generation, requestId, elapsedMs: performance.now() - startedAt });
+        if (!this.isCacheRequestCurrent(generation, requestId)) {
+          const reason = this.disposed ? "engine-disposed"
+            : generation !== this.generation ? "generation-mismatch"
+              : "request-id-mismatch";
+          this.logMusicCache("full-fetch-discarded", {
+            trackIndex: targetIndex,
+            trackUrl: targetUrl,
+            blobSize: blob.size,
+            reason,
+            generation,
+            currentGeneration: this.generation,
+            requestId,
+            currentRequestId: this.cacheRequestId,
+            elapsedMs: performance.now() - startedAt,
+          });
+          return;
+        }
+        if (this.findSlotByTrackIndex(targetIndex) !== null) {
+          this.logMusicCache("full-fetch-discarded", { trackIndex: targetIndex, trackUrl: targetUrl, blobSize: blob.size, reason: "local-slot-already-present", generation, requestId, elapsedMs: performance.now() - startedAt });
+          return;
+        }
         const replacementSlot = this.selectReplacementSlot();
-        if (replacementSlot === null) return;
+        if (replacementSlot === null) {
+          this.logMusicCache("full-fetch-discarded", { trackIndex: targetIndex, trackUrl: targetUrl, blobSize: blob.size, reason: "no-replacement-slot", generation, requestId, elapsedMs: performance.now() - startedAt });
+          return;
+        }
         const cacheKey = this.tracks[targetIndex].url;
         this.sessionCache.put(cacheKey, blob, this.getProtectedCacheKeys());
         const cached = this.createCachedTrack(targetIndex, cacheKey, blob);
@@ -607,6 +642,10 @@ export class Mp3Engine {
           trackIndex: targetIndex,
           trackUrl: targetUrl,
           reason: this.isAbortError(error) ? this.cacheAbortReason ?? reason : reason,
+          generation,
+          requestId,
+          elapsedMs: performance.now() - startedAt,
+          signalAborted: controller.signal.aborted,
         });
         if (!this.isCacheRequestCurrent(generation, requestId)) return;
         if (this.isAbortError(error)) {
@@ -620,6 +659,11 @@ export class Mp3Engine {
           this.cacheController = null;
           this.cacheAbortReason = null;
           this.cachePromise = null;
+          this.cacheRequestStartedAt = null;
+          this.cacheRequestGeneration = null;
+          this.cacheActiveRequestId = null;
+          this.cacheRequestTrackIndex = null;
+          this.cacheRequestTrackUrl = null;
           if (!this.disposed && this.cachePreparationStarted && cacheSucceeded) queueMicrotask(() => { void this.ensureCachePipeline(); });
         }
       });
@@ -627,13 +671,37 @@ export class Mp3Engine {
     await promise;
   };
 
-  private fetchTrack = async (index: number, controller: AbortController): Promise<Blob> => {
+  private fetchTrack = async (
+    index: number,
+    controller: AbortController,
+    generation: number,
+    requestId: number,
+    startedAt: number,
+  ): Promise<Blob> => {
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, DOWNLOAD_TIMEOUT_MS);
+    const trackUrl = this.tracks[index].url;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      this.logMusicCache("full-fetch-abort-requested", { trackIndex: index, trackUrl, reason: "timeout", generation, requestId, elapsedMs: performance.now() - startedAt, signalAborted: controller.signal.aborted });
+      controller.abort();
+    }, DOWNLOAD_TIMEOUT_MS);
     try {
-      const response = await fetch(this.tracks[index].url, { signal: controller.signal });
+      this.logMusicCache("full-fetch-request", { trackIndex: index, trackUrl, generation, requestId, elapsedMs: performance.now() - startedAt, signalAborted: controller.signal.aborted });
+      const response = await fetch(trackUrl, { signal: controller.signal });
+      this.logMusicCache("full-fetch-response", {
+        trackIndex: index,
+        trackUrl,
+        status: response.status,
+        contentLength: response.headers.get("content-length"),
+        generation,
+        requestId,
+        elapsedMs: performance.now() - startedAt,
+        signalAborted: controller.signal.aborted,
+      });
       if (!response.ok) throw new TrackRequestError(response.status);
+      this.logMusicCache("full-fetch-blob-start", { trackIndex: index, trackUrl, generation, requestId, elapsedMs: performance.now() - startedAt, signalAborted: controller.signal.aborted });
       const blob = await response.blob();
+      this.logMusicCache("full-fetch-blob-complete", { trackIndex: index, trackUrl, blobSize: blob.size, generation, requestId, elapsedMs: performance.now() - startedAt, signalAborted: controller.signal.aborted });
       if (timedOut) throw new TrackTimeoutError();
       return blob;
     } catch (error) { if (timedOut) throw new TrackTimeoutError(); throw error; }
@@ -1137,5 +1205,17 @@ export class Mp3Engine {
   private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }
   private logRecovery(event: string, details: Record<string, unknown>) { console.info(`[Mp3Recovery] ${event}`, details); }
   private logMusicCache(event: string, details: Record<string, unknown>) { console.info(`[MusicSessionCache] ${event}`, details); }
+  private logCacheAbortRequested(reason: "playback" | "dispose") {
+    if (!this.cacheController || this.cacheController.signal.aborted) return;
+    this.logMusicCache("full-fetch-abort-requested", {
+      trackIndex: this.cacheRequestTrackIndex,
+      trackUrl: this.cacheRequestTrackUrl,
+      reason,
+      generation: this.cacheRequestGeneration,
+      requestId: this.cacheActiveRequestId,
+      elapsedMs: this.cacheRequestStartedAt === null ? null : performance.now() - this.cacheRequestStartedAt,
+      signalAborted: this.cacheController.signal.aborted,
+    });
+  }
   private revoke(objectUrl: string | null) { if (objectUrl) URL.revokeObjectURL(objectUrl); }
 }
