@@ -848,11 +848,11 @@ export class Mp3Engine {
     const audio = this.audio;
     const bufferedAtSchedule = audio ? this.getBufferAhead(audio) : 0;
     const currentTimeAtSchedule = audio?.currentTime ?? target.position;
-    const baseDelay = RETRY_DELAYS_MS[Math.min(this.networkRetryAttempt, RETRY_DELAYS_MS.length - 1)];
+    const nextAttempt = this.networkRetryAttempt + 1;
+    const baseDelay = RETRY_DELAYS_MS[Math.min(nextAttempt - 1, RETRY_DELAYS_MS.length - 1)];
     const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
-    this.networkRetryAttempt += 1;
     this.logRecovery("network-retry-scheduled", {
-      retryAttempt: this.networkRetryAttempt,
+      retryAttempt: nextAttempt,
       delay,
       savedPosition: target.position,
     });
@@ -860,18 +860,11 @@ export class Mp3Engine {
       this.networkRetryTimer = null;
       const currentTimeNow = this.audio?.currentTime ?? target.position;
       const bufferedNow = this.audio ? this.getBufferAhead(this.audio) : 0;
-      this.logRecovery("network-retry-fired", {
-        bufferedAtSchedule,
-        bufferedNow,
-        bufferDelta: bufferedNow - bufferedAtSchedule,
-        currentTimeAtSchedule,
-        currentTimeNow,
-        realPlaybackProgression: currentTimeNow >= currentTimeAtSchedule + PROGRESSION_EPSILON_SECONDS,
-      });
       const skipReason = this.disposed ? "disposed"
         : !this.wantsPlayback ? "playback-not-wanted"
           : generation !== this.generation ? "generation-mismatch"
-            : this.networkRecoveryTarget?.trackIndex !== trackIndex ? "recovery-target-mismatch" : null;
+            : sourceVersionAtSchedule !== this.sourceVersion ? "source-version-mismatch"
+              : this.networkRecoveryTarget?.trackIndex !== trackIndex ? "recovery-target-mismatch" : null;
       if (skipReason) {
         this.logRecovery("network-retry-skipped", { reason: skipReason });
         return;
@@ -903,6 +896,16 @@ export class Mp3Engine {
         this.scheduleNetworkRecovery(trackIndex, this.getRecoveryPosition());
         return;
       }
+      this.networkRetryAttempt = nextAttempt;
+      this.logRecovery("network-retry-fired", {
+        retryAttempt: this.networkRetryAttempt,
+        bufferedAtSchedule,
+        bufferedNow,
+        bufferDelta: bufferedNow - bufferedAtSchedule,
+        currentTimeAtSchedule,
+        currentTimeNow,
+        realPlaybackProgression: currentTimeNow >= currentTimeAtSchedule + PROGRESSION_EPSILON_SECONDS,
+      });
       void this.recoverToBestAvailable(recoveryTarget, true);
     }, delay);
   }
