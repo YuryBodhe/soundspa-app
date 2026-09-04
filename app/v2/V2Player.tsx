@@ -1,10 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngine";
 import { Mp3Engine, type Mp3EngineState } from "../lib/audio/mp3Engine";
-import { DIVNITSA_PLAYLIST } from "./divnitsaPlaylist";
+import { DIVNITSA_PLAYLIST, MUSIC_PLAYLISTS } from "./divnitsaPlaylist";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import { AMBIENT_CHANNELS, MUSIC_CHANNELS, type V2AmbientChannel, type V2MusicChannel } from "./mockData";
@@ -42,24 +42,38 @@ function WaveVisualization({ playing }: { playing: boolean }) {
 
 export default function V2Player() {
   const engineRef = useRef<Mp3Engine | null>(null);
+  const engineChannelIdRef = useRef<string | null>(null);
+  const engineUnsubscribeRef = useRef<(() => void) | null>(null);
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState(MUSIC_CHANNELS[0].id);
   const activeChannel = useMemo(() => MUSIC_CHANNELS.find((channel) => channel.id === activeChannelId) ?? MUSIC_CHANNELS[0], [activeChannelId]);
-  const playing = activeChannelId === "divnitsa" && playback.status === "playing";
+  const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
 
-  useEffect(() => {
-    const engine = new Mp3Engine(DIVNITSA_PLAYLIST);
+  const replaceMusicEngine = useCallback((channelId: string, playlist: ConstructorParameters<typeof Mp3Engine>[0]) => {
+    engineUnsubscribeRef.current?.();
+    engineUnsubscribeRef.current = null;
+    engineRef.current?.dispose();
+    const engine = new Mp3Engine(playlist);
     engineRef.current = engine;
-    const unsubscribe = engine.subscribe(() => setPlayback(engine.getSnapshot()));
-    return () => {
-      unsubscribe();
-      engine.dispose();
-      if (engineRef.current === engine) engineRef.current = null;
-    };
+    engineChannelIdRef.current = channelId;
+    setPlayback(engine.getSnapshot());
+    engineUnsubscribeRef.current = engine.subscribe(() => setPlayback(engine.getSnapshot()));
+    return engine;
   }, []);
+
+  useEffect(() => {
+    replaceMusicEngine("divnitsa", DIVNITSA_PLAYLIST);
+    return () => {
+      engineUnsubscribeRef.current?.();
+      engineUnsubscribeRef.current = null;
+      engineRef.current?.dispose();
+      engineRef.current = null;
+      engineChannelIdRef.current = null;
+    };
+  }, [replaceMusicEngine]);
 
   useEffect(() => {
     const engine = new AmbientEngine();
@@ -72,23 +86,35 @@ export default function V2Player() {
     };
   }, []);
 
-  const toggleDivnitsaPlayback = () => {
+  const toggleMusicPlayback = () => {
     if (playback.status === "playing" || playback.status === "loading") engineRef.current?.pause();
     else void engineRef.current?.play();
   };
 
   const selectMusic = (channel: V2MusicChannel) => {
+    const playlist = MUSIC_PLAYLISTS[channel.id];
+    if (channel.id === activeChannelId) {
+      if (playlist) toggleMusicPlayback();
+      return;
+    }
+    const shouldContinuePlaying = playback.status === "playing" || playback.status === "loading";
     setActiveChannelId(channel.id);
-    if (channel.id === "divnitsa") toggleDivnitsaPlayback();
-    else engineRef.current?.pause();
+    if (!playlist) {
+      engineRef.current?.pause();
+      return;
+    }
+    const engine = engineChannelIdRef.current === channel.id
+      ? engineRef.current
+      : replaceMusicEngine(channel.id, playlist);
+    if (shouldContinuePlaying) void engine?.play();
   };
 
   const togglePlayback = () => {
-    if (activeChannelId === "divnitsa") toggleDivnitsaPlayback();
+    if (MUSIC_PLAYLISTS[activeChannelId] && engineChannelIdRef.current === activeChannelId) toggleMusicPlayback();
   };
 
-  const playbackLabel = activeChannelId !== "divnitsa"
-    ? "Phase 1 · Divnitsa only"
+  const playbackLabel = !MUSIC_PLAYLISTS[activeChannelId]
+    ? "Planned channel"
     : playback.status === "loading"
       ? "Buffering"
       : playback.status === "error"
@@ -128,7 +154,7 @@ export default function V2Player() {
           <div className={s.nowPlayingLabel}>Now selected</div>
           <h1 className={s.channelName}>{activeChannel.title}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""}`} onClick={togglePlayback} aria-label={playing ? "Pause Divnitsa" : "Play Divnitsa"} aria-pressed={playing}>
+          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""}`} onClick={togglePlayback} aria-label={playing ? `Pause ${activeChannel.title}` : `Play ${activeChannel.title}`} aria-pressed={playing}>
             <span className={s.ambientGlow} />
             <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
             <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
