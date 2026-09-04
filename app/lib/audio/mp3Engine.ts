@@ -34,7 +34,9 @@ const BUFFER_HEALTHY_ENTER_SECONDS = 30;
 const BUFFER_HEALTHY_EXIT_SECONDS = 20;
 const BUFFER_CRITICAL_ENTER_SECONDS = 8;
 const BUFFER_CRITICAL_EXIT_SECONDS = 12;
-const CACHE_HEALTHY_STABILITY_MS = 7_000;
+const CACHE_START_BUFFER_SECONDS = 120;
+const CACHE_HEALTHY_STABILITY_MS = 30_000;
+const CACHE_PLAYBACK_ABORT_COOLDOWN_MS = 120_000;
 
 class TrackRequestError extends Error {
   constructor(readonly status: number) { super(`MP3 request failed with ${status}`); }
@@ -460,6 +462,7 @@ export class Mp3Engine {
     if (this.phase !== "starting-audible" && this.phase !== "audible-network") return;
     const frozen = now - this.lastProgressAt >= PROGRESSION_FREEZE_MS;
     this.updateBufferHealth(bufferAhead, now, frozen);
+    if (this.cacheController && audio.networkState === HTMLMediaElement.NETWORK_LOADING) this.yieldCacheToPlayback();
     if (frozen) {
       if (this.freezeLoggedSourceVersion !== this.sourceVersion) {
         this.freezeLoggedSourceVersion = this.sourceVersion;
@@ -525,16 +528,20 @@ export class Mp3Engine {
     if (!this.wantsPlayback) return this.state.status === "paused";
     if (this.audibleSource?.kind === "blob") return this.phase === "audible-blob";
     return this.phase === "audible-network"
+      && this.audio !== null
       && this.bufferHealth === "healthy"
+      && this.getBufferAhead(this.audio) >= CACHE_START_BUFFER_SECONDS
       && this.healthySince !== null
       && now - this.healthySince >= CACHE_HEALTHY_STABILITY_MS
       && !this.networkPressure
+      && this.audio.networkState !== HTMLMediaElement.NETWORK_LOADING
       && now - this.lastProgressAt < PROGRESSION_FREEZE_MS;
   }
 
   private yieldCacheToPlayback() {
-    if (!this.cacheController) return;
+    if (!this.cacheController || this.cacheController.signal.aborted) return;
     this.cacheAbortReason = "playback";
+    this.cacheRetryNotBefore = Math.max(this.cacheRetryNotBefore, performance.now() + CACHE_PLAYBACK_ABORT_COOLDOWN_MS);
     this.logCacheAbortRequested("playback");
     this.cacheController.abort();
   }
@@ -924,8 +931,9 @@ export class Mp3Engine {
     const baseDelay = RETRY_DELAYS_MS[Math.min(this.retryAttempt, RETRY_DELAYS_MS.length - 1)];
     const delay = Math.round(baseDelay * (0.9 + Math.random() * 0.2));
     this.retryAttempt += 1;
-    this.cacheRetryNotBefore = performance.now() + delay;
-    this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.ensureCachePipeline(); }, delay);
+    const now = performance.now();
+    this.cacheRetryNotBefore = Math.max(this.cacheRetryNotBefore, now + delay);
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.ensureCachePipeline(); }, this.cacheRetryNotBefore - now);
   }
 
   private scheduleNetworkRecovery(trackIndex: number, position: number) {
