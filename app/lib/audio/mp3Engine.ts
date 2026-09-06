@@ -1097,7 +1097,7 @@ export class Mp3Engine {
     this.startupCompletionInProgress = false;
     const sourceVersionAtSchedule = this.sourceVersion;
     const confirmedDeadSource = this.deadNetworkSourceVersion === sourceVersionAtSchedule;
-    if (!confirmedDeadSource) this.phase = "startup-buffering";
+    if (!confirmedDeadSource && this.phase !== "starting-audible") this.phase = "startup-buffering";
     this.update({ status: "loading", currentTime: target.position, error: null });
     const generation = this.generation;
     const audio = this.audio;
