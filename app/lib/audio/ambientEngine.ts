@@ -30,6 +30,9 @@ const INITIAL_STATE: AmbientEngineState = {
 
 export class AmbientEngine {
   private audio: HTMLAudioElement | null = null;
+  private audioContext: AudioContext | null = null;
+  private gainNode: GainNode | null = null;
+  private mediaSourceNode: MediaElementAudioSourceNode | null = null;
   private audioErrorListener: (() => void) | null = null;
   private audioEndedListener: (() => void) | null = null;
   private cache = new Map<string, CachedAmbient>();
@@ -66,6 +69,8 @@ export class AmbientEngine {
     audio.preload = "auto";
     audio.loop = sourceKind === "blob";
     audio.volume = this.state.volume;
+    this.attachToAudioGraph(audio);
+    this.resumeAudioContext();
     const onError = () => {
       if (this.isPlaybackCurrent(audio, generation)) {
         this.handleError(new Error("The browser could not play this ambient track."));
@@ -98,6 +103,7 @@ export class AmbientEngine {
   setVolume = (volume: number) => {
     const nextVolume = Math.min(1, Math.max(0, volume));
     if (this.audio) this.audio.volume = nextVolume;
+    if (this.gainNode) this.gainNode.gain.value = nextVolume;
     this.update({ volume: nextVolume, currentTime: this.audio?.currentTime ?? this.state.currentTime });
   };
 
@@ -117,6 +123,10 @@ export class AmbientEngine {
     this.pendingFetches.clear();
     this.cache.forEach(({ objectUrl }) => URL.revokeObjectURL(objectUrl));
     this.cache.clear();
+    const audioContext = this.audioContext;
+    this.audioContext = null;
+    this.gainNode = null;
+    if (audioContext) void audioContext.close().catch(() => undefined);
     this.listeners.clear();
   };
 
@@ -211,6 +221,8 @@ export class AmbientEngine {
     blobAudio.preload = "auto";
     blobAudio.loop = true;
     blobAudio.volume = this.state.volume;
+    this.attachToAudioGraph(blobAudio);
+    this.resumeAudioContext();
     const onError = () => {
       if (this.isPlaybackCurrent(blobAudio, generation)) {
         this.handleError(new Error("The browser could not play this ambient track."));
@@ -243,6 +255,8 @@ export class AmbientEngine {
   private cleanupPlayback() {
     if (!this.audio) return;
     this.audio.pause();
+    this.mediaSourceNode?.disconnect();
+    this.mediaSourceNode = null;
     if (this.audioErrorListener) this.audio.removeEventListener("error", this.audioErrorListener);
     if (this.audioEndedListener) this.audio.removeEventListener("ended", this.audioEndedListener);
     this.audio.removeAttribute("src");
@@ -250,6 +264,34 @@ export class AmbientEngine {
     this.audio = null;
     this.audioErrorListener = null;
     this.audioEndedListener = null;
+  }
+
+  private attachToAudioGraph(audio: HTMLAudioElement) {
+    if (!this.audioContext) {
+      const AudioContextConstructor =
+        window.AudioContext ??
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) return;
+
+      this.audioContext = new AudioContextConstructor();
+      this.gainNode = this.audioContext.createGain();
+      this.gainNode.gain.value = this.state.volume;
+      this.gainNode.connect(this.audioContext.destination);
+    }
+
+    if (!this.gainNode) return;
+    this.mediaSourceNode = this.audioContext.createMediaElementSource(audio);
+    this.mediaSourceNode.connect(this.gainNode);
+  }
+
+  private resumeAudioContext() {
+    if (
+      this.audioContext &&
+      this.audioContext.state !== "running" &&
+      this.audioContext.state !== "closed"
+    ) {
+      void this.audioContext.resume().catch(() => undefined);
+    }
   }
 
   private update(patch: Partial<AmbientEngineState>) {
