@@ -412,7 +412,8 @@ export class Mp3Engine {
     this.lastObservedCurrentTime = this.startupPosition;
     this.lastProgressAt = performance.now();
     this.update({ status: "loading", currentTime: this.startupPosition, error: null });
-    const isRecoveryAttempt = this.recoveryAttemptSourceVersion === sourceVersion;
+    const isRecoveryAttempt = this.recoveryAttemptSourceVersion === sourceVersion
+      || this.hasCompatibleProvisionalStartupRecovery(audio, sourceVersion);
     if (isRecoveryAttempt) this.logRecovery("recovery-play-requested", { sourceVersion, phase: this.phase });
 
     try {
@@ -496,6 +497,7 @@ export class Mp3Engine {
 
     if (this.phase === "startup-buffering") {
       const startupReserve = this.startupPosition > BUFFER_RANGE_EPSILON_SECONDS ? bufferAhead : startupBufferedSeconds;
+      const hasCompatibleProvisionalRecovery = this.hasCompatibleProvisionalStartupRecovery(audio, this.sourceVersion);
       if (startupReserve >= STARTUP_BUFFER_SECONDS) {
         this.logRecovery("startup-buffer-ready", { currentTime, bufferAhead, sourceVersion: this.sourceVersion });
         this.clearNetworkRetryTimer();
@@ -504,8 +506,10 @@ export class Mp3Engine {
       }
       if (
         this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
-        && this.networkRecoveryTarget === null
-        && this.recoveryAttemptSourceVersion === null
+        && (
+          (this.networkRecoveryTarget === null && this.recoveryAttemptSourceVersion === null)
+          || hasCompatibleProvisionalRecovery
+        )
         && startupReserve > 0
         && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
       ) {
@@ -518,6 +522,12 @@ export class Mp3Engine {
         } else {
           const plateauMs = now - this.startupPlateauLastGrowthAt;
           if (!this.startupCompletionInProgress && plateauMs >= STARTUP_BUFFER_PLATEAU_MS) {
+            if (hasCompatibleProvisionalRecovery) {
+              console.info("[Mp3StartupDiagnostic] startup-provisional-recovery-accepted", {
+                ...this.getStartupDiagnosticDetails(audio),
+                recoveryTarget: this.networkRecoveryTarget,
+              });
+            }
             console.info("[Mp3StartupDiagnostic] startup-plateau-fallback", {
               ...this.getStartupDiagnosticDetails(audio),
               plateauMs,
@@ -588,6 +598,18 @@ export class Mp3Engine {
   private resetStartupPlateauObservation() {
     this.startupPlateauObservedReserve = 0;
     this.startupPlateauLastGrowthAt = null;
+  }
+
+  private hasCompatibleProvisionalStartupRecovery(audio: HTMLAudioElement, sourceVersion: number) {
+    const target = this.networkRecoveryTarget;
+    return target !== null
+      && this.isSourceCurrent(audio, sourceVersion)
+      && this.audibleSource?.kind === "network"
+      && target.trackIndex === this.audibleSource.trackIndex
+      && target.position <= BUFFER_RANGE_EPSILON_SECONDS
+      && this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
+      && this.deadNetworkSourceVersion !== sourceVersion
+      && (this.recoveryAttemptSourceVersion === null || this.recoveryAttemptSourceVersion === sourceVersion);
   }
 
   private getStartupDiagnosticDetails(audio: HTMLAudioElement, sourceVersion = this.sourceVersion) {
