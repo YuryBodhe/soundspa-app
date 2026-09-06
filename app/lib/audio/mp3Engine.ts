@@ -27,6 +27,8 @@ const HANDOFF_PROGRESS_EPSILON_SECONDS = 0.25;
 const METADATA_TIMEOUT_MS = 15_000;
 const BUFFER_SAMPLE_INTERVAL_MS = 500;
 const STARTUP_BUFFER_SECONDS = 5;
+const STARTUP_BUFFER_PLATEAU_MS = 3_000;
+const STARTUP_BUFFER_GROWTH_EPSILON_SECONDS = 0.25;
 const PROGRESSION_FREEZE_MS = 3_000;
 const PROGRESSION_EPSILON_SECONDS = 0.25;
 const BUFFER_RANGE_EPSILON_SECONDS = 0.1;
@@ -75,6 +77,8 @@ export class Mp3Engine {
   private networkPressure = false;
   private startupId = 0;
   private startupCompletionInProgress = false;
+  private startupPlateauObservedReserve = 0;
+  private startupPlateauLastGrowthAt: number | null = null;
   private cachePreparationStarted = false;
   private cacheRetryNotBefore = 0;
   private networkRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,6 +174,7 @@ export class Mp3Engine {
     if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
       this.startupId += 1;
       this.startupCompletionInProgress = false;
+      this.resetStartupPlateauObservation();
       this.phase = "startup-buffering";
       this.audio.currentTime = this.startupPosition;
     } else if (this.audibleSource?.kind === "network") {
@@ -191,6 +196,7 @@ export class Mp3Engine {
     this.cacheRequestId += 1;
     this.playRequestId += 1;
     this.startupId += 1;
+    this.resetStartupPlateauObservation();
     this.stopBufferSampler();
     this.clearHandoffTimer();
     this.clearRetryTimer();
@@ -313,6 +319,7 @@ export class Mp3Engine {
     this.startupDiagnosticLastSampleKey = null;
     this.startupDiagnosticLastSampleAt = 0;
     this.startupDiagnosticLastProgressKey = null;
+    this.resetStartupPlateauObservation();
     audio.src = url;
     this.sourceListenersCleanup = this.attachSourceListeners(audio, version);
     audio.load();
@@ -383,6 +390,7 @@ export class Mp3Engine {
     this.startupId += 1;
     this.phase = "startup-buffering";
     this.startupCompletionInProgress = false;
+    this.resetStartupPlateauObservation();
     audio.pause();
     audio.currentTime = this.startupPosition;
     audio.muted = false;
@@ -492,6 +500,32 @@ export class Mp3Engine {
         this.logRecovery("startup-buffer-ready", { currentTime, bufferAhead, sourceVersion: this.sourceVersion });
         this.clearNetworkRetryTimer();
         void this.completeStartup();
+        return;
+      }
+      if (
+        this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
+        && this.networkRecoveryTarget === null
+        && this.recoveryAttemptSourceVersion === null
+        && startupReserve > 0
+        && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+      ) {
+        if (
+          this.startupPlateauLastGrowthAt === null
+          || startupReserve >= this.startupPlateauObservedReserve + STARTUP_BUFFER_GROWTH_EPSILON_SECONDS
+        ) {
+          this.startupPlateauObservedReserve = startupReserve;
+          this.startupPlateauLastGrowthAt = now;
+        } else {
+          const plateauMs = now - this.startupPlateauLastGrowthAt;
+          if (!this.startupCompletionInProgress && plateauMs >= STARTUP_BUFFER_PLATEAU_MS) {
+            console.info("[Mp3StartupDiagnostic] startup-plateau-fallback", {
+              ...this.getStartupDiagnosticDetails(audio),
+              plateauMs,
+            });
+            this.clearNetworkRetryTimer();
+            void this.completeStartup();
+          }
+        }
       }
       return;
     }
@@ -549,6 +583,11 @@ export class Mp3Engine {
       ranges.push({ start: audio.buffered.start(index), end: audio.buffered.end(index) });
     }
     return ranges;
+  }
+
+  private resetStartupPlateauObservation() {
+    this.startupPlateauObservedReserve = 0;
+    this.startupPlateauLastGrowthAt = null;
   }
 
   private getStartupDiagnosticDetails(audio: HTMLAudioElement, sourceVersion = this.sourceVersion) {
