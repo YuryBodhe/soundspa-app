@@ -15,6 +15,13 @@
       "when": 1789216959017,
       "tag": "0001_content",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789217496138,
+      "tag": "0002_access",
+      "breakpoints": true
     }
   ]
 }

@@ -8,3 +8,5 @@ export * from "./core/relations";
 export * from "./product/channels";
 export * from "./product/channelTracks";
 export * from "./product/relations";
+export * from "./access/locationServiceAccess";
+export * from "./access/locationChannelEntitlements";
