@@ -5,3 +5,6 @@ export * from "./core/users";
 export * from "./core/organizationMembers";
 export * from "./core/locations";
 export * from "./core/relations";
+export * from "./product/channels";
+export * from "./product/channelTracks";
+export * from "./product/relations";
