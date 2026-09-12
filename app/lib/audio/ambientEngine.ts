@@ -58,6 +58,23 @@ export class AmbientEngine {
       return;
     }
 
+    const audioSession = (navigator as Navigator & {
+      audioSession?: { type: string };
+    }).audioSession;
+    if (audioSession) {
+      try {
+        audioSession.type = "playback";
+        console.info("[AmbientEngine] Audio Session", {
+          supported: true,
+          playbackSet: audioSession.type === "playback",
+        });
+      } catch (error) {
+        console.warn("[AmbientEngine] Audio Session playback could not be set", error);
+      }
+    } else {
+      console.info("[AmbientEngine] Audio Session", { supported: false });
+    }
+
     const generation = ++this.generation;
     this.cancelPendingFetchesExcept(track.id);
     this.cleanupPlayback();
