@@ -11,6 +11,9 @@
   "db:migrate": "dotenv -e .env -- drizzle-kit migrate",
   "db:push": "drizzle-kit push",
   "db:studio": "drizzle-kit studio",
+  "db:v2:generate": "drizzle-kit generate --config=drizzle.v2.config.ts",
+  "db:v2:migrate": "drizzle-kit migrate --config=drizzle.v2.config.ts",
+  "db:v2:verify": "tsx scripts/v2/verify-core.ts",
   "studio": "docker-compose exec app npx drizzle-kit studio --port 4983 --config drizzle.config.ts",
   "worker": "tsx scripts/worker.ts",
   "cleanup:logs": "tsx scripts/monitoring/cleanup-logs.ts"

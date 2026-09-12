@@ -6,6 +6,7 @@ out
 /public/noise/
 .env
 .env.*
+!.env.v2.example
 *.log
 npm-debug.log*
 yarn-debug.log*

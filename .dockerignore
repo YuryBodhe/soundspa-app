@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.v2.example
+public/music/
+public/noise/
+**/*.mp3
+postgres_data/
+mysql_data/
+redis_data/
+backups/
+*.log
+.DS_Store

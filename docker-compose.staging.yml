@@ -11,5 +11,42 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+      V2_DATABASE_URL: ${V2_DATABASE_URL:?Set V2_DATABASE_URL in the explicit V2 environment}
+    depends_on:
+      v2-postgres:
+        condition: service_healthy
     command: npm run start
     mem_limit: 1g
+
+  v2-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: soundspa_v2
+      POSTGRES_USER: soundspa_v2
+      POSTGRES_PASSWORD: ${V2_POSTGRES_PASSWORD:?Set a separate V2_POSTGRES_PASSWORD}
+    volumes:
+      - v2-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soundspa_v2 -d soundspa_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  v2-migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      target: builder
+      args:
+        DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+    environment:
+      V2_DATABASE_URL: ${V2_DATABASE_URL:?Set V2_DATABASE_URL in the explicit V2 environment}
+    command: npm run db:v2:migrate
+    depends_on:
+      v2-postgres:
+        condition: service_healthy
+
+volumes:
+  v2-pgdata:
+    name: soundspa-v2-staging-pgdata
