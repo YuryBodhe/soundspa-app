@@ -12,6 +12,9 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
       V2_DATABASE_URL: ${V2_DATABASE_URL:?Set V2_DATABASE_URL in the explicit V2 environment}
+      # Empty values fail closed for Admin only; public catalog remains available.
+      V2_ADMIN_USERNAME: ${V2_ADMIN_USERNAME:-}
+      V2_ADMIN_PASSWORD: ${V2_ADMIN_PASSWORD:-}
     depends_on:
       v2-postgres:
         condition: service_healthy
