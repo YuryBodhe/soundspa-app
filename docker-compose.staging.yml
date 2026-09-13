@@ -15,6 +15,13 @@ services:
       # Empty values fail closed for Admin only; public catalog remains available.
       V2_ADMIN_USERNAME: ${V2_ADMIN_USERNAME:-}
       V2_ADMIN_PASSWORD: ${V2_ADMIN_PASSWORD:-}
+      V2_MEDIA_ROOT: /var/lib/soundspa-v2-media
+    volumes:
+      - type: bind
+        source: /var/lib/soundspa-v2-media
+        target: /var/lib/soundspa-v2-media
+        bind:
+          create_host_path: false
     depends_on:
       v2-postgres:
         condition: service_healthy

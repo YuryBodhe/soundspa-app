@@ -25,7 +25,8 @@ async function verify() {
   const rollback = new Error("ROLLBACK_CONTENT_ADMIN_VERIFICATION"); let complete = false;
   try {
     await v2Db.transaction(async (tx) => {
-      const service = contentAdminService(tx);
+      // Phase 1 state tests use no physical files; Phase 2 verifies actual files separately.
+      const service = contentAdminService(tx, async()=>{});
       const input = { displayName: "Synthetic Content Verification", slug: `verify-${randomUUID()}`, kind: "music" as const, description: "", imageKey: "", sortOrder: 0 };
       const channel = await service.create(input); assert.equal(channel.isPublished, false);
       await assert.rejects(service.publication(channel.id, true), /Artwork image key/);

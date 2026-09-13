@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     revalidatePath("/app/admin/channels/v2");
   } catch (error) {
     if (error instanceof ZodError) message = "Invalid metadata. Check required fields, slug, image key and non-negative order.";
-    else if (error instanceof Error && error.name === "ContentValidationError") message = error.message;
+    else if (error instanceof Error && ["ContentValidationError","UploadError"].includes(error.name)) message = error.message;
     else if ((error as { cause?: { code?: string }; code?: string })?.cause?.code === "23505" || (error as { code?: string })?.code === "23505") message = "That slug already exists.";
     else { console.error("V2 Content mutation failed"); message = "Content could not be saved. No internal details are exposed."; }
   }

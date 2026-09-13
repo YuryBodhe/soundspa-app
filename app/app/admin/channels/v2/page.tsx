@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 import { resolveImageUrl } from "../../../../v2/mediaUrls";
+import { UploadControls } from "./UploadControls";
 
 export const dynamic = "force-dynamic";
 const endpoint = "/api/v2/admin/content";
@@ -14,7 +15,7 @@ function MetadataFields({ channel, locked = false }: { channel?: Metadata; locke
     {locked && <input type="hidden" name="kind" value={channel?.kind} />}
     <label>Description<textarea name="description" maxLength={2000} defaultValue={channel?.description ?? ""} /></label>
     <label>Sort order<input name="sortOrder" type="number" min={0} max={2147483647} required defaultValue={channel?.sortOrder ?? 0} /></label>
-    <label>Image key metadata<input name="imageKey" maxLength={500} defaultValue={channel?.imageKey ?? ""} placeholder="artwork/immutable-id.jpg" /></label>
+    <input type="hidden" name="imageKey" value={channel?.imageKey ?? ""} />
   </>;
 }
 
@@ -26,7 +27,7 @@ export default async function ContentAdminPage({ searchParams }: { searchParams:
   const { message } = await searchParams;
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">V2 Content — Channels</h1></div>
-    <p>Isolated V2 Content administration. This screen does not edit legacy V1 channels. Uploads are not available in Phase 1.</p>
+    <p>Isolated V2 Content administration. This screen does not edit legacy V1 channels. Artwork and MP3 uploads use external canonical storage.</p>
     {message && <p role="status">{message.slice(0,500)}</p>}
     <section className="admin-card"><h2 className="admin-card-title">Create draft channel</h2>
       <form action={endpoint} method="post" className="admin-form"><input type="hidden" name="operation" value="create" /><MetadataFields /><button className="btn btn-primary">Create draft</button></form>
@@ -42,8 +43,9 @@ export default async function ContentAdminPage({ searchParams }: { searchParams:
       </form>
       {channel.tracks.length > 0 && <p className="text-dim">Slug and kind are locked because track records exist.</p>}
       <h3>Artwork</h3>{channel.imageKey && <img src={resolveImageUrl(channel.imageKey)!} alt={`${channel.displayName} artwork`} width={120} height={120} style={{objectFit:"cover"}} />}
-      <p>Artwork upload will be added in Phase 2. Image keys are metadata only; physical file existence is not verified here.</p>
-      <h3>Tracks</h3>{!channel.tracks.length && <p>No tracks. MP3 upload will be added in Phase 2.</p>}
+      {!channel.archivedAt && <UploadControls channelId={channel.id} kind="artwork" />}
+      <h3>Tracks</h3>{!channel.tracks.length && <p>No tracks uploaded.</p>}
+      {!channel.archivedAt && <UploadControls channelId={channel.id} kind="track" />}
       {channel.tracks.map((track) => <form action={endpoint} method="post" key={track.id} className="admin-form">
         <input type="hidden" name="operation" value="track" /><input type="hidden" name="channelId" value={channel.id} /><input type="hidden" name="trackId" value={track.id} />
         <fieldset disabled={!!channel.archivedAt}><strong>{track.originalFilename}</strong><p className="text-dim">{track.storageKey} · {track.sizeBytes.toString()} bytes</p>

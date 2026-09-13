@@ -18,7 +18,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 # Устанавливаем системную библиотеку для Next.js
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat ffmpeg
 
 # Копируем всё необходимое из билдера
 COPY --from=builder /app/node_modules ./node_modules

@@ -13,8 +13,8 @@ export function resolveMediaUrl(kind: "music" | "ambient", storageKey: string): 
   if (kind === "music" && segments[0] === "music" && segments.length === 3) {
     return "/" + segments.map(encodeURIComponent).join("/");
   }
-  if (kind === "ambient" && segments[0] === "ambient" && segments.length === 2) {
-    return "/noise/" + encodeURIComponent(segments[1]);
+  if (kind === "ambient" && segments[0] === "ambient" && segments.length >= 2) {
+    return "/noise/" + segments.slice(1).map(encodeURIComponent).join("/");
   }
   throw new Error("Unsupported media delivery mapping");
 }

@@ -3,6 +3,9 @@ import { randomBytes } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer, createConnection } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { mkdtemp,rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { operatorAuthStatus, isSameOriginMutation } from "../../lib/v2/adminOperator";
 
 // Explicit staging verification only. Secrets stay in process memory, never logs/files.
@@ -31,6 +34,7 @@ async function main() {
   const tunnel = spawn("ssh", [...sshOptions, "-o", "ExitOnForwardFailure=yes", "-N", "-L", `127.0.0.1:${dbPort}:${ip}:5432`, "Soundspa-Moscow"], {stdio:["ignore","ignore","pipe"]});
   let tunnelError = ""; tunnel.stderr.on("data", (value) => { tunnelError += value.toString(); });
   let app: ReturnType<typeof spawn> | undefined;
+  const uploadRoot=process.argv.includes("--uploads")?await mkdtemp(join(tmpdir(),"soundspa-upload-root-")):undefined;
   try {
     phase = "SSH tunnel readiness";
     let ready = false;
@@ -46,7 +50,7 @@ async function main() {
     assert(ready, "SSH tunnel did not open");
     phase = "local HTTP server";
     app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-H", "127.0.0.1", "-p", String(appPort)], {
-      env:{...process.env, DATABASE_URL:"postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL:database.toString()}, stdio:"ignore",
+      env:{...process.env, DATABASE_URL:"postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL:database.toString(),...(uploadRoot?{V2_MEDIA_ROOT:uploadRoot}:{})}, stdio:"ignore",
     });
     const origin = `http://127.0.0.1:${appPort}`;
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -72,9 +76,16 @@ async function main() {
     const publicPage = await fetch(`${origin}/v2`); assert.equal(publicPage.status, 200);
     const publicHtml = await publicPage.text(); assert(publicHtml.includes('data-catalog-source="v2-db"'));
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(publicHtml.includes(title));
+    if(uploadRoot){
+      phase="synthetic upload verification";
+      process.env.V2_DATABASE_URL=database.toString();process.env.V2_MEDIA_ROOT=uploadRoot;
+      const {verifyContentUploads}=await import("./verify-content-uploads");
+      await verifyContentUploads(origin,authorization);
+    }
     console.info("PASS: missing config fail-closed, Basic auth, unauthorized page/mutation 401, authorized six-channel Admin 200, cross-origin mutation 403, explicit validation feedback, public six-card DB catalog 200. Local test app/tunnel only; staging runtime unchanged.");
   } finally {
     app?.kill(); tunnel.kill();
+    if(uploadRoot)await rm(uploadRoot,{recursive:true,force:true});
   }
 }
 main().catch(() => { console.error(`Content Admin HTTP verification failed at ${phase}; no secrets emitted.`); process.exitCode = 1; });

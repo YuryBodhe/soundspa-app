@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { v2Db } from "../client";
 import { channels, channelTracks } from "../schema";
+import { validateChannelReferences } from "../../../lib/v2/mediaStorage";
 
 export class ContentValidationError extends Error {
   constructor(message: string) { super(message); this.name = "ContentValidationError"; }
@@ -21,7 +22,7 @@ type ContentConnection = Pick<typeof v2Db, "select" | "insert" | "update" | "exe
 
 // Trusted server service. HTTP callers must authorize before invoking it.
 // Injecting the transaction allows verification to roll back all synthetic data.
-export function contentAdminService(tx: ContentConnection) {
+export function contentAdminService(tx: ContentConnection, validateReferences = validateChannelReferences) {
   const lockChannel = async (id: string) => {
     if (!z.string().uuid().safeParse(id).success) throw new ContentValidationError("Invalid channel ID.");
     await tx.execute(sql`SELECT id FROM channels WHERE id = ${id}::uuid FOR UPDATE`);
@@ -53,7 +54,9 @@ export function contentAdminService(tx: ContentConnection) {
       if (published) {
         editable(channel);
         if (!channel.imageKey?.trim()) throw new ContentValidationError("Artwork image key is required before publishing.");
-        if (!(await tracksFor(id)).some((track) => track.isEnabled)) throw new ContentValidationError("At least one enabled track is required before publishing.");
+        const tracks = await tracksFor(id);
+        if (!tracks.some((track) => track.isEnabled)) throw new ContentValidationError("At least one enabled track is required before publishing.");
+        await validateReferences(channel,tracks);
       }
       await tx.update(channels).set({ isPublished: published, updatedAt: new Date() }).where(eq(channels.id, id));
     },
