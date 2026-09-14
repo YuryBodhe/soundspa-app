@@ -22,7 +22,10 @@ export async function POST(request: Request) {
   let message = "Saved.";
   try {
     const { mutateContentAdmin, ContentValidationError } = await import("../../../../../db/v2/services/contentAdmin");
-    await mutateContentAdmin(async (service) => {
+    if(get("operation")==="delete-track"){
+      const {deleteContentTrack}=await import("../../../../../db/v2/services/contentDelete");
+      message=await deleteContentTrack(get("trackId"));
+    }else await mutateContentAdmin(async (service) => {
       switch (get("operation")) {
         case "create": case "edit": {
           const input = { displayName: get("displayName"), slug: get("slug"), kind: get("kind") as "music" | "ambient", description: get("description"), imageKey: get("imageKey"), sortOrder: Number(get("sortOrder")) };
@@ -38,7 +41,9 @@ export async function POST(request: Request) {
         default: throw new ContentValidationError("Unknown operation.");
       }
     });
-    revalidatePath("/app/admin/channels/v2");
+    if(get("operation")==="delete-track"){
+      try {revalidatePath("/app/admin/channels/v2");}catch{console.error("[V2Content] admin-refresh-required");}
+    }else revalidatePath("/app/admin/channels/v2");
   } catch (error) {
     if (error instanceof ZodError) message = "Invalid metadata. Check required fields, slug, image key and non-negative order.";
     else if (error instanceof Error && ["ContentValidationError","UploadError"].includes(error.name)) message = error.message;

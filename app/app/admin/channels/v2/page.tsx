@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 import { resolveImageUrl } from "../../../../v2/mediaUrls";
 import { UploadControls } from "./UploadControls";
+import { DeleteTrackControl } from "./DeleteTrackControl";
 
 export const dynamic = "force-dynamic";
 const endpoint = "/api/v2/admin/content";
@@ -46,12 +47,12 @@ export default async function ContentAdminPage({ searchParams }: { searchParams:
       {!channel.archivedAt && <UploadControls channelId={channel.id} kind="artwork" />}
       <h3>Tracks</h3>{!channel.tracks.length && <p>No tracks uploaded.</p>}
       {!channel.archivedAt && <UploadControls channelId={channel.id} kind="track" />}
-      {channel.tracks.map((track) => <form action={endpoint} method="post" key={track.id} className="admin-form">
+      {channel.tracks.map((track) => <div key={track.id}><form action={endpoint} method="post" className="admin-form">
         <input type="hidden" name="operation" value="track" /><input type="hidden" name="channelId" value={channel.id} /><input type="hidden" name="trackId" value={track.id} />
         <fieldset disabled={!!channel.archivedAt}><strong>{track.originalFilename}</strong><p className="text-dim">{track.storageKey} · {track.sizeBytes.toString()} bytes</p>
         <label>Order<input name="sortOrder" type="number" required min={0} max={2147483647} defaultValue={track.sortOrder} /></label>
         <label>State<select name="enabled" defaultValue={String(track.isEnabled)}><option value="true">Enabled</option><option value="false">Disabled</option></select></label><button className="btn btn-sm">Save track</button></fieldset>
-      </form>)}
+      </form><DeleteTrackControl trackId={track.id} filename={track.originalFilename} /></div>)}
       <h3>Publish state</h3><p>{channel.archivedAt ? "Archived" : channel.isPublished ? "Published" : "Draft"}</p>
       {!channel.archivedAt && <><form action={endpoint} method="post" className="inline-form"><input type="hidden" name="channelId" value={channel.id} /><button className="btn" name="operation" value={channel.isPublished ? "unpublish" : "publish"}>{channel.isPublished ? "Unpublish" : "Publish"}</button></form>
       <details><summary>Archive channel</summary><p>Archive removes this channel from future catalogs. No DB rows or media files are deleted. There is no restore action in Phase 1.</p><form action={endpoint} method="post"><input type="hidden" name="channelId" value={channel.id} /><button className="btn" name="operation" value="archive">Confirm archive</button></form></details></>}

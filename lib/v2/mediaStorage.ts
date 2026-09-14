@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { createWriteStream } from "node:fs";
-import { appendFile, chmod, link, mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { appendFile, chmod, link, mkdir, mkdtemp, realpath, rm, stat, lstat, unlink } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
@@ -99,11 +99,36 @@ export async function publishImmutable(root: string, source: string, key: string
   // publication here, so the caller can always account for the canonical file.
 }
 
-export async function recordOrphan(root: string, key: string, channelId: string) {
+export async function recordOrphan(root: string, key: string, channelId: string, reason = "DB outcome failed or ambiguous; reconcile before deletion") {
   try {
     const directory = await safeDirectory(root,".uploads",700);
-    await appendFile(join(directory,"orphans.ndjson"), JSON.stringify({key,channelId,at:new Date().toISOString(),reason:"DB outcome failed or ambiguous; reconcile before deletion"})+"\n", {mode:0o600});
+    await appendFile(join(directory,"orphans.ndjson"), JSON.stringify({key,channelId,at:new Date().toISOString(),reason})+"\n", {mode:0o600});
   } finally { console.error("[V2Upload] orphan-review-required", {key,channelId}); }
+}
+
+// Only DB-derived music/ambient keys may be passed here. Never follow symlinks.
+export async function inspectOwnedTrackFile(root: string, key: string) {
+  if (!/^(music|ambient)\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.mp3$/.test(key) || key.split("/").some(part => !part || part === "." || part === "..")) throw new UploadError("Unsafe track storage key; deletion rejected.");
+  resolveMediaUrl(key.startsWith("music/") ? "music" : "ambient",key);
+  const canonicalRoot = await realpath(root);
+  const file = resolve(canonicalRoot,key);
+  if (!file.startsWith(canonicalRoot+sep)) throw new UploadError("Unsafe media path.");
+  let parent=dirname(file);
+  while(parent!==canonicalRoot){
+    try {if(await realpath(parent)!==parent) throw new UploadError("Symlink media paths cannot be deleted.");break;}
+    catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;parent=dirname(parent);}
+  }
+  try {
+    const info=await lstat(file);
+    if(!info.isFile() || await realpath(file)!==file) throw new UploadError("Only owned regular track files can be deleted.");
+    return {file,missing:false};
+  } catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {file,missing:true};throw error;}
+}
+export async function removeOwnedTrackFile(root:string,key:string) {
+  const target=await inspectOwnedTrackFile(root,key);
+  if(target.missing)return "already-missing" as const;
+  try {await unlink(target.file);return "removed" as const;}
+  catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return "already-missing" as const;throw error;}
 }
 
 async function existingFile(root: string, key: string) {
