@@ -81,6 +81,7 @@ export class Mp3Engine {
   private startupCompletionInProgress = false;
   private startupPlateauObservedReserve = 0;
   private startupPlateauLastGrowthAt: number | null = null;
+  private emptyRangesEligibility: { audio: HTMLAudioElement; generation: number; sourceVersion: number; startupId: number; since: number } | null = null;
   private cachePreparationStarted = false;
   private cacheRetryNotBefore = 0;
   private networkRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -184,6 +185,7 @@ export class Mp3Engine {
   };
 
   pause = () => {
+    this.emptyRangesEligibility = null;
     this.captureDiagnostic("explicit-pause");
     this.saveResume(true);
     this.wantsPlayback = false;
@@ -212,6 +214,7 @@ export class Mp3Engine {
   };
 
   dispose = () => {
+    this.emptyRangesEligibility = null;
     if (this.disposed) return;
     this.captureDiagnostic("engine-dispose");
     this.saveResume(true);
@@ -431,8 +434,10 @@ export class Mp3Engine {
 
   private attachSourceListeners(audio: HTMLAudioElement, version: number) {
     const guarded = (callback: () => void) => () => { if (this.isSourceCurrent(audio, version)) callback(); };
-    const onEnded = guarded(() => { this.captureDiagnostic("media-ended", {}, audio, version); void this.handleEnded(); });
-    const onError = guarded(() => { this.captureDiagnostic("media-error", {}, audio, version); void this.handleAudioError(); });
+    const onEnded = guarded(() => { this.emptyRangesEligibility = null; this.captureDiagnostic("media-ended", {}, audio, version); void this.handleEnded(); });
+    const onError = guarded(() => { this.emptyRangesEligibility = null; this.captureDiagnostic("media-error", {}, audio, version); void this.handleAudioError(); });
+    const onSeeking = guarded(() => { this.emptyRangesEligibility = null; });
+    audio.addEventListener("seeking", onSeeking);
     const onPlaying = guarded(() => {
       this.logStartupMediaEvent("playing", audio, version);
       this.handlePlaybackProgress();
@@ -483,6 +488,7 @@ export class Mp3Engine {
     };
     if (musicDiagnosticsEnabled()) diagnosticEvents.forEach(event => audio.addEventListener(event, onDiagnosticEvent));
     return () => {
+      audio.removeEventListener("seeking", onSeeking);
       diagnosticEvents.forEach(event => audio.removeEventListener(event, onDiagnosticEvent));
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
@@ -517,6 +523,7 @@ export class Mp3Engine {
   private completeStartup = async () => {
     const audio = this.audio;
     if (!audio || this.audibleSource?.kind !== "network" || this.startupCompletionInProgress) return;
+    this.emptyRangesEligibility = null;
     const generation = this.generation;
     const sourceVersion = this.sourceVersion;
     const startupId = this.startupId;
@@ -667,6 +674,28 @@ export class Mp3Engine {
           }
         }
       }
+      const emptyRangesEligible = this.isSourceCurrent(audio, this.sourceVersion)
+        && !this.sourceHasProgressed && this.deadNetworkSourceVersion !== this.sourceVersion
+        && !audio.seeking && audio.paused && !audio.ended && !audio.error
+        && audio.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA
+        && audio.buffered.length === 0 && !this.startupCompletionInProgress
+        && Math.abs(audio.currentTime - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS
+        && ((this.networkRecoveryTarget === null && this.recoveryAttemptSourceVersion === null) || hasCompatibleProvisionalRecovery);
+      if (!emptyRangesEligible) this.emptyRangesEligibility = null;
+      else {
+        const eligibility = this.emptyRangesEligibility;
+        if (!eligibility || eligibility.audio !== audio || eligibility.generation !== this.generation
+          || eligibility.sourceVersion !== this.sourceVersion || eligibility.startupId !== this.startupId) {
+          this.emptyRangesEligibility = { audio, generation: this.generation, sourceVersion: this.sourceVersion, startupId: this.startupId, since: now };
+        } else if (now - eligibility.since >= STARTUP_BUFFER_PLATEAU_MS) {
+          // Test this browser-reported usable source through the one existing startup path.
+          this.setNetworkRecoveryTarget(this.audibleSource.trackIndex, this.startupPosition);
+          this.clearNetworkRetryTimer();
+          this.emptyRangesEligibility = null;
+          this.captureDiagnostic("empty-ranges-provisional-start", { eligibleMs: now - eligibility.since, startupReserve, readyState: audio.readyState });
+          void this.completeStartup();
+        }
+      }
       return;
     }
 
@@ -726,6 +755,7 @@ export class Mp3Engine {
   }
 
   private resetStartupPlateauObservation() {
+    this.emptyRangesEligibility = null;
     this.startupPlateauObservedReserve = 0;
     this.startupPlateauLastGrowthAt = null;
   }
@@ -1551,6 +1581,19 @@ export class Mp3Engine {
     this.diagnosticSampleAt = performance.now();
     this.captureDiagnostic("sample");
   }
+  private getStartupDiagnosticGate(audio: HTMLAudioElement | null) {
+    if (this.phase !== "startup-buffering" || !audio) return null;
+    if (!this.wantsPlayback) return "playback-not-wanted";
+    if (this.pendingSeekSourceVersion === this.sourceVersion) return "pending-seek";
+    if (audio.seeking) return "seeking";
+    if (this.deadNetworkSourceVersion === this.sourceVersion) return "confirmed-dead";
+    if (audio.error) return "media-error";
+    if (this.startupCompletionInProgress) return "startup-in-progress";
+    if (Math.abs(audio.currentTime - this.startupPosition) > BUFFER_RANGE_EPSILON_SECONDS) return "position-mismatch";
+    if (this.networkRecoveryTarget && !this.hasCompatibleProvisionalStartupRecovery(audio, this.sourceVersion)) return "incompatible-recovery";
+    if (audio.buffered.length === 0) return audio.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA ? "empty-ranges-grace" : "empty-ranges-not-ready";
+    return "measurable-reserve";
+  }
   private captureDiagnostic(event: string, eventDetails: Record<string, unknown> = {}, audio = this.audio, expectedSourceVersion = this.sourceVersion) {
     if (!musicDiagnosticsEnabled()) return;
     try {
@@ -1568,6 +1611,7 @@ export class Mp3Engine {
         bufferedRanges: audio ? this.getBufferedRanges(audio) : [], bufferAhead: audio ? this.getBufferAhead(audio) : 0,
         startupBufferedSeconds: audio ? this.getStartupBufferedSeconds(audio) : 0, hasBufferSampler: this.bufferSampleTimer !== null,
         phase: this.phase, status: this.state.status, sourceHasProgressed: this.sourceHasProgressed, wantsPlayback: this.wantsPlayback,
+        startupGate: this.getStartupDiagnosticGate(audio), emptyRangesEligibleSince: this.emptyRangesEligibility?.since ?? null,
         pendingSeekSourceVersion: this.pendingSeekSourceVersion, startupId: this.startupId, playRequestId: this.playRequestId,
         startupCompletionInProgress: this.startupCompletionInProgress, recoveryTarget: this.networkRecoveryTarget ? { ...this.networkRecoveryTarget } : null,
         startupPlateauLastGrowthAt: this.startupPlateauLastGrowthAt, startupPlateauObservedReserve: this.startupPlateauObservedReserve, hasHandoffTimer: this.handoffTimer !== null,
