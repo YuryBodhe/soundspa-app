@@ -19,6 +19,7 @@ export function UploadControls({channelId,kind}:{channelId:string;kind:"track"|"
             request.open("POST",`/api/v2/admin/content/upload?channelId=${encodeURIComponent(channelId)}&kind=${kind}`);
             request.setRequestHeader("Content-Type","application/octet-stream");
             request.setRequestHeader("X-Upload-Filename",encodeURIComponent(item.file.name));
+            request.setRequestHeader("X-Upload-Size",String(item.file.size));
             request.timeout=20*60*1000;
             request.upload.onprogress=(event)=>{if(event.lengthComputable)update(index,{progress:Math.round(100*event.loaded/event.total)});};
             request.onload=()=>{if(request.status===201)resolve();else {let message="Upload failed.";try{message=JSON.parse(request.responseText).error??message;}catch{}reject(new Error(message));}};

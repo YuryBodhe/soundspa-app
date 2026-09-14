@@ -16,7 +16,7 @@ import { resolveMediaUrl } from "../../app/v2/mediaUrls";
 
 // Explicit synthetic verification only. Exact UUIDs/keys are tracked for cleanup;
 // existing channel records and canonical media are never modified.
-export async function verifyContentUploads(origin: string, authorization: string, deliveryOrigin?: string) {
+export async function verifyContentUploads(origin: string, authorization: string, deliveryOrigin?: string, expectedCounts = {channels:6,tracks:8}, largeFixture?: string) {
   const target = (await v2Db.execute(sql`SELECT current_database() AS database,current_user AS "user"`)).rows[0];
   assert.deepEqual(target,{database:"soundspa_v2",user:"soundspa_v2"});
   const snapshot = async()=>(await v2Db.execute(sql`SELECT
@@ -28,15 +28,15 @@ export async function verifyContentUploads(origin: string, authorization: string
     (SELECT md5(string_agg(row_to_json(c)::text,',' ORDER BY id)) FROM channels c) AS channel_fingerprint,
     (SELECT md5(string_agg(row_to_json(t)::text,',' ORDER BY id)) FROM channel_tracks t) AS track_fingerprint`)).rows[0];
   const before=await snapshot();
-  assert.equal(before.channels,6);assert.equal(before.tracks,8);assert.equal(before.migrations,3);assert.equal(before.service,0);assert.equal(before.entitlements,0);
+  assert.equal(before.channels,expectedCounts.channels);assert.equal(before.tracks,expectedCounts.tracks);assert.equal(before.migrations,3);assert.equal(before.service,0);assert.equal(before.entitlements,0);
   const root=await mediaRoot();const fixtures=await mkdtemp(join(tmpdir(),"soundspa-upload-test-"));
   const ids:string[]=[];const keys:string[]=[];const directories:string[]=[];
   let phase="fixtures";
   const upload=async(id:string,kind:"track"|"artwork",data:Buffer,filename:string)=>{
     const response=await fetch(`${origin}/api/v2/admin/content/upload?channelId=${id}&kind=${kind}`,{
-      method:"POST",headers:{Authorization:authorization,Origin:origin,"Content-Type":"application/octet-stream","X-Upload-Filename":encodeURIComponent(filename)},body:new Uint8Array(data),
+      method:"POST",headers:{Authorization:authorization,Origin:origin,"Content-Type":"application/octet-stream","X-Upload-Filename":encodeURIComponent(filename),"X-Upload-Size":String(data.length)},body:new Uint8Array(data),
     });
-    const result=await response.json() as {key?:string;trackId?:string;error?:string};
+    const result=await response.json() as {key?:string;trackId?:string;error?:string;integrity?:{expectedSize:number;receivedSize:number;tempSize:number;storedSize:number;sourceSha256:string}};
     if(result.key)keys.push(result.key);
     return {response,result};
   };
@@ -44,7 +44,7 @@ export async function verifyContentUploads(origin: string, authorization: string
   const privateBefore=await privateEntries();
   try {
     await promisify(execFile)("ffmpeg",["-v","error","-f","lavfi","-i","sine=frequency=440:duration=1","-codec:a","libmp3lame","-b:a","128k",join(fixtures,"test.mp3")]);
-    const audio=await readFile(join(fixtures,"test.mp3"));
+    const audio=await readFile(largeFixture ?? join(fixtures,"test.mp3"));
     const artwork=await sharp({create:{width:128,height:128,channels:3,background:"#69786a"}}).png().toBuffer();
     phase="authorization";
     assert.equal((await fetch(`${origin}/api/v2/admin/content/upload`,{method:"POST",headers:{Origin:origin}})).status,401);
@@ -53,10 +53,17 @@ export async function verifyContentUploads(origin: string, authorization: string
       const slug=`verify-upload-${randomUUID()}`;
       const [channel]=await v2Db.insert(channels).values({slug,displayName:"Synthetic upload verification",kind,isPublished:false}).returning();
       ids.push(channel.id);directories.push(join(root,kind,slug));
+      console.info("TEST channel", {id:channel.id,slug,kind});
+      if(largeFixture){
+        const truncated=await fetch(`${origin}/api/v2/admin/content/upload?channelId=${channel.id}&kind=track`,{method:"POST",headers:{Authorization:authorization,Origin:origin,"Content-Type":"application/octet-stream","X-Upload-Filename":"truncated-test.mp3","X-Upload-Size":String(audio.length)},body:new Uint8Array(audio.subarray(0,10_485_220))});
+        assert.equal(truncated.status,400); // Actual Content-Length conflicts with expected source size.
+        assert.equal((await v2Db.select().from(channelTracks).where(eq(channelTracks.channelId,channel.id))).length,0);
+        assert.deepEqual(await privateEntries(),privateBefore);
+      }
       phase=`${kind} invalid uploads`;
       assert.equal((await upload(channel.id,"track",Buffer.from("not MP3"),"fake.mp3")).response.status,422);
       assert.equal((await upload(channel.id,"artwork",Buffer.from("<svg/>"),"fake.png")).response.status,422);
-      assert.equal((await upload(channel.id,"track",Buffer.alloc(0),"empty.mp3")).response.status,422);
+      assert.equal((await upload(channel.id,"track",Buffer.alloc(0),"empty.mp3")).response.status,400);
       await assert.rejects(v2Db.transaction((tx)=>contentAdminService(tx).publication(channel.id,true)),/Artwork image key/);
       phase=`${kind} valid artwork/replacement`;
       const first=await upload(channel.id,"artwork",artwork,"test artwork.png");assert.equal(first.response.status,201,first.result.error);assert(first.result.key);
@@ -66,6 +73,8 @@ export async function verifyContentUploads(origin: string, authorization: string
       assert((await stat(join(root,first.result.key))).size>0,"Old artwork must be retained");
       phase=`${kind} MP3 and track order`;
       const a=await upload(channel.id,"track",audio,"Original Mix 01.mp3");assert.equal(a.response.status,201,a.result.error);assert(a.result.key);assert(a.result.trackId);
+      assert.deepEqual(a.result.integrity,{expectedSize:audio.length,receivedSize:audio.length,tempSize:audio.length,storedSize:audio.length,sourceSha256:createHash("sha256").update(audio).digest("hex")});
+      console.info("TEST full-size upload",{channelId:channel.id,trackId:a.result.trackId,key:a.result.key,integrity:a.result.integrity});
       const b=await upload(channel.id,"track",audio,"Original Mix 02.mp3");assert.equal(b.response.status,201,b.result.error);assert(b.result.key);assert.notEqual(a.result.key,b.result.key);
       const tracks=await v2Db.select().from(channelTracks).where(eq(channelTracks.channelId,channel.id));
       assert.equal(tracks.length,2);assert.deepEqual(tracks.map((track)=>track.sortOrder).sort(),[0,1]);
@@ -73,7 +82,7 @@ export async function verifyContentUploads(origin: string, authorization: string
       assert.equal(tracks.find((track)=>track.id===a.result.trackId)?.sizeBytes,BigInt(audio.length));
       assert(a.result.key.startsWith(`${kind}/${slug}/`));
       phase=`${kind} atomic no-overwrite`;
-      const received=await receiveUpload(new Request("http://test.invalid",{method:"POST",body:new Uint8Array(audio)}),"track");
+      const received=await receiveUpload(new Request("http://test.invalid",{method:"POST",headers:{"X-Upload-Size":String(audio.length)},body:new Uint8Array(audio)}),"track");
       try{await assert.rejects(publishImmutable(root,received.file,a.result.key),(error:unknown)=>error instanceof Error&&"code"in error&&error.code==="EEXIST");}finally{await received.cleanup();}
       assert.equal(createHash("sha256").update(await readFile(join(root,a.result.key))).digest("hex"),createHash("sha256").update(audio).digest("hex"));
       phase=`${kind} physical publish validation`;
@@ -84,7 +93,7 @@ export async function verifyContentUploads(origin: string, authorization: string
         // Deliberate DB failure is exercised only with disposable LOCAL storage.
         // NULL filename violates the existing DB constraint after file creation.
         phase="DB partial failure/orphan reporting";
-        const pending=await receiveUpload(new Request("http://test.invalid",{method:"POST",body:new Uint8Array(audio)}),"track");
+        const pending=await receiveUpload(new Request("http://test.invalid",{method:"POST",headers:{"X-Upload-Size":String(audio.length)},body:new Uint8Array(audio)}),"track");
         try{
           await assert.rejects(attachContentUpload(channel.id,"track",pending,null as unknown as string),/orphan review/);
           const entries=(await readFile(join(root,".uploads","orphans.ndjson"),"utf8")).trim().split("\n").map((line)=>JSON.parse(line) as {key:string;channelId:string});
@@ -104,10 +113,10 @@ export async function verifyContentUploads(origin: string, authorization: string
     }
     phase="size/abort/missing-file cleanup";
     const stream=new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(1024*1024));}});
-    const request=new Request("http://test.invalid",{method:"POST",body:stream,duplex:"half"} as RequestInit&{duplex:string});
+    const request=new Request("http://test.invalid",{method:"POST",headers:{"X-Upload-Size":String(ARTWORK_LIMIT+1)},body:stream,duplex:"half"} as RequestInit&{duplex:string});
     await assert.rejects(receiveUpload(request,"artwork"),(error:unknown)=>error instanceof Error&&"status"in error&&error.status===413);
     const aborted=new AbortController();aborted.abort();
-    await assert.rejects(receiveUpload(new Request("http://test.invalid",{method:"POST",body:new Uint8Array(artwork),signal:aborted.signal}),"artwork"));
+    await assert.rejects(receiveUpload(new Request("http://test.invalid",{method:"POST",headers:{"X-Upload-Size":String(artwork.length)},body:new Uint8Array(artwork),signal:aborted.signal}),"artwork"));
     assert(ARTWORK_LIMIT===10*1024*1024);assert.deepEqual(await privateEntries(),privateBefore);
     await v2Db.transaction(async(tx)=>{
       const channel=(await tx.select().from(channels).where(eq(channels.id,ids[0])))[0];
@@ -123,7 +132,7 @@ export async function verifyContentUploads(origin: string, authorization: string
     for(const directory of directories){try{await rmdir(directory);}catch(error){if(!(error instanceof Error&&"code"in error&&error.code==="ENOENT"))throw error;}}
     await rm(fixtures,{recursive:true,force:true});
     assert.deepEqual(await snapshot(),before);assert.deepEqual(await privateEntries(),privateBefore);
-    console.info("PASS: exact synthetic UUID/file cleanup; seeded fingerprints unchanged, 6 Channels / 8 Tracks, migrations 3, Access 0/0.");
+    console.info("PASS: exact synthetic UUID/file cleanup; catalog fingerprints unchanged.",{before,after:await snapshot(),keys,ids});
     await v2Pool.end();
   }
 }

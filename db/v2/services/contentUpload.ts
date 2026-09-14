@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { v2Db } from "../client";
@@ -15,6 +17,8 @@ export async function attachContentUpload(channelId: string, kind: "track"|"artw
       if (!channel || channel.archivedAt) throw new UploadError("Channel is missing or archived.",409);
       const key = kind === "artwork" ? `artwork/${randomUUID()}.jpg` : `${channel.kind}/${channel.slug}/${randomUUID()}.mp3`;
       await publishImmutable(upload.root,upload.file,key); createdKey = key;
+      const canonicalSize = (await stat(join(upload.root,key))).size;
+      if (canonicalSize !== upload.size) throw new UploadError("Canonical upload size mismatch.");
       if (kind === "artwork") {
         await tx.update(channels).set({imageKey:key,updatedAt:new Date()}).where(eq(channels.id,channelId));
         return {key};
@@ -22,7 +26,8 @@ export async function attachContentUpload(channelId: string, kind: "track"|"artw
       const tracks = await tx.select({sortOrder:channelTracks.sortOrder}).from(channelTracks).where(eq(channelTracks.channelId,channelId));
       const sortOrder = tracks.reduce((maximum,track)=>Math.max(maximum,track.sortOrder),-1)+1;
       if (sortOrder > 2147483647) throw new UploadError("Track order limit reached.");
-      const [track] = await tx.insert(channelTracks).values({channelId,storageKey:key,originalFilename,sizeBytes:BigInt(upload.size),sortOrder,isEnabled:true}).returning({id:channelTracks.id});
+      const [track] = await tx.insert(channelTracks).values({channelId,storageKey:key,originalFilename,sizeBytes:BigInt(canonicalSize),sortOrder,isEnabled:true}).returning({id:channelTracks.id,sizeBytes:channelTracks.sizeBytes});
+      if (track.sizeBytes !== BigInt(canonicalSize)) throw new UploadError("Stored track size mismatch.");
       return {key,trackId:track.id};
     });
   } catch(error) {

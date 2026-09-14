@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const result = await attachContentUpload(channelId,kind,upload,filename);
     // A UI invalidation failure must not misreport a committed upload as failed.
     try { revalidatePath("/app/admin/channels/v2"); } catch { console.error("[V2Upload] admin-refresh-required"); }
-    return Response.json({ok:true,...result},{status:201,headers:{"Cache-Control":"no-store"}});
+    return Response.json({ok:true,...result,integrity:{expectedSize:upload.expectedSize,receivedSize:upload.receivedSize,tempSize:upload.tempSize,storedSize:upload.size,sourceSha256:upload.sha256}},{status:201,headers:{"Cache-Control":"no-store"}});
   } catch(error) {
     if (error instanceof UploadError) return Response.json({error:error.message},{status:error.status});
     if (request.signal.aborted || (error instanceof Error && ["AbortError","TimeoutError"].includes(error.name))) return Response.json({error:"Upload interrupted or timed out."},{status:408});

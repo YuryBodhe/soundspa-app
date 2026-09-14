@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { createWriteStream } from "node:fs";
 import { appendFile, chmod, link, mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
@@ -36,11 +37,18 @@ export async function receiveUpload(request: Request, kind: "track" | "artwork")
     if (!request.body) throw new UploadError("Empty upload.");
     const limit = kind === "track" ? MP3_LIMIT : ARTWORK_LIMIT;
     const declared = request.headers.get("content-length");
+    const expectedHeader = request.headers.get("x-upload-size");
+    if (!expectedHeader || !/^[1-9]\d*$/.test(expectedHeader) || !Number.isSafeInteger(Number(expectedHeader))) throw new UploadError("Expected file size is required.",400);
+    const expectedSize = Number(expectedHeader);
+    if (expectedSize > limit) throw new UploadError("Upload exceeds the size limit.",413);
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > limit)) throw new UploadError("Upload exceeds the size limit.", 413);
+    if (declared && Number(declared) !== expectedSize) throw new UploadError("Declared upload size does not match the selected file.",400);
+    const hash = createHash("sha256");
     let size = 0;
     const meter = new Transform({transform(chunk, _encoding, callback) {
       size += chunk.length;
-      callback(size > limit ? new UploadError("Upload exceeds the size limit.", 413) : null, chunk);
+      hash.update(chunk);
+      callback(size > expectedSize ? new UploadError("Upload exceeds the expected file size.", 422) : null, chunk);
     }});
     const controller = new AbortController();
     const onAbort = ()=>controller.abort();
@@ -52,6 +60,9 @@ export async function receiveUpload(request: Request, kind: "track" | "artwork")
         createWriteStream(raw, {flags:"wx", mode:0o600}), {signal:controller.signal});
     } finally { clearTimeout(timeout); request.signal.removeEventListener("abort",onAbort); }
     if (!size) throw new UploadError("Empty upload.");
+    const tempSize = (await stat(raw)).size;
+    if (size !== expectedSize || tempSize !== expectedSize) throw new UploadError("Incomplete upload: received bytes do not match the selected file.");
+    const sha256 = hash.digest("hex");
     if (kind === "track") {
       try {
         const {stdout} = await execute("ffprobe", ["-v","error","-protocol_whitelist","file,pipe","-f","mp3","-show_format","-show_streams","-of","json",raw], {timeout:30000, maxBuffer:1024*1024});
@@ -61,7 +72,7 @@ export async function receiveUpload(request: Request, kind: "track" | "artwork")
             !(Number(info.format.duration) > 0 && Number(info.format.duration) <= 7200)) throw new Error("Not an acceptable MP3.");
         await execute("ffmpeg", ["-v","error","-xerror","-protocol_whitelist","file,pipe","-f","mp3","-i",raw,"-map","0:a:0","-f","null","-"], {timeout:120000, maxBuffer:1024*1024});
       } catch { throw new UploadError("Invalid MP3: a decodable MP3 audio track, up to two hours, is required."); }
-      return {root, directory, file:raw, extension:"mp3", size, cleanup:()=>rm(directory,{recursive:true,force:true})};
+      return {root, directory, file:raw, extension:"mp3", size, expectedSize, receivedSize:size, tempSize, sha256, cleanup:()=>rm(directory,{recursive:true,force:true})};
     }
     try {
       const image = sharp(raw, {limitInputPixels:16_000_000, failOn:"warning"});
@@ -70,7 +81,7 @@ export async function receiveUpload(request: Request, kind: "track" | "artwork")
           metadata.width < 64 || metadata.height < 64 || metadata.width > 4096 || metadata.height > 4096 || (metadata.pages ?? 1) !== 1) throw new Error("Invalid image.");
       const file = join(directory,"normalized.jpg");
       await image.rotate().flatten({background:"#ffffff"}).jpeg({quality:90}).toFile(file);
-      return {root, directory, file, extension:"jpg", size:(await stat(file)).size, cleanup:()=>rm(directory,{recursive:true,force:true})};
+      return {root, directory, file, extension:"jpg", size:(await stat(file)).size, expectedSize, receivedSize:size, tempSize, sha256, cleanup:()=>rm(directory,{recursive:true,force:true})};
     } catch { throw new UploadError("Invalid artwork: single-frame JPEG/PNG, 64–4096 px and at most 16 megapixels, is required."); }
   } catch (error) { await rm(directory,{recursive:true,force:true}); throw error; }
 }
