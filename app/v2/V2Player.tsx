@@ -58,7 +58,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     engineUnsubscribeRef.current?.();
     engineUnsubscribeRef.current = null;
     engineRef.current?.dispose();
-    const engine = new Mp3Engine(playlist);
+    const engine = new Mp3Engine(playlist,undefined,{channelId});
     engineRef.current = engine;
     engineChannelIdRef.current = channelId;
     setPlayback(engine.getSnapshot());

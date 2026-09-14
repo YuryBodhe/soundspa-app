@@ -1,4 +1,5 @@
 import { MusicSessionCache, musicSessionCache } from "./musicSessionCache";
+import { MusicResumeStore, musicResumeStore, RESUME_SAVE_INTERVAL_MS, validateResumePosition } from "./musicResumeStore";
 
 export interface Mp3Track { id: string; url: string }
 export type Mp3PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error";
@@ -100,16 +101,24 @@ export class Mp3Engine {
   private playRequestId = 0;
   private wantsPlayback = false;
   private disposed = false;
+  private lastResumeSavedAt = 0;
+  private resumeValidationTrackId: string | null = null;
+  private pendingSeekSourceVersion: number | null = null;
 
   constructor(
     private readonly tracks: readonly Mp3Track[],
     private readonly sessionCache: MusicSessionCache = musicSessionCache,
+    private readonly resume?: {channelId:string;store?:MusicResumeStore},
   ) {
     if (tracks.length === 0) throw new Error("MP3 playlist must contain at least one track");
+    const saved=resume?(resume.store??musicResumeStore).read(resume.channelId,tracks.map(t=>t.id)):null;
+    if(saved)this.state={...INITIAL_STATE,currentTrackIndex:tracks.findIndex(t=>t.id===saved.trackId),currentTime:saved.positionSeconds};
     this.sessionCache.logSnapshot("engine-created-before-restore");
     this.hydrateSlotsFromSessionCache();
     this.sessionCache.logSnapshot("engine-created-after-restore");
     if (typeof window !== "undefined") window.addEventListener("online", this.handleOnline);
+    if(resume&&typeof window!=="undefined")window.addEventListener("pagehide",this.saveResumeOnLifecycle);
+    if(resume&&typeof document!=="undefined")document.addEventListener("visibilitychange",this.handleResumeVisibility);
   }
 
   getSnapshot = () => this.state;
@@ -139,6 +148,11 @@ export class Mp3Engine {
         this.clearNetworkRetryTimer();
         return this.recoverToBestAvailable(target, true);
       }
+      if(this.pendingSeekSourceVersion===this.sourceVersion)return;
+      if(this.audio.readyState<HTMLMediaElement.HAVE_METADATA&&this.startupPosition>0){
+        if(this.audibleSource.kind==="blob"&&this.audibleSource.slot!==null)return this.startBlobTrack(this.audibleSource.slot,this.startupPosition);
+        return this.startNetworkTrack(this.audibleSource.trackIndex,false,this.startupPosition);
+      }
       if (this.phase === "startup-buffering" || this.phase === "starting-audible") {
         return this.resumeStartupBuffering();
       }
@@ -154,13 +168,13 @@ export class Mp3Engine {
       this.startBufferSampler();
       return this.playCurrentAudio();
     }
-    this.desiredNextIndex = this.tracks.length > 1 ? 1 : 0;
-    const cachedInitialSlot = this.findSlotByTrackIndex(0) ?? this.restoreTrackFromSessionCache(0);
-    if (cachedInitialSlot !== null) return this.startBlobTrack(cachedInitialSlot);
-    return this.startNetworkTrack(0);
+    const index=this.state.currentTrackIndex;
+    this.desiredNextIndex = (index+1)%this.tracks.length;
+    return this.startPlaylistTrack(index,this.state.currentTime,true);
   };
 
   pause = () => {
+    this.saveResume(true);
     this.wantsPlayback = false;
     this.playRequestId += 1;
     this.clearNetworkRetryTimer();
@@ -188,6 +202,7 @@ export class Mp3Engine {
 
   dispose = () => {
     if (this.disposed) return;
+    this.saveResume(true);
     this.sessionCache.logSnapshot("engine-dispose-before-cleanup");
     this.disposed = true;
     this.wantsPlayback = false;
@@ -209,6 +224,8 @@ export class Mp3Engine {
     this.sourceListenersCleanup?.();
     this.sourceListenersCleanup = null;
     if (typeof window !== "undefined") window.removeEventListener("online", this.handleOnline);
+    if(typeof window!=="undefined")window.removeEventListener("pagehide",this.saveResumeOnLifecycle);
+    if(typeof document!=="undefined")document.removeEventListener("visibilitychange",this.handleResumeVisibility);
     if (this.audio) {
       this.audio.pause();
       this.audio.removeAttribute("src");
@@ -222,7 +239,24 @@ export class Mp3Engine {
     this.listeners.clear();
   };
 
-  private startNetworkTrack = async (index: number, recovering = false, position = 0) => {
+  private startPlaylistTrack(index:number,position=0,validateSaved=false){
+    const slot=this.findSlotByTrackIndex(index)??this.restoreTrackFromSessionCache(index);
+    return slot!==null?this.startBlobTrack(slot,position,validateSaved):this.startNetworkTrack(index,false,position,validateSaved);
+  }
+
+  private acceptResumeMetadata(index:number,position:number,duration:number){
+    this.resumeValidationTrackId=null;
+    const target=validateResumePosition(index,position,duration,this.tracks.length);
+    if(target.invalid&&this.resume)(this.resume.store??musicResumeStore).clear(this.resume.channelId);
+    if(target.index!==index||target.position!==position){
+      this.desiredNextIndex=(target.index+1)%this.tracks.length;
+      return this.startPlaylistTrack(target.index,target.position);
+    }
+    return null;
+  }
+
+  private startNetworkTrack = async (index: number, recovering = false, position = 0, validateSaved=false) => {
+    if(validateSaved&&position>0)this.resumeValidationTrackId=this.tracks[index].id;
     if (!recovering) this.clearNetworkRecovery();
     const audio = recovering ? this.recreateAudio() : this.ensureAudio();
     this.assignSource(audio, { kind: "network", trackIndex: index, slot: null }, this.tracks[index].url);
@@ -241,42 +275,57 @@ export class Mp3Engine {
     audio.muted = false;
     this.update({ status: this.wantsPlayback ? "loading" : "paused", currentTrackIndex: index, sourceKind: "network", currentTime: this.startupPosition, error: null });
     this.updatePreparedTrackIndex();
+    this.saveResume(true);
     if (this.startupPosition > 0) {
+      this.pendingSeekSourceVersion=version;
       try { await this.waitForMetadata(audio, version); }
       catch {
+        if(this.isSourceCurrent(audio,version))this.pendingSeekSourceVersion=null;
         if (this.isSourceCurrent(audio, version) && this.wantsPlayback) this.scheduleNetworkRecovery(index, this.startupPosition);
         return;
       }
       if (!this.isSourceCurrent(audio, version)) return;
+      if(this.resumeValidationTrackId===this.tracks[index].id){const changed=this.acceptResumeMetadata(index,position,audio.duration);if(changed){await changed;return;}}
       const maximum = Number.isFinite(audio.duration) ? Math.max(0, audio.duration - 0.1) : this.startupPosition;
-      audio.currentTime = Math.min(this.startupPosition, maximum);
+      this.startupPosition=Math.min(this.startupPosition,maximum);
+      audio.currentTime = this.startupPosition;
+      this.pendingSeekSourceVersion=null;
       if (recovering) this.logRecovery("seek-restored", { requestedPosition: this.startupPosition, resultingCurrentTime: audio.currentTime });
     }
     if (this.wantsPlayback) this.resumeStartupBuffering();
   };
 
-  private startBlobTrack = async (slot: SlotIndex, position = 0) => {
+  private startBlobTrack = async (slot: SlotIndex, position = 0, validateSaved=false) => {
     const cached = this.slots[slot];
     if (!cached) return;
+    if(validateSaved&&position>0)this.resumeValidationTrackId=this.tracks[cached.index].id;
     if (!this.networkRecoveryTarget) this.clearNetworkRecovery();
     const audio = this.ensureAudio();
     this.assignSource(audio, { kind: "blob", trackIndex: cached.index, slot }, cached.objectUrl);
     this.phase = "audible-blob";
+    this.startupPosition=position;
     audio.muted = false;
     this.stopBufferSampler();
+    this.update({status:this.wantsPlayback?"loading":"paused",currentTrackIndex:cached.index,sourceKind:"blob",currentTime:position,error:null});
     if (position > 0) {
       const version = this.sourceVersion;
+      this.pendingSeekSourceVersion=version;
       try { await this.waitForMetadata(audio, version); }
       catch (error) {
+        if(this.isSourceCurrent(audio,version))this.pendingSeekSourceVersion=null;
         if (this.isSourceCurrent(audio, version) && this.wantsPlayback) this.handlePlayError(error);
         return;
       }
       if (!this.isSourceCurrent(audio, version)) return;
+      if(this.resumeValidationTrackId===this.tracks[cached.index].id){const changed=this.acceptResumeMetadata(cached.index,position,audio.duration);if(changed){await changed;return;}}
       const maximum = Number.isFinite(audio.duration) ? Math.max(0, audio.duration - 0.1) : position;
-      audio.currentTime = Math.min(position, maximum);
+      this.startupPosition=Math.min(position,maximum);
+      audio.currentTime = this.startupPosition;
+      this.pendingSeekSourceVersion=null;
     }
     this.update({ status: this.wantsPlayback ? "loading" : "paused", currentTrackIndex: cached.index, sourceKind: "blob", currentTime: audio.currentTime, error: null });
     this.updatePreparedTrackIndex();
+    this.saveResume(true);
     if (this.wantsPlayback) await this.playCurrentAudio();
   };
 
@@ -305,6 +354,7 @@ export class Mp3Engine {
   }
 
   private assignSource(audio: HTMLAudioElement, source: AudibleSource, url: string) {
+    this.pendingSeekSourceVersion=null;
     this.clearHandoffTimer();
     this.stopBufferSampler();
     this.startupId += 1;
@@ -496,6 +546,7 @@ export class Mp3Engine {
     }
 
     if (this.phase === "startup-buffering") {
+      if (this.pendingSeekSourceVersion === this.sourceVersion) return;
       const startupReserve = this.startupPosition > BUFFER_RANGE_EPSILON_SECONDS ? bufferAhead : startupBufferedSeconds;
       const hasCompatibleProvisionalRecovery = this.hasCompatibleProvisionalStartupRecovery(audio, this.sourceVersion);
       if (startupReserve >= STARTUP_BUFFER_SECONDS) {
@@ -1383,7 +1434,18 @@ export class Mp3Engine {
     this.clearNetworkRecovery();
     this.update({ status: "error", error: error instanceof Error ? error.message : "Unable to load or play this MP3." });
   }
-  private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }
+  private saveResume(force=false){
+    if(!this.resume||this.disposed||!this.audio||!this.audibleSource)return;
+    const now=performance.now();
+    if(!force&&(this.state.status!=="playing"||now-this.lastResumeSavedAt<RESUME_SAVE_INTERVAL_MS))return;
+    const starting=this.pendingSeekSourceVersion===this.sourceVersion||this.phase==="startup-buffering"||this.phase==="starting-audible"||this.audio.readyState<HTMLMediaElement.HAVE_METADATA;
+    const position=starting?(this.phase==="starting-audible"?Math.max(this.startupPosition,this.audio.currentTime):this.startupPosition):this.audio.currentTime;
+    (this.resume.store??musicResumeStore).write(this.resume.channelId,this.tracks[this.audibleSource.trackIndex].id,position);
+    this.lastResumeSavedAt=now;
+  }
+  private saveResumeOnLifecycle=()=>this.saveResume(true);
+  private handleResumeVisibility=()=>{if(document.visibilityState==="hidden")this.saveResume(true);};
+  private update(patch: Partial<Mp3EngineState>) { this.state = { ...this.state, ...patch }; this.saveResume(); this.listeners.forEach((listener) => listener()); }
   private logRecovery(event: string, details: Record<string, unknown>) { console.info(`[Mp3Recovery] ${event}`, details); }
   private logMusicCache(event: string, details: Record<string, unknown>) { console.info(`[MusicSessionCache] ${event}`, details); }
   private logCacheAbortRequested(reason: "playback" | "dispose") {
