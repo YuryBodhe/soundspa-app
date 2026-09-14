@@ -86,6 +86,8 @@ export class Mp3Engine {
   private networkRetryAttempt = 0;
   private networkRecoveryTarget: NetworkRecoveryTarget | null = null;
   private startupPosition = 0;
+  // Source-local evidence, not an absolute media position; seek alone is not playback.
+  private sourceHasProgressed = false;
   private recoveryAttemptSourceVersion: number | null = null;
   private deadNetworkSourceVersion: number | null = null;
   private freezeLoggedSourceVersion: number | null = null;
@@ -354,6 +356,7 @@ export class Mp3Engine {
   }
 
   private assignSource(audio: HTMLAudioElement, source: AudibleSource, url: string) {
+    this.sourceHasProgressed = false;
     this.pendingSeekSourceVersion=null;
     this.clearHandoffTimer();
     this.stopBufferSampler();
@@ -517,7 +520,12 @@ export class Mp3Engine {
       this.logStartupSamplerState(audio, startupBufferedSeconds, bufferAhead);
     }
 
-    if (currentTime >= this.lastObservedCurrentTime + PROGRESSION_EPSILON_SECONDS) {
+    if (
+      (this.phase === "starting-audible" || this.phase === "audible-network")
+      && !audio.paused && !audio.seeking
+      && currentTime >= this.lastObservedCurrentTime + PROGRESSION_EPSILON_SECONDS
+    ) {
+      this.sourceHasProgressed = true;
       this.freezeLoggedSourceVersion = null;
       this.lastObservedCurrentTime = currentTime;
       this.lastProgressAt = now;
@@ -556,7 +564,10 @@ export class Mp3Engine {
         return;
       }
       if (
-        this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
+        !this.sourceHasProgressed
+        && this.deadNetworkSourceVersion !== this.sourceVersion
+        && !audio.seeking
+        && Math.abs(audio.currentTime - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS
         && (
           (this.networkRecoveryTarget === null && this.recoveryAttemptSourceVersion === null)
           || hasCompatibleProvisionalRecovery
@@ -657,8 +668,8 @@ export class Mp3Engine {
       && this.isSourceCurrent(audio, sourceVersion)
       && this.audibleSource?.kind === "network"
       && target.trackIndex === this.audibleSource.trackIndex
-      && target.position <= BUFFER_RANGE_EPSILON_SECONDS
-      && this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
+      && !this.sourceHasProgressed
+      && Math.abs(target.position - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS
       && this.deadNetworkSourceVersion !== sourceVersion
       && (this.recoveryAttemptSourceVersion === null || this.recoveryAttemptSourceVersion === sourceVersion);
   }
@@ -1028,7 +1039,7 @@ export class Mp3Engine {
       && this.audio
       && this.audibleSource?.kind === "network"
       && (this.phase === "startup-buffering" || this.phase === "starting-audible")
-      && this.lastObservedCurrentTime < PROGRESSION_EPSILON_SECONDS
+      && !this.sourceHasProgressed
     ) {
       this.scheduleNetworkRecovery(this.audibleSource.trackIndex, this.getRecoveryPosition());
       return;
