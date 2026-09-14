@@ -7,6 +7,29 @@ import { Mp3Engine, type Mp3EngineState } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
+import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
+
+function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
+  const [enabled, setEnabled] = useState(false);
+  const [trace, setTrace] = useState("");
+  const [result, setResult] = useState("");
+  useEffect(() => { setEnabled(musicDiagnosticsEnabled()); }, []);
+  if (!enabled) return null;
+  const copy = async () => {
+    capture();
+    const text = exportMusicDiagnostics();
+    setTrace(text);
+    try { await navigator.clipboard.writeText(text); setResult("Copied. Send this trace to support."); }
+    catch { setResult("Copy unavailable: select and copy the trace below."); }
+  };
+  return <details style={{ maxWidth: "100%", marginTop: 12, fontSize: 12 }}>
+    <summary>Music diagnostics · staging only</summary>
+    <button type="button" onClick={() => void copy()}>Copy music diagnostics</button>{" "}
+    <button type="button" onClick={() => { clearMusicDiagnostics(); setTrace(""); setResult("Trace cleared; now reproduce the issue."); }}>Clear trace</button>
+    <p role="status">{result || "Rolling in-memory trace. Copy before refresh or Stop/Play."}</p>
+    {trace && <textarea readOnly aria-label="Music diagnostic trace" value={trace} onFocus={event => event.currentTarget.select()} style={{ boxSizing: "border-box", width: "100%", height: 150 }} />}
+  </details>;
+}
 
 function MusicCard({ channel, active, playing, onSelect }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void }) {
   return (
@@ -90,11 +113,13 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   }, []);
 
   const toggleMusicPlayback = () => {
+    recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status });
     if (playback.status === "playing" || playback.status === "loading") engineRef.current?.pause();
     else void engineRef.current?.play();
   };
 
   const selectMusic = (channel: PlayerChannel) => {
+    recordMusicDiagnostic("ui-channel-select", { fromChannelId: activeChannelId, toChannelId: channel.id, title: channel.title, status: playback.status });
     const playlist = channel.tracks.length ? channel.tracks : null;
     if (channel.id === activeChannelId) {
       if (playlist) toggleMusicPlayback();
@@ -189,7 +214,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
         </section>
       </main>
 
-      <footer className={s.footer}><div><div className={s.footerLabel}>Prototype access</div><div className={s.footerText}>Local test · no account required</div></div></footer>
+      <footer className={s.footer}><div><div className={s.footerLabel}>Prototype access</div><div className={s.footerText}>Local test · no account required</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
     </div>
   );
 }
