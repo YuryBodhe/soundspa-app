@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Mp3Engine } from "../../app/lib/audio/mp3Engine";
 import { MusicSessionCache } from "../../app/lib/audio/musicSessionCache";
-import { clearMusicDiagnostics, exportMusicDiagnostics, recordMusicDiagnostic } from "../../app/lib/audio/musicDiagnostics";
+import { clearMusicDiagnostics, exportMusicDiagnostics, recordMusicDiagnostic, musicDiagnosticsEnabled } from "../../app/lib/audio/musicDiagnostics";
+const previousFlag = process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS;
 
 class DiagnosticAudio extends EventTarget {
   src = ""; preload = ""; paused = true; ended = false; seeking = false; muted = false;
@@ -27,7 +28,18 @@ function reconstruct(result: Trace) {
   });
 }
 async function main() {
+  delete process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS;
   recordMusicDiagnostic("disabled", {}); assert.equal(trace().entryCount, 0);
+  browser.location.hostname = "test.soundspa.bodhemusic.com";
+  assert.equal(musicDiagnosticsEnabled(), false);
+  recordMusicDiagnostic("disabled", new Proxy({}, { ownKeys() { throw new Error("Disabled diagnostics inspected state"); } }));
+  assert.equal(trace().entryCount, 0);
+  process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS = "true"; assert.equal(musicDiagnosticsEnabled(), false);
+  process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS = "1";
+  assert.equal(musicDiagnosticsEnabled(), true);
+  for (const host of ["localhost", "127.0.0.1", "[::1]"]) { browser.location.hostname = host; assert.equal(musicDiagnosticsEnabled(), true); }
+  for (const host of ["soundspa.bodhemusic.com", "production.invalid", "preview.invalid"]) { browser.location.hostname = host; assert.equal(musicDiagnosticsEnabled(), false); recordMusicDiagnostic("production-disabled", {}); }
+  assert.equal(trace().entryCount, 0);
   browser.location.hostname = "test.soundspa.bodhemusic.com";
   for (let i = 0; i < 700; i++) recordMusicDiagnostic("bounded", { i });
   assert.equal(trace().entryCount, 600); assert.equal(reconstruct(trace())[0].details.i, 100);
@@ -70,7 +82,7 @@ async function main() {
     const oldAudio = state.audio; engine.dispose(); const count = trace().entryCount;
     oldAudio.dispatchEvent(new Event("progress")); assert.equal(trace().entryCount, count);
     assert.equal(state.audio, null);
-    console.info("PASS: staging-only gate; v2 delta replay; rolling baseline; identical sample aggregation; media/play/sampler identity; unchanged startup/progression/Pause; dispose cleanup.");
+    console.info("PASS: disabled by default; exact opt-in flag; staging/local allowlist; production blocked even with flag; no disabled serialization; v2 delta replay/rolling baseline/aggregation; unchanged startup/progression/Pause; cleanup.");
   } finally { engine.dispose(); clearMusicDiagnostics(); }
   for (const filename of process.argv.slice(2)) {
     const original = readFileSync(filename, "utf8");
@@ -91,4 +103,7 @@ async function main() {
     clearMusicDiagnostics();
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
+  if (previousFlag === undefined) delete process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS;
+  else process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS = previousFlag;
+});

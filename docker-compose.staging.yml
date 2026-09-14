@@ -4,6 +4,7 @@ services:
       context: .
       args:
         DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+        NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS: ${NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS:-0}
     restart: unless-stopped
     ports:
       - "127.0.0.1:3101:3000"

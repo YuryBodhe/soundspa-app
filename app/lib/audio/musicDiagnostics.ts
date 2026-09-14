@@ -1,4 +1,4 @@
-// Temporary, local-only capture on the isolated staging hostname. No requests or storage.
+// Opt-in staging/local capture. The public flag is compiled at build time; no requests/storage.
 const STAGING_HOST = "test.soundspa.bodhemusic.com";
 const MAX_ENTRIES = 600;
 type State = Record<string, unknown>;
@@ -12,7 +12,11 @@ const entries: Entry[] = [];
 const sources = new Map<string, Source>();
 const current = new Map<string, State>();
 const lastSamples = new Map<string, { entry: Entry; state: string }>();
-export const musicDiagnosticsEnabled = () => typeof window !== "undefined" && window.location?.hostname === STAGING_HOST;
+export const musicDiagnosticsEnabled = () => {
+  if (process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS !== "1" || typeof window === "undefined") return false;
+  const host = window.location?.hostname;
+  return host === STAGING_HOST || host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+};
 export const allocateMusicDiagnosticId = () => ++nextEngineId;
 const normalize = (value: unknown): unknown => {
   if (value === undefined) return null;

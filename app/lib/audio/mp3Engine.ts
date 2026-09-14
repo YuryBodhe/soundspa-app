@@ -41,7 +41,6 @@ const BUFFER_CRITICAL_EXIT_SECONDS = 12;
 const CACHE_START_BUFFER_SECONDS = 120;
 const CACHE_HEALTHY_STABILITY_MS = 30_000;
 const CACHE_PLAYBACK_ABORT_COOLDOWN_MS = 120_000;
-const STARTUP_DIAGNOSTIC_HEARTBEAT_MS = 5_000;
 
 class TrackRequestError extends Error {
   constructor(readonly status: number) { super(`MP3 request failed with ${status}`); }
@@ -97,10 +96,6 @@ export class Mp3Engine {
   private recoveryAttemptSourceVersion: number | null = null;
   private deadNetworkSourceVersion: number | null = null;
   private freezeLoggedSourceVersion: number | null = null;
-  private startupDiagnosticStartedAt: number | null = null;
-  private startupDiagnosticLastSampleKey: string | null = null;
-  private startupDiagnosticLastSampleAt = 0;
-  private startupDiagnosticLastProgressKey: string | null = null;
   private sourceListenersCleanup: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private state: Mp3EngineState = INITIAL_STATE;
@@ -421,10 +416,6 @@ export class Mp3Engine {
     this.freezeLoggedSourceVersion = null;
     const version = this.sourceVersion;
     this.audibleSource = source;
-    this.startupDiagnosticStartedAt = source.kind === "network" ? performance.now() : null;
-    this.startupDiagnosticLastSampleKey = null;
-    this.startupDiagnosticLastSampleAt = 0;
-    this.startupDiagnosticLastProgressKey = null;
     this.resetStartupPlateauObservation();
     audio.src = url;
     this.sourceListenersCleanup = this.attachSourceListeners(audio, version);
@@ -439,42 +430,29 @@ export class Mp3Engine {
     const onSeeking = guarded(() => { this.emptyRangesEligibility = null; });
     audio.addEventListener("seeking", onSeeking);
     const onPlaying = guarded(() => {
-      this.logStartupMediaEvent("playing", audio, version);
       this.handlePlaybackProgress();
     });
     const onLoadedMetadata = guarded(() => {
-      this.logStartupMediaEvent("loadedmetadata", audio, version);
       if (this.recoveryAttemptSourceVersion === version) {
         this.logRecovery("metadata-loaded", { duration: audio.duration, intendedSeekPosition: this.startupPosition });
       }
     });
-    const onLoadedData = guarded(() => { this.logStartupMediaEvent("loadeddata", audio, version); });
-    const onCanPlay = guarded(() => { this.logStartupMediaEvent("canplay", audio, version); });
-    const onCanPlayThrough = guarded(() => { this.logStartupMediaEvent("canplaythrough", audio, version); });
     const onTimeUpdate = guarded(this.handleTimeUpdate);
     const onProgress = guarded(() => {
-      this.logStartupMediaEvent("progress", audio, version);
       this.evaluateBufferState();
     });
-    const onSuspend = guarded(() => { this.logStartupMediaEvent("suspend", audio, version); });
     const onWaiting = guarded(() => {
-      this.logStartupMediaEvent("waiting", audio, version);
       this.handleBuffering();
     });
     const onStalled = guarded(() => {
-      this.logStartupMediaEvent("stalled", audio, version);
       this.handleBuffering();
     });
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
     audio.addEventListener("playing", onPlaying);
     audio.addEventListener("loadedmetadata", onLoadedMetadata);
-    audio.addEventListener("loadeddata", onLoadedData);
-    audio.addEventListener("canplay", onCanPlay);
-    audio.addEventListener("canplaythrough", onCanPlayThrough);
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("progress", onProgress);
-    audio.addEventListener("suspend", onSuspend);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("stalled", onStalled);
     const diagnosticEvents = ["loadstart", "loadedmetadata", "loadeddata", "canplay", "canplaythrough", "waiting", "stalled", "suspend", "progress", "playing", "pause", "seeking", "seeked", "emptied"];
@@ -494,12 +472,8 @@ export class Mp3Engine {
       audio.removeEventListener("error", onError);
       audio.removeEventListener("playing", onPlaying);
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
-      audio.removeEventListener("loadeddata", onLoadedData);
-      audio.removeEventListener("canplay", onCanPlay);
-      audio.removeEventListener("canplaythrough", onCanPlayThrough);
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("progress", onProgress);
-      audio.removeEventListener("suspend", onSuspend);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("stalled", onStalled);
     };
@@ -590,9 +564,6 @@ export class Mp3Engine {
     const currentTime = audio.currentTime;
     const startupBufferedSeconds = this.getStartupBufferedSeconds(audio);
     const bufferAhead = this.getBufferAhead(audio);
-    if (this.phase === "startup-buffering") {
-      this.logStartupSamplerState(audio, startupBufferedSeconds, bufferAhead);
-    }
 
     if (
       (this.phase === "starting-audible" || this.phase === "audible-network")
@@ -659,16 +630,6 @@ export class Mp3Engine {
           const plateauMs = now - this.startupPlateauLastGrowthAt;
           if (!this.startupCompletionInProgress && plateauMs >= STARTUP_BUFFER_PLATEAU_MS) {
             this.captureDiagnostic("startup-plateau-fallback", { plateauMs, hasCompatibleProvisionalRecovery });
-            if (hasCompatibleProvisionalRecovery) {
-              console.info("[Mp3StartupDiagnostic] startup-provisional-recovery-accepted", {
-                ...this.getStartupDiagnosticDetails(audio),
-                recoveryTarget: this.networkRecoveryTarget,
-              });
-            }
-            console.info("[Mp3StartupDiagnostic] startup-plateau-fallback", {
-              ...this.getStartupDiagnosticDetails(audio),
-              plateauMs,
-            });
             this.clearNetworkRetryTimer();
             void this.completeStartup();
           }
@@ -770,73 +731,6 @@ export class Mp3Engine {
       && Math.abs(target.position - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS
       && this.deadNetworkSourceVersion !== sourceVersion
       && (this.recoveryAttemptSourceVersion === null || this.recoveryAttemptSourceVersion === sourceVersion);
-  }
-
-  private getStartupDiagnosticDetails(audio: HTMLAudioElement, sourceVersion = this.sourceVersion) {
-    return {
-      elapsedMs: this.startupDiagnosticStartedAt === null ? null : performance.now() - this.startupDiagnosticStartedAt,
-      currentTime: audio.currentTime,
-      bufferedLength: audio.buffered.length,
-      bufferedRanges: this.getBufferedRanges(audio),
-      startupBufferedSeconds: this.getStartupBufferedSeconds(audio),
-      bufferAhead: this.getBufferAhead(audio),
-      readyState: audio.readyState,
-      networkState: audio.networkState,
-      paused: audio.paused,
-      sourceVersion,
-      sourceKind: this.audibleSource?.kind ?? null,
-    };
-  }
-
-  private logStartupSamplerState(audio: HTMLAudioElement, startupBufferedSeconds: number, bufferAhead: number) {
-    try {
-      const now = performance.now();
-      const ranges = this.getBufferedRanges(audio);
-      const sampleKey = JSON.stringify({
-        currentTimeQuarter: Math.floor(audio.currentTime * 4),
-        bufferedRangesSeconds: ranges.map((range) => [Math.floor(range.start), Math.floor(range.end)]),
-        startupBufferedSeconds: Math.floor(startupBufferedSeconds),
-        bufferAhead: Math.floor(bufferAhead),
-        readyState: audio.readyState,
-        networkState: audio.networkState,
-        paused: audio.paused,
-        sourceVersion: this.sourceVersion,
-        sourceKind: this.audibleSource?.kind ?? null,
-      });
-      const stateChanged = sampleKey !== this.startupDiagnosticLastSampleKey;
-      if (!stateChanged && now - this.startupDiagnosticLastSampleAt < STARTUP_DIAGNOSTIC_HEARTBEAT_MS) return;
-      this.startupDiagnosticLastSampleKey = sampleKey;
-      this.startupDiagnosticLastSampleAt = now;
-      console.info("[Mp3StartupDiagnostic] sampler-state", {
-        reason: stateChanged ? "state-change" : "heartbeat",
-        ...this.getStartupDiagnosticDetails(audio),
-      });
-    } catch {
-      // Diagnostics must never affect playback control flow.
-    }
-  }
-
-  private logStartupMediaEvent(event: string, audio: HTMLAudioElement, sourceVersion: number) {
-    if (this.phase !== "startup-buffering" && this.phase !== "starting-audible") return;
-    try {
-      const details = this.getStartupDiagnosticDetails(audio, sourceVersion);
-      if (event === "progress") {
-        const progressKey = JSON.stringify({
-          bufferedRangesSeconds: details.bufferedRanges.map((range) => [Math.floor(range.start), Math.floor(range.end)]),
-          readyState: details.readyState,
-          networkState: details.networkState,
-          paused: details.paused,
-        });
-        if (progressKey === this.startupDiagnosticLastProgressKey) return;
-        this.startupDiagnosticLastProgressKey = progressKey;
-      }
-      console.info("[Mp3StartupDiagnostic] media-event", {
-        event,
-        ...details,
-      });
-    } catch {
-      // Diagnostics must never affect playback control flow.
-    }
   }
 
   private updateBufferHealth(bufferAhead: number, now: number, frozen: boolean) {
