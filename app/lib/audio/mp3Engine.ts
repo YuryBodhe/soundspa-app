@@ -111,6 +111,7 @@ export class Mp3Engine {
   private lastResumeSavedAt = 0;
   private resumeValidationTrackId: string | null = null;
   private pendingSeekSourceVersion: number | null = null;
+  private metadataWaitCleanup: (() => void) | null = null;
 
   constructor(
     private readonly tracks: readonly Mp3Track[],
@@ -219,6 +220,7 @@ export class Mp3Engine {
     this.wantsPlayback = false;
     this.generation += 1;
     this.sourceVersion += 1;
+    this.metadataWaitCleanup?.();
     this.cacheRequestId += 1;
     this.playRequestId += 1;
     this.startupId += 1;
@@ -272,6 +274,7 @@ export class Mp3Engine {
     const audio = recovering ? this.recreateAudio() : this.ensureAudio();
     this.assignSource(audio, { kind: "network", trackIndex: index, slot: null }, this.tracks[index].url);
     const version = this.sourceVersion;
+    const generation = this.generation;
     if (recovering) {
       this.recoveryAttemptSourceVersion = version;
       this.logRecovery("new-audio-created", { sourceVersion: version, trackIndex: index, recoveryPosition: position });
@@ -289,14 +292,34 @@ export class Mp3Engine {
     this.saveResume(true);
     this.captureDiagnostic("network-start", { requestedPosition: position, recovering, validateSaved });
     if (this.startupPosition > 0) {
+      let metadataTimedOut = false;
       this.pendingSeekSourceVersion=version;
-      try { await this.waitForMetadata(audio, version); }
+      try {
+        const available = await this.waitForMetadata(audio, version, () => {
+          metadataTimedOut = true;
+          this.captureDiagnostic("metadata-timeout-awaiting-late-event", {}, audio, version);
+          if (this.isSourceCurrent(audio, version) && generation === this.generation && this.wantsPlayback) this.scheduleNetworkRecovery(index, this.startupPosition);
+        });
+        if (!available) return;
+      }
       catch {
         if(this.isSourceCurrent(audio,version))this.pendingSeekSourceVersion=null;
         if (this.isSourceCurrent(audio, version) && this.wantsPlayback) this.scheduleNetworkRecovery(index, this.startupPosition);
         return;
       }
       if (!this.isSourceCurrent(audio, version)) return;
+      if (generation !== this.generation) return;
+      const recoveryTarget = this.networkRecoveryTarget;
+      if (metadataTimedOut && (
+        !this.wantsPlayback || this.deadNetworkSourceVersion === version
+        || (recoveryTarget !== null && (
+          recoveryTarget.trackIndex !== index
+          || Math.abs(recoveryTarget.position - this.startupPosition) > BUFFER_RANGE_EPSILON_SECONDS
+        ))
+      )) {
+        this.pendingSeekSourceVersion=null;
+        return;
+      }
       if(this.resumeValidationTrackId===this.tracks[index].id){const changed=this.acceptResumeMetadata(index,position,audio.duration);if(changed){await changed;return;}}
       const maximum = Number.isFinite(audio.duration) ? Math.max(0, audio.duration - 0.1) : this.startupPosition;
       this.startupPosition=Math.min(this.startupPosition,maximum);
@@ -304,6 +327,19 @@ export class Mp3Engine {
       this.pendingSeekSourceVersion=null;
       this.captureDiagnostic("resume-seek-applied", { requestedPosition: position });
       if (recovering) this.logRecovery("seek-restored", { requestedPosition: this.startupPosition, resultingCurrentTime: audio.currentTime });
+      if (metadataTimedOut && this.wantsPlayback) {
+        const retryTimer = this.networkRetryTimer;
+        this.resumeStartupBuffering();
+        if (
+          this.isSourceCurrent(audio, version) && generation === this.generation
+          && this.networkRetryTimer === retryTimer
+          && this.networkRecoveryTarget?.trackIndex === index
+          && Math.abs(this.networkRecoveryTarget.position - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS
+          && this.deadNetworkSourceVersion !== version
+        ) this.clearNetworkRetryTimer();
+        this.captureDiagnostic("late-metadata-startup-resumed", {}, audio, version);
+        return;
+      }
     }
     if (this.wantsPlayback) this.resumeStartupBuffering();
   };
@@ -377,6 +413,7 @@ export class Mp3Engine {
     this.startupCompletionInProgress = false;
     this.sourceListenersCleanup?.();
     this.sourceVersion += 1;
+    this.metadataWaitCleanup?.();
     this.deadNetworkSourceVersion = null;
     this.freezeLoggedSourceVersion = null;
     const version = this.sourceVersion;
@@ -1358,22 +1395,31 @@ export class Mp3Engine {
   private clearRetryTimer() { if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = null; }
   private clearHandoffTimer() { if (this.handoffTimer) clearTimeout(this.handoffTimer); this.handoffTimer = null; }
 
-  private waitForMetadata(audio: HTMLAudioElement, version: number) {
-    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
-    return new Promise<void>((resolve, reject) => {
+  private waitForMetadata(audio: HTMLAudioElement, version: number, onTimeout?: () => void) {
+    if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve(true);
+    return new Promise<boolean>((resolve, reject) => {
       let settled = false;
-      const finish = (error?: Error) => {
+      const cancel = () => finish(undefined, true);
+      const finish = (error?: Error, cancelled = false) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
         audio.removeEventListener("loadedmetadata", onLoaded);
         audio.removeEventListener("error", onError);
-        if (!this.isSourceCurrent(audio, version)) { resolve(); return; }
-        if (error) reject(error); else resolve();
+        if (this.metadataWaitCleanup === cancel) this.metadataWaitCleanup = null;
+        if (cancelled || !this.isSourceCurrent(audio, version)) { resolve(false); return; }
+        if (error) reject(error); else resolve(true);
       };
       const onLoaded = () => finish();
       const onError = () => finish(new Error("The browser could not read the cached MP3."));
-      const timeout = setTimeout(() => finish(new Error("Cached MP3 metadata timed out")), METADATA_TIMEOUT_MS);
+      const timeout = setTimeout(() => {
+        if (onTimeout && this.isSourceCurrent(audio, version)) {
+          // Network timeout triggers recovery, but does not abandon this source's continuation.
+          clearTimeout(timeout);
+          onTimeout();
+        } else finish(new Error("Cached MP3 metadata timed out"));
+      }, METADATA_TIMEOUT_MS);
+      this.metadataWaitCleanup = cancel;
       audio.addEventListener("loadedmetadata", onLoaded);
       audio.addEventListener("error", onError);
     });
