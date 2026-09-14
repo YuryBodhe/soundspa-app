@@ -12,7 +12,7 @@ async function main(){
  const target=(await v2Db.execute(sql`SELECT current_database() AS database,current_user AS "user"`)).rows[0];
  assert.deepEqual(target,{database:"soundspa_v2",user:"soundspa_v2"});
  const snapshot=async()=>(await v2Db.execute(sql`SELECT (SELECT count(*) FROM channels) AS channels,(SELECT count(*) FROM channel_tracks) AS tracks,(SELECT md5(string_agg(row_to_json(c)::text,',' ORDER BY id)) FROM channels c) AS c,(SELECT md5(string_agg(row_to_json(t)::text,',' ORDER BY id)) FROM channel_tracks t) AS t`)).rows[0];
- const before=await snapshot();assert.equal(Number(before.channels),8);assert.equal(Number(before.tracks),11);
+ const before=await snapshot();assert.equal(Number(before.channels),Number(process.env.V2_TEST_CHANNELS??8));assert.equal(Number(before.tracks),Number(process.env.V2_TEST_TRACKS??11));
  const root=await mkdtemp("/tmp/soundspa-delete-test-");process.env.V2_MEDIA_ROOT=root;
  const dir=join(root,"music","synthetic");await mkdir(dir,{recursive:true});
  const rollback=new Error("EXPECTED_ROLLBACK");

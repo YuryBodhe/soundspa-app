@@ -14,7 +14,7 @@ async function main(){
   try{
     await promisify(execFile)("ffmpeg",["-v","error","-f","lavfi","-i","sine=duration=1","-codec:a","libmp3lame",join(root,"fixture.mp3")]);
     const mp3=await readFile(join(root,"fixture.mp3"));
-    const request=(data:Uint8Array)=>new Request("http://local.test",{method:"POST",body:new Uint8Array(data)});
+    const request=(data:Uint8Array)=>new Request("http://local.test",{method:"POST",headers:{"X-Upload-Size":String(data.length)},body:new Uint8Array(data)});
     const received=await receiveUpload(request(mp3),"track");
     await publishImmutable(root,received.file,"music/unit/immutable.mp3");
     await assert.rejects(publishImmutable(root,received.file,"music/unit/immutable.mp3"),(error:unknown)=>error instanceof Error&&"code"in error&&error.code==="EEXIST");

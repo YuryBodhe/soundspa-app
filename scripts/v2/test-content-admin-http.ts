@@ -63,7 +63,9 @@ async function main() {
     phase = "authorized six-channel Admin page";
     const response = await fetch(`${origin}/app/admin/channels/v2`, {headers:{Authorization:authorization}});
     assert.equal(response.status, 200); const html = await response.text();
-    assert(html.replace(/<!--.*?-->/g, "").includes("All V2 channels (6)"));
+    const expectedCounts={channels:Number(process.env.V2_TEST_CHANNELS??6),tracks:Number(process.env.V2_TEST_TRACKS??8)};
+    const normalized=html.replace(/<!--.*?-->/g, "");
+    assert(normalized.includes(`All V2 channels (${expectedCounts.channels})`),`Expected ${expectedCounts.channels} Admin channels; observed ${normalized.match(/All V2 channels[^<]{0,40}/)?.[0]??"missing catalog heading"}`);
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(html.includes(title));
     phase = "cross-origin mutation";
     assert.equal((await fetch(`${origin}/api/v2/admin/content`, {method:"POST", headers:{Authorization:authorization, Origin:"https://untrusted.invalid"}})).status, 403);
@@ -80,7 +82,7 @@ async function main() {
       phase="synthetic upload verification";
       process.env.V2_DATABASE_URL=database.toString();process.env.V2_MEDIA_ROOT=uploadRoot;
       const {verifyContentUploads}=await import("./verify-content-uploads");
-      await verifyContentUploads(origin,authorization);
+      await verifyContentUploads(origin,authorization,undefined,expectedCounts);
     }
     console.info("PASS: missing config fail-closed, Basic auth, unauthorized page/mutation 401, authorized six-channel Admin 200, cross-origin mutation 403, explicit validation feedback, public six-card DB catalog 200. Local test app/tunnel only; staging runtime unchanged.");
   } finally {
@@ -88,4 +90,4 @@ async function main() {
     if(uploadRoot)await rm(uploadRoot,{recursive:true,force:true});
   }
 }
-main().catch(() => { console.error(`Content Admin HTTP verification failed at ${phase}; no secrets emitted.`); process.exitCode = 1; });
+main().catch((e) => { console.error(`Content Admin HTTP verification failed at ${phase}; ${e instanceof Error&&e.name==="AssertionError"?e.message.slice(0,250):"no internal details emitted"}`); process.exitCode = 1; });

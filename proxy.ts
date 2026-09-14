@@ -7,4 +7,4 @@ export function proxy(request: NextRequest) {
 }
 
 // Large raw uploads enforce operator auth in their Route Handler without body cloning.
-export const config = { matcher: ["/app/admin/channels/v2/:path*", "/api/v2/admin/content", "/api/v2/admin/content/((?!upload$).*)"] };
+export const config = { matcher: ["/app/admin/channels/v2/:path*", "/api/v2/admin/content", "/api/v2/admin/content/((?!uploads?$).*)"] };

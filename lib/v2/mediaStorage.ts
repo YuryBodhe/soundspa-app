@@ -27,11 +27,13 @@ async function safeDirectory(root: string, relative: string, mode = 755) {
   if (!actual.startsWith(root + sep)) throw new UploadError("Unsafe media directory.");
   return actual;
 }
-export async function receiveUpload(request: Request, kind: "track" | "artwork") {
+export async function receiveUpload(request: Request, kind: "track" | "artwork", workspace?:string) {
   const root = await mediaRoot();
   const privateDirectory = await safeDirectory(root, ".uploads", 700);
   await chmod(privateDirectory, 0o700);
-  const directory = await mkdtemp(join(privateDirectory, "request-"));
+  const targetDirectory=workspace?await realpath(workspace):privateDirectory;
+  if(targetDirectory!==privateDirectory&&!targetDirectory.startsWith(privateDirectory+sep))throw new UploadError("Unsafe validation workspace.");
+  const directory = await mkdtemp(join(targetDirectory, "request-"));
   const raw = join(directory, "input");
   try {
     if (!request.body) throw new UploadError("Empty upload.");
