@@ -8,13 +8,18 @@ type PendingFetch = { controller: AbortController; promise: Promise<void> };
 type CandidateDeck = {
   audio: HTMLAudioElement; sourceNode: MediaElementAudioSourceNode | null; track: AmbientTrack;
   index: number; generation: number; started: boolean; progressed: boolean; startTime: number;
-  progressTimer: ReturnType<typeof setInterval> | null; onError: () => void; onLoadedMetadata: () => void;
+  progressTimer: ReturnType<typeof setInterval> | null;
+  transitionTimer: ReturnType<typeof setTimeout> | null;
+  onError: () => void; onLoadedMetadata: () => void;
 };
 
 const MAX_CACHED_AMBIENT = 3;
 const OVERLAP_SECONDS = 3;
+const CANDIDATE_PREPARE_SECONDS = 6;
 const CANDIDATE_PROGRESS_TIMEOUT_MS = 2_000;
 const CANDIDATE_PROGRESS_INTERVAL_MS = 100;
+// Give A a short grace after its calculated end; then prefer already-progressing B over indefinite double playback.
+const OVERLAP_END_TOLERANCE_MS = 1_500;
 const INITIAL_STATE: AmbientEngineState = { status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null };
 
 export function ambientOverlapEnabled() { return process.env.NEXT_PUBLIC_V2_AMBIENT_OVERLAP === "1"; }
@@ -31,6 +36,7 @@ export class AmbientEngine {
   private playlist: readonly AmbientTrack[] = [];
   private activeTrackIndex = 0;
   private activeSelectionId: string | null = null;
+  private candidateAttemptedForCurrent = false;
   private readonly overlapEnabled: boolean;
   private cache = new Map<string, CachedAmbient>();
   private pendingFetches = new Map<string, PendingFetch>();
@@ -43,21 +49,53 @@ export class AmbientEngine {
   constructor(overlapEnabled = ambientOverlapEnabled()) { this.overlapEnabled = overlapEnabled; }
   getSnapshot = () => this.state;
   subscribe = (listener: Listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
-  toggle = async (track: AmbientTrack) => { await this.togglePlaylist(track.id, [track]); };
+  toggle = async (track: AmbientTrack) => {
+    if (this.disposed || typeof window === "undefined") return;
+    if (this.state.activeTrackId === track.id) { this.stop(); return; }
+    this.requestPlaybackAudioSession();
+    const generation = ++this.generation;
+    this.cancelPendingFetchesExcept(new Set([track.id]));
+    this.cleanupPlayback();
+    const cached = this.cache.get(track.id);
+    if (cached) cached.lastUsed = ++this.usageSequence;
+    const sourceKind = cached ? "blob" : "network";
+    const audio = new Audio(cached?.objectUrl ?? track.url);
+    audio.preload = "auto";
+    audio.loop = sourceKind === "blob";
+    audio.volume = this.state.volume;
+    this.mediaSourceNode = this.attachToAudioGraph(audio);
+    this.resumeAudioContext();
+    const onError = () => {
+      if (this.isPlaybackCurrent(audio, generation)) this.handleError(new Error("The browser could not play this ambient track."));
+    };
+    const onEnded = () => {
+      if (sourceKind === "network" && this.isPlaybackCurrent(audio, generation)) void this.handleNetworkEnded(track, audio, generation);
+    };
+    audio.addEventListener("error", onError);
+    audio.addEventListener("ended", onEnded);
+    this.audio = audio;
+    this.audioErrorListener = onError;
+    this.audioEndedListener = onEnded;
+    this.update({ status: "loading", activeTrackId: track.id, sourceKind, currentTime: 0, error: null });
+    if (!cached) void this.ensureCached(track);
+    try {
+      await audio.play();
+      if (this.isPlaybackCurrent(audio, generation)) this.update({ status: "playing", currentTime: audio.currentTime });
+    } catch (error) { if (this.isPlaybackCurrent(audio, generation)) this.handleError(error); }
+  };
 
   togglePlaylist = async (selectionId: string, tracks: readonly AmbientTrack[]) => {
     if (this.disposed || typeof window === "undefined" || tracks.length === 0) return;
-    const playlist = this.overlapEnabled ? tracks : [tracks[0]];
-    const effectiveSelectionId = this.overlapEnabled ? selectionId : playlist[0].id;
-    if (this.activeSelectionId === effectiveSelectionId) { this.stop(); return; }
+    if (!this.overlapEnabled) { await this.toggle(tracks[0]); return; }
+    if (this.activeSelectionId === selectionId) { this.stop(); return; }
     this.requestPlaybackAudioSession();
     const generation = ++this.generation;
-    this.cancelPendingFetchesExcept(new Set(playlist.map((track) => track.id)));
+    this.cancelPendingFetchesExcept(new Set(tracks.map((track) => track.id)));
     this.cleanupPlayback();
-    this.playlist = playlist;
+    this.playlist = tracks;
     this.activeTrackIndex = 0;
-    this.activeSelectionId = effectiveSelectionId;
-    await this.startTrack(0, generation);
+    this.activeSelectionId = selectionId;
+    await this.startPlaylistTrack(0, generation);
   };
 
   setVolume = (volume: number) => {
@@ -75,6 +113,7 @@ export class AmbientEngine {
     this.playlist = [];
     this.activeTrackIndex = 0;
     this.activeSelectionId = null;
+    this.candidateAttemptedForCurrent = false;
     this.update({ status: "idle", activeTrackId: null, sourceKind: null, currentTime: 0, error: null });
   };
 
@@ -94,41 +133,42 @@ export class AmbientEngine {
     this.listeners.clear();
   };
 
-  private async startTrack(index: number, generation: number) {
+  private async startPlaylistTrack(index: number, generation: number) {
     const track = this.playlist[index];
     if (!track || !this.isGenerationCurrent(generation)) return;
     this.activeTrackIndex = index;
+    this.candidateAttemptedForCurrent = false;
     const cached = this.cache.get(track.id);
     if (cached) cached.lastUsed = ++this.usageSequence;
     const sourceKind = cached ? "blob" : "network";
     const audio = new Audio(cached?.objectUrl ?? track.url);
     audio.preload = "auto";
-    audio.loop = !this.overlapEnabled && sourceKind === "blob";
+    audio.loop = false;
     audio.volume = this.state.volume;
     this.mediaSourceNode = this.attachToAudioGraph(audio);
     this.resumeAudioContext();
-    this.installCurrentListeners(audio, track, generation);
+    this.installPlaylistListeners(audio, generation);
     this.audio = audio;
     this.update({ status: "loading", activeTrackId: track.id, sourceKind, currentTime: 0, error: null });
     if (!cached) void this.ensureCached(track).then(() => { if (this.isPlaybackCurrent(audio, generation)) this.prepareNextTrack(generation); });
-    else if (this.overlapEnabled) this.prepareNextTrack(generation);
+    else this.prepareNextTrack(generation);
     try {
       await audio.play();
       if (this.isPlaybackCurrent(audio, generation)) this.update({ status: "playing", currentTime: audio.currentTime });
     } catch (error) { if (this.isPlaybackCurrent(audio, generation)) this.handleError(error); }
   }
 
-  private installCurrentListeners(audio: HTMLAudioElement, track: AmbientTrack, generation: number) {
+  private installPlaylistListeners(audio: HTMLAudioElement, generation: number) {
     const onError = () => { if (this.isPlaybackCurrent(audio, generation)) this.handleError(new Error("The browser could not play this ambient track.")); };
     const onEnded = () => {
       if (!this.isPlaybackCurrent(audio, generation)) return;
-      if (this.overlapEnabled) void this.handlePlaylistEnded(audio, generation);
-      else void this.handleNetworkEnded(track, audio, generation);
+      void this.handlePlaylistEnded(audio, generation);
     };
     const onTimeUpdate = () => {
       if (!this.isPlaybackCurrent(audio, generation)) return;
       this.update({ currentTime: audio.currentTime });
-      if (this.overlapEnabled) this.maybeStartCandidate(generation);
+      this.maybePrepareCandidate(generation);
+      this.maybeStartCandidate(generation);
     };
     audio.addEventListener("error", onError); audio.addEventListener("ended", onEnded); audio.addEventListener("timeupdate", onTimeUpdate);
     this.audioErrorListener = onError; this.audioEndedListener = onEnded; this.audioTimeUpdateListener = onTimeUpdate;
@@ -162,18 +202,41 @@ export class AmbientEngine {
     const nextIndex = (this.activeTrackIndex + 1) % this.playlist.length;
     const nextTrack = this.playlist[nextIndex];
     const cached = this.cache.get(nextTrack.id);
-    if (!cached) { void this.ensureCached(nextTrack).then(() => { if (this.isGenerationCurrent(generation)) this.prepareNextTrack(generation); }); return; }
+    if (!cached) { void this.ensureCached(nextTrack).then(() => { if (this.isGenerationCurrent(generation)) this.maybePrepareCandidate(generation); }); return; }
+    this.maybePrepareCandidate(generation);
+  }
+
+  private maybePrepareCandidate(generation: number) {
+    const current = this.audio;
+    if (!current || !this.overlapEnabled || !this.isPlaybackCurrent(current, generation) || this.candidate || this.candidateAttemptedForCurrent || this.playlist.length === 0 ||
+      !Number.isFinite(current.duration) || current.duration - current.currentTime > CANDIDATE_PREPARE_SECONDS) return;
+    const nextIndex = (this.activeTrackIndex + 1) % this.playlist.length;
+    const nextTrack = this.playlist[nextIndex];
+    const cached = this.cache.get(nextTrack.id);
+    if (!cached) return;
+    this.candidateAttemptedForCurrent = true;
     cached.lastUsed = ++this.usageSequence;
     const audio = new Audio(cached.objectUrl);
-    audio.preload = "auto"; audio.loop = false; audio.volume = this.state.volume;
-    const sourceNode = this.attachToAudioGraph(audio);
+    let sourceNode: MediaElementAudioSourceNode | null = null;
+    try {
+      audio.preload = "auto"; audio.loop = false; audio.volume = this.state.volume;
+      sourceNode = this.attachToAudioGraph(audio);
+    } catch {
+      audio.pause();
+      sourceNode?.disconnect();
+      audio.removeAttribute("src");
+      audio.load();
+      return;
+    }
     const candidate: CandidateDeck = {
-      audio, sourceNode, track: nextTrack, index: nextIndex, generation, started: false, progressed: false, startTime: 0, progressTimer: null,
+      audio, sourceNode, track: nextTrack, index: nextIndex, generation, started: false, progressed: false, startTime: 0,
+      progressTimer: null, transitionTimer: null,
       onError: () => { if (this.candidate === candidate) this.disposeCandidate(candidate); },
       onLoadedMetadata: () => { if (this.candidate === candidate) this.maybeStartCandidate(generation); },
     };
     audio.addEventListener("error", candidate.onError); audio.addEventListener("loadedmetadata", candidate.onLoadedMetadata);
     this.candidate = candidate;
+    this.maybeStartCandidate(generation);
   }
 
   private maybeStartCandidate(generation: number) {
@@ -191,9 +254,23 @@ export class AmbientEngine {
           candidate.progressed = true;
           if (candidate.progressTimer) clearInterval(candidate.progressTimer);
           candidate.progressTimer = null;
+          this.startTransitionWatchdog(current, candidate, generation);
         } else if (Date.now() - startedAt >= CANDIDATE_PROGRESS_TIMEOUT_MS) this.disposeCandidate(candidate);
       }, CANDIDATE_PROGRESS_INTERVAL_MS);
     }).catch(() => { if (this.candidate === candidate) this.disposeCandidate(candidate); });
+  }
+
+  private startTransitionWatchdog(current: HTMLAudioElement, candidate: CandidateDeck, generation: number) {
+    const remainingMs = Math.max(0, current.duration - current.currentTime) * 1_000;
+    candidate.transitionTimer = setTimeout(() => {
+      if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) return;
+      candidate.transitionTimer = null;
+      if (candidate.progressed && !candidate.audio.paused && !candidate.audio.ended && !candidate.audio.error) {
+        this.promoteCandidate(candidate, generation);
+      } else {
+        this.disposeCandidate(candidate);
+      }
+    }, remainingMs + OVERLAP_END_TOLERANCE_MS);
   }
 
   private async handlePlaylistEnded(audio: HTMLAudioElement, generation: number) {
@@ -203,16 +280,19 @@ export class AmbientEngine {
     if (candidate) this.disposeCandidate(candidate);
     const nextIndex = (this.activeTrackIndex + 1) % this.playlist.length;
     this.cleanupCurrentPlayback();
-    if (this.isGenerationCurrent(generation)) await this.startTrack(nextIndex, generation);
+    if (this.isGenerationCurrent(generation)) await this.startPlaylistTrack(nextIndex, generation);
   }
 
   private promoteCandidate(candidate: CandidateDeck, generation: number) {
     if (this.candidate !== candidate || !this.isGenerationCurrent(generation)) return;
     this.cleanupCurrentPlayback(); this.candidate = null;
     if (candidate.progressTimer) clearInterval(candidate.progressTimer);
+    if (candidate.transitionTimer) clearTimeout(candidate.transitionTimer);
+    candidate.transitionTimer = null;
     candidate.audio.removeEventListener("error", candidate.onError); candidate.audio.removeEventListener("loadedmetadata", candidate.onLoadedMetadata);
     this.audio = candidate.audio; this.mediaSourceNode = candidate.sourceNode; this.activeTrackIndex = candidate.index;
-    this.installCurrentListeners(candidate.audio, candidate.track, generation);
+    this.candidateAttemptedForCurrent = false;
+    this.installPlaylistListeners(candidate.audio, generation);
     this.update({ status: "playing", activeTrackId: candidate.track.id, sourceKind: "blob", currentTime: candidate.audio.currentTime, error: null });
     this.prepareNextTrack(generation);
   }
@@ -221,6 +301,8 @@ export class AmbientEngine {
     if (!candidate) return;
     if (this.candidate === candidate) this.candidate = null;
     if (candidate.progressTimer) clearInterval(candidate.progressTimer);
+    if (candidate.transitionTimer) clearTimeout(candidate.transitionTimer);
+    candidate.transitionTimer = null;
     candidate.audio.removeEventListener("error", candidate.onError); candidate.audio.removeEventListener("loadedmetadata", candidate.onLoadedMetadata);
     candidate.audio.pause(); candidate.sourceNode?.disconnect(); candidate.audio.removeAttribute("src"); candidate.audio.load();
   }
@@ -256,7 +338,11 @@ export class AmbientEngine {
     const blobAudio = new Audio(cached.objectUrl);
     blobAudio.preload = "auto"; blobAudio.loop = true; blobAudio.volume = this.state.volume;
     this.mediaSourceNode = this.attachToAudioGraph(blobAudio); this.resumeAudioContext();
-    this.installCurrentListeners(blobAudio, track, generation); this.audio = blobAudio;
+    const onError = () => {
+      if (this.isPlaybackCurrent(blobAudio, generation)) this.handleError(new Error("The browser could not play this ambient track."));
+    };
+    blobAudio.addEventListener("error", onError);
+    this.audio = blobAudio; this.audioErrorListener = onError; this.audioEndedListener = null;
     this.update({ status: "loading", sourceKind: "blob", currentTime: 0, error: null });
     try { await blobAudio.play(); if (this.isPlaybackCurrent(blobAudio, generation)) this.update({ status: "playing", currentTime: blobAudio.currentTime }); }
     catch (error) { if (this.isPlaybackCurrent(blobAudio, generation)) this.handleError(error); }
@@ -287,7 +373,14 @@ export class AmbientEngine {
       this.gainNode.gain.value = this.state.volume; this.gainNode.connect(this.audioContext.destination);
     }
     if (!this.gainNode) return null;
-    const sourceNode = this.audioContext.createMediaElementSource(audio); sourceNode.connect(this.gainNode); return sourceNode;
+    const sourceNode = this.audioContext.createMediaElementSource(audio);
+    try {
+      sourceNode.connect(this.gainNode);
+      return sourceNode;
+    } catch (error) {
+      sourceNode.disconnect();
+      throw error;
+    }
   }
 
   private resumeAudioContext() {
