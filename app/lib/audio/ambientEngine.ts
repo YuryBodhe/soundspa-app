@@ -1,4 +1,5 @@
 import { ambientOverlapDiagnosticsEnabled, recordAmbientOverlapDiagnostic } from "./ambientOverlapDiagnostics";
+import { PersistentAmbientDecks } from "./persistentAmbientDecks";
 
 export interface AmbientTrack { id: string; url: string; }
 export type AmbientPlaybackStatus = "idle" | "loading" | "playing" | "error";
@@ -26,6 +27,7 @@ const OVERLAP_END_TOLERANCE_MS = 1_500;
 const INITIAL_STATE: AmbientEngineState = { status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null };
 
 export function ambientOverlapEnabled() { return process.env.NEXT_PUBLIC_V2_AMBIENT_OVERLAP === "1"; }
+export function persistentAmbientDecksEnabled() { return process.env.NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_DECKS === "1"; }
 
 export class AmbientEngine {
   private audio: HTMLAudioElement | null = null;
@@ -36,6 +38,7 @@ export class AmbientEngine {
   private audioEndedListener: (() => void) | null = null;
   private audioTimeUpdateListener: (() => void) | null = null;
   private candidate: CandidateDeck | null = null;
+  private persistentDecks: PersistentAmbientDecks | null = null;
   private playlist: readonly AmbientTrack[] = [];
   private activeTrackIndex = 0;
   private activeSelectionId: string | null = null;
@@ -93,6 +96,10 @@ export class AmbientEngine {
     if (this.disposed || typeof window === "undefined" || tracks.length === 0) return;
     if (!this.overlapEnabled) { await this.toggle(tracks[0]); return; }
     if (this.activeSelectionId === selectionId) { this.stop(); return; }
+    if (persistentAmbientDecksEnabled() && tracks.length === 1) {
+      this.startPersistentOneTrack(selectionId, tracks[0]);
+      return;
+    }
     if (this.candidate) this.diagnostic("overlap-cancelled", { transitionId: this.candidate.transitionId, reason: "channel-switch" });
     this.requestPlaybackAudioSession();
     const generation = ++this.generation;
@@ -109,6 +116,7 @@ export class AmbientEngine {
     if (this.audio) this.audio.volume = nextVolume;
     if (this.candidate) this.candidate.audio.volume = nextVolume;
     if (this.gainNode) this.gainNode.gain.value = nextVolume;
+    this.persistentDecks?.setVolume(nextVolume);
     this.update({ volume: nextVolume, currentTime: this.audio?.currentTime ?? this.state.currentTime });
   };
 
@@ -199,6 +207,7 @@ export class AmbientEngine {
         if (cached) { cached.lastUsed = ++this.usageSequence; URL.revokeObjectURL(objectUrl); return; }
         this.cache.set(track.id, { objectUrl, lastUsed: ++this.usageSequence });
         this.diagnostic("next-blob-ready", { trackId: track.id, blobSize: blob.size });
+        if (this.state.activeTrackId === track.id) this.persistentDecks?.setBlobUrl(objectUrl);
         this.evictLeastRecentlyUsed();
       })
       .catch((error) => { if (error instanceof DOMException && error.name === "AbortError") return; if (!this.disposed) console.error("[AmbientEngine] Cache", error); })
@@ -390,7 +399,32 @@ export class AmbientEngine {
     this.update({ status: "error", sourceKind: null, currentTime: 0, error: message });
   }
 
-  private cleanupPlayback() { this.disposeCandidate(); this.cleanupCurrentPlayback(); }
+  private cleanupPlayback() { this.persistentDecks?.dispose(); this.persistentDecks = null; this.disposeCandidate(); this.cleanupCurrentPlayback(); }
+
+  private startPersistentOneTrack(selectionId: string, track: AmbientTrack) {
+    // Called directly by the card click. The two deck play() calls happen synchronously in the constructor.
+    this.requestPlaybackAudioSession();
+    const generation = ++this.generation;
+    this.cancelPendingFetchesExcept(new Set([track.id]));
+    this.cleanupPlayback();
+    this.playlist = [track]; this.activeTrackIndex = 0; this.activeSelectionId = selectionId;
+    const cached = this.cache.get(track.id);
+    if (cached) cached.lastUsed = ++this.usageSequence;
+    this.update({ status: "loading", activeTrackId: track.id, sourceKind: cached ? "blob" : "network", currentTime: 0, error: null });
+    try {
+      this.persistentDecks = new PersistentAmbientDecks(track, cached?.objectUrl ?? track.url, cached?.objectUrl ?? null, this.state.volume,
+        (event, details) => this.diagnostic(event, details),
+        (status, sourceKind, currentTime, error) => {
+          if (!this.isGenerationCurrent(generation)) return;
+          this.update({ status, sourceKind, currentTime, error: error ?? null });
+        });
+    } catch (error) {
+      this.diagnostic("persistent-construction-failed", { error: error instanceof Error ? error.message : String(error) });
+      if (this.isGenerationCurrent(generation)) this.update({ status: "error", error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    if (!cached) void this.ensureCached(track);
+  }
   private cleanupCurrentPlayback() {
     if (!this.audio) return;
     this.audio.pause(); this.mediaSourceNode?.disconnect(); this.mediaSourceNode = null;
