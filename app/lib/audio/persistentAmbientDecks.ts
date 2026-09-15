@@ -4,7 +4,7 @@ type Deck = { id: "A" | "B"; audio: HTMLAudioElement; source: MediaElementAudioS
 type Diagnostic = (event: string, details: Record<string, unknown>) => void;
 type Status = (status: "loading" | "playing" | "error", sourceKind: "network" | "blob", currentTime: number, error?: string) => void;
 
-const OVERLAP_SECONDS = 3;
+const OVERLAP_SECONDS = 5;
 const PREPARE_SECONDS = 6;
 const PROGRESSION_TIMEOUT_MS = 2_000;
 const END_TOLERANCE_MS = 1_500;

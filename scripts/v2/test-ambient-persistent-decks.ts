@@ -53,9 +53,13 @@ async function run() {
   for (const expected of ["B", "A", "B"]) {
     state = internals(engine).persistentDecks!;
     const current = state.current.audio, standby = state.standby.audio;
-    current.currentTime = 7.1; current.dispatch("timeupdate");
+    const playCallsBeforeBoundary = standby.playCalls;
+    current.currentTime = 4.9; current.dispatch("timeupdate");
+    assert.equal(standby.playCalls, playCallsBeforeBoundary, "standby does not start before the five-second overlap boundary");
+    current.currentTime = 5; current.dispatch("timeupdate");
+    assert.equal(standby.playCalls, playCallsBeforeBoundary + 1, "standby starts at the five-second overlap boundary");
     assert.equal(standby.playCalls >= 2, true, "automatic standby play attempted");
-    current.currentTime = 7.2; standby.currentTime = 0.1; current.dispatch("timeupdate");
+    current.currentTime = 5.1; standby.currentTime = 0.1; current.dispatch("timeupdate");
     await wait(120); current.dispatch("timeupdate");
     current.ended = true; current.dispatch("ended"); await flush(); current.ended = false;
     state = internals(engine).persistentDecks!;
