@@ -154,8 +154,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
             : "Ready to play";
 
   const toggleAmbient = (channel: PlayerChannel) => {
-    const track = channel.tracks[0];
-    if (track) void ambientEngineRef.current?.toggle(track);
+    if (channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
   return (
@@ -209,7 +208,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
             <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label="Ambient volume" />
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
-            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks[0]?.id === ambientPlayback.activeTrackId} onSelect={() => toggleAmbient(channel)} />)}
+            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} onSelect={() => toggleAmbient(channel)} />)}
           </div>
         </section>
       </main>
