@@ -13,9 +13,15 @@ const sources = new Map<string, Source>();
 const current = new Map<string, State>();
 const lastSamples = new Map<string, { entry: Entry; state: string }>();
 export const musicDiagnosticsEnabled = () => {
-  if (process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS !== "1" || typeof window === "undefined") return false;
+  if (typeof window === "undefined") return false;
   const host = window.location?.hostname;
-  return host === STAGING_HOST || host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  const allowedHost = host === STAGING_HOST || host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  if (!allowedHost) return false;
+  let queryOptIn = false;
+  try { queryOptIn = new URLSearchParams(window.location?.search ?? "").get("musicDebug") === "1"; } catch { /* ignore malformed browser state */ }
+  let localOptIn = false;
+  try { localOptIn = window.localStorage?.getItem("soundspa:v2:musicDebug") === "1"; } catch { /* storage may be unavailable */ }
+  return process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS === "1" || queryOptIn || localOptIn;
 };
 export const allocateMusicDiagnosticId = () => ++nextEngineId;
 const normalize = (value: unknown): unknown => {
@@ -27,6 +33,7 @@ const normalize = (value: unknown): unknown => {
 };
 export function recordMusicDiagnostic(event: string, details: State) {
   if (!musicDiagnosticsEnabled()) return;
+  installMusicDiagnosticsWindowApi();
   const normalized = normalize(details) as State;
   const source = details.engineId === undefined ? "ui" : `${details.engineId}:${details.audioId}:${details.generation}:${details.sourceVersion}`;
   const descriptor = source === "ui" ? {} : Object.fromEntries(Object.entries(normalized).filter(([key]) => descriptorKeys.has(key)));
@@ -68,3 +75,13 @@ export function exportMusicDiagnostics() {
     sources: Object.fromEntries(sources), entries });
 }
 export function clearMusicDiagnostics() { entries.length = 0; sources.clear(); current.clear(); lastSamples.clear(); }
+
+export function installMusicDiagnosticsWindowApi() {
+  if (typeof window === "undefined") return;
+  const target = window as Window & { soundspaV2MusicDiagnostics?: Record<string, () => unknown> };
+  target.soundspaV2MusicDiagnostics ??= {
+    export: exportMusicDiagnostics,
+    reset: clearMusicDiagnostics,
+    snapshot: () => JSON.parse(exportMusicDiagnostics()),
+  };
+}

@@ -1,3 +1,5 @@
+import { recordMusicDiagnostic } from "./musicDiagnostics";
+
 export const MAX_MUSIC_SESSION_CACHE_BYTES = 150 * 1024 * 1024;
 
 type CacheEntry = {
@@ -69,6 +71,7 @@ export class MusicSessionCache {
 
   private log(event: string, details: Record<string, unknown>) {
     console.info(`[MusicSessionCache] ${event}`, details);
+    recordMusicDiagnostic(event, { ...details, cacheBudgetBytes: this.maxBytes, cacheTotalBytes: this.totalBytes, cacheEntryCount: this.entries.size });
   }
 }
 

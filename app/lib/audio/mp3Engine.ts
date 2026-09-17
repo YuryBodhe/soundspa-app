@@ -521,7 +521,7 @@ export class Mp3Engine {
       if (!this.isStartupOperationCurrent(audio, generation, sourceVersion, startupId, playRequestId)) return;
       if (!this.wantsPlayback) audio.pause();
     } catch (error) {
-      this.captureDiagnostic("play-rejected", { path: "completeStartup", playRequestId, error: String(error) }, audio, sourceVersion);
+      this.captureDiagnostic("play-rejected", { path: "completeStartup", playRequestId, errorName: error instanceof Error ? error.name : "UnknownError", errorMessage: String(error) }, audio, sourceVersion);
       if (isRecoveryAttempt) {
         this.logRecovery("recovery-play-rejected", {
           errorName: error instanceof Error ? error.name : "UnknownError",
@@ -795,7 +795,7 @@ export class Mp3Engine {
         void this.ensureCachePipeline();
       }
     } catch (error) {
-      this.captureDiagnostic("play-rejected", { path: "playCurrentAudio", playRequestId, error: String(error) }, audio, sourceVersion);
+      this.captureDiagnostic("play-rejected", { path: "playCurrentAudio", playRequestId, errorName: error instanceof Error ? error.name : "UnknownError", errorMessage: String(error) }, audio, sourceVersion);
       if (!this.isAudioOperationCurrent(audio, generation, sourceVersion, playRequestId) || !this.wantsPlayback) return;
       this.handlePlayError(error);
     }

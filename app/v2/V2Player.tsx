@@ -115,7 +115,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   }, []);
 
   const toggleMusicPlayback = () => {
-    recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status });
+    recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status, intent: musicWantsPlaybackRef.current });
     if (playback.status === "playing" || playback.status === "loading") {
       musicWantsPlaybackRef.current.stop();
       engineRef.current?.pause();
@@ -126,7 +126,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   };
 
   const selectMusic = (channel: PlayerChannel) => {
-    recordMusicDiagnostic("ui-channel-select", { fromChannelId: activeChannelId, toChannelId: channel.id, title: channel.title, status: playback.status });
+    recordMusicDiagnostic("ui-channel-select", { fromChannelId: activeChannelId, toChannelId: channel.id, title: channel.title, status: playback.status, intent: musicWantsPlaybackRef.current });
     const playlist = channel.tracks.length ? channel.tracks : null;
     if (channel.id === activeChannelId) {
       if (playlist) toggleMusicPlayback();

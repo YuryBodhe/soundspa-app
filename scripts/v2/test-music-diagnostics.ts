@@ -14,7 +14,7 @@ class DiagnosticAudio extends EventTarget {
   removeAttribute() { this.src = ""; }
   async play() { this.playCalls++; this.paused = false; this.dispatchEvent(new Event("playing")); }
 }
-const browser = Object.assign(new EventTarget(), { location: { hostname: "production.invalid" } });
+const browser = Object.assign(new EventTarget(), { location: { hostname: "production.invalid", search: "" }, localStorage: undefined });
 Object.assign(globalThis, { window: browser, Audio: DiagnosticAudio, HTMLMediaElement: { HAVE_METADATA: 1, HAVE_FUTURE_DATA: 3, NETWORK_LOADING: 2 } });
 type State = Record<string, unknown>;
 type Trace = { schemaVersion: number; entryCount: number; sources: Record<string, { descriptor: State; baseline: State }>; entries: {event:string;source:string;delta?:State;snapshot?:State;repeats?:number;spanMs?:number}[] };
@@ -40,10 +40,26 @@ async function main() {
   for (const host of ["localhost", "127.0.0.1", "[::1]"]) { browser.location.hostname = host; assert.equal(musicDiagnosticsEnabled(), true); }
   for (const host of ["soundspa.bodhemusic.com", "production.invalid", "preview.invalid"]) { browser.location.hostname = host; assert.equal(musicDiagnosticsEnabled(), false); recordMusicDiagnostic("production-disabled", {}); }
   assert.equal(trace().entryCount, 0);
+  delete process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS;
+  browser.location.hostname = "test.soundspa.bodhemusic.com";
+  browser.location.search = "?musicDebug=1";
+  assert.equal(musicDiagnosticsEnabled(), true);
+  recordMusicDiagnostic("query-opt-in", { ok: true });
+  assert.equal(typeof (browser as any).soundspaV2MusicDiagnostics?.export, "function");
+  assert.equal((browser as any).soundspaV2MusicDiagnostics.snapshot().entryCount, 1);
+  (browser as any).soundspaV2MusicDiagnostics.reset();
+  browser.location.search = "";
+  process.env.NEXT_PUBLIC_V2_MUSIC_DIAGNOSTICS = "1";
   browser.location.hostname = "test.soundspa.bodhemusic.com";
   for (let i = 0; i < 700; i++) recordMusicDiagnostic("bounded", { i });
   assert.equal(trace().entryCount, 600); assert.equal(reconstruct(trace())[0].details.i, 100);
   assert.equal(trace().sources.ui.baseline.i, 99);
+  clearMusicDiagnostics();
+  const diagnosticCache = new MusicSessionCache(10);
+  diagnosticCache.put("a", new Blob(["12345"]));
+  diagnosticCache.put("b", new Blob(["67890"]));
+  assert(trace().entries.some(entry => entry.event === "cache-put"));
+  assert(trace().entries.some(entry => entry.event === "cache-evict"));
   clearMusicDiagnostics();
   recordMusicDiagnostic("ui-play-pause", { channelId: "first", status: "loading" });
   recordMusicDiagnostic("ui-play-pause", { channelId: "second", status: "paused" });
