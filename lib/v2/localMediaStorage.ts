@@ -3,10 +3,29 @@ import { createReadStream } from "node:fs";
 import { chmod, link, realpath, stat, lstat, unlink } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import sharp from "sharp";
-import { resolveImageUrl, resolveMediaUrl } from "../../app/v2/mediaUrls";
 import { UploadError } from "./uploadError";
 import { safeDirectory } from "./uploadWorkspace";
 import type { CanonicalMediaStorage, ChannelReference, TrackReference } from "./canonicalMediaStorage";
+
+// Keep server-only storage validation independent from the Next.js app source.
+// The standalone runner ships lib/db/scripts, while URL delivery remains owned
+// by app/v2/mediaUrls.ts.
+function validateMediaKey(kind: "music" | "ambient", storageKey: string) {
+  const segments = storageKey.split("/");
+  if (!segments.every((segment) => /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(segment) && segment !== "." && segment !== "..")) {
+    throw new UploadError("Unsupported media key");
+  }
+  if (!storageKey.endsWith(".mp3")) throw new UploadError("Unsupported media type");
+  if (kind === "music" && segments[0] === "music" && segments.length === 3) return;
+  if (kind === "ambient" && segments[0] === "ambient" && segments.length >= 2) return;
+  throw new UploadError("Unsupported media delivery mapping");
+}
+
+function validateImageKey(imageKey: string) {
+  if (!imageKey.split("/").every((segment) => /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(segment) && segment !== "." && segment !== "..")) {
+    throw new UploadError("Unsupported image key");
+  }
+}
 
 // Same-filesystem hard-link publishes atomically and fails with EEXIST. Rename
 // would silently overwrite an existing object; it is deliberately not used.
@@ -24,7 +43,7 @@ export async function publishImmutable(root: string, source: string, key: string
 // Only DB-derived music/ambient keys may be passed here. Never follow symlinks.
 export async function inspectOwnedTrackFile(root: string, key: string) {
   if (!/^(music|ambient)\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.mp3$/.test(key) || key.split("/").some(part => !part || part === "." || part === "..")) throw new UploadError("Unsafe track storage key; deletion rejected.");
-  resolveMediaUrl(key.startsWith("music/") ? "music" : "ambient",key);
+  validateMediaKey(key.startsWith("music/") ? "music" : "ambient", key);
   const canonicalRoot = await realpath(root);
   const file = resolve(canonicalRoot,key);
   if (!file.startsWith(canonicalRoot+sep)) throw new UploadError("Unsafe media path.");
@@ -56,13 +75,13 @@ async function existingFile(root: string, key: string) {
 async function validateLocalReferences(root: string, channel: ChannelReference, tracks: TrackReference[]) {
   try {
     if (!channel.imageKey) throw new Error("Missing artwork.");
-    resolveImageUrl(channel.imageKey);
+    validateImageKey(channel.imageKey);
     const artworkRoot = channel.imageKey.startsWith("artwork/") ? root : resolve(process.cwd(),"public");
     const artwork = await existingFile(artworkRoot,channel.imageKey);
     const metadata = await sharp(artwork.file,{limitInputPixels:16_000_000}).metadata();
     if (!["jpeg","png"].includes(metadata.format ?? "")) throw new Error("Invalid artwork.");
     for (const track of tracks.filter((track)=>track.isEnabled)) {
-      resolveMediaUrl(channel.kind,track.storageKey);
+      validateMediaKey(channel.kind, track.storageKey);
       const stored = await existingFile(root,track.storageKey);
       if (BigInt(stored.info.size) !== track.sizeBytes) throw new Error("Size mismatch.");
     }
