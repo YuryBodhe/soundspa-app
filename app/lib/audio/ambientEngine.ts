@@ -22,6 +22,8 @@ const CANDIDATE_PROGRESS_TIMEOUT_MS = 2_000;
 const CANDIDATE_PROGRESS_INTERVAL_MS = 100;
 // Give A a short grace after its calculated end; then prefer already-progressing B over indefinite double playback.
 const OVERLAP_END_TOLERANCE_MS = 1_500;
+function createAmbientAudio(url: string): HTMLAudioElement { const audio = new Audio(); audio.crossOrigin = "anonymous"; audio.src = url; return audio; }
+
 const INITIAL_STATE: AmbientEngineState = { status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null };
 
 export function ambientOverlapEnabled() { return process.env.NEXT_PUBLIC_V2_AMBIENT_OVERLAP === "1"; }
@@ -63,7 +65,7 @@ export class AmbientEngine {
     const cached = this.cache.get(track.id);
     if (cached) cached.lastUsed = ++this.usageSequence;
     const sourceKind = cached ? "blob" : "network";
-    const audio = new Audio(cached?.objectUrl ?? track.url);
+    const audio = createAmbientAudio(cached?.objectUrl ?? track.url);
     audio.preload = "auto";
     audio.loop = sourceKind === "blob";
     audio.volume = this.state.volume;
@@ -150,7 +152,7 @@ export class AmbientEngine {
     const cached = this.cache.get(track.id);
     if (cached) cached.lastUsed = ++this.usageSequence;
     const sourceKind = cached ? "blob" : "network";
-    const audio = new Audio(cached?.objectUrl ?? track.url);
+    const audio = createAmbientAudio(cached?.objectUrl ?? track.url);
     audio.preload = "auto";
     audio.loop = false;
     audio.volume = this.state.volume;
@@ -226,7 +228,7 @@ export class AmbientEngine {
     if (!cached) return;
     this.candidateAttemptedForCurrent = true;
     cached.lastUsed = ++this.usageSequence;
-    const audio = new Audio(cached.objectUrl);
+    const audio = createAmbientAudio(cached.objectUrl);
     let sourceNode: MediaElementAudioSourceNode | null = null;
     try {
       audio.preload = "auto"; audio.loop = false; audio.volume = this.state.volume;
@@ -346,7 +348,7 @@ export class AmbientEngine {
     cached.lastUsed = ++this.usageSequence;
     this.cleanupCurrentPlayback();
     if (!this.isGenerationCurrent(generation) || this.state.activeTrackId !== track.id) return;
-    const blobAudio = new Audio(cached.objectUrl);
+    const blobAudio = createAmbientAudio(cached.objectUrl);
     blobAudio.preload = "auto"; blobAudio.loop = true; blobAudio.volume = this.state.volume;
     this.mediaSourceNode = this.attachToAudioGraph(blobAudio); this.resumeAudioContext();
     const onError = () => {

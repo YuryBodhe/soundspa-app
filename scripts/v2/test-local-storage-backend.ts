@@ -82,7 +82,13 @@ async function main() {
     assert.deepEqual(await readFile(join(root, "outside/keep.mp3")), data);
     assert.equal(resolveMediaUrl("music", key), "/music/unit/one.mp3");
     assert.equal(resolveMediaUrl("ambient", "ambient/unit/one.mp3"), "/noise/unit/one.mp3");
+    process.env.V2_MEDIA_DELIVERY_BACKEND = "cdn";
+    assert.equal(resolveMediaUrl("music", key), "https://media.soundspa.bodhemusic.com/music/unit/one.mp3");
+    assert.equal(resolveMediaUrl("ambient", "ambient/unit/one.mp3"), "https://media.soundspa.bodhemusic.com/ambient/unit/one.mp3");
     assert.equal(resolveImageUrl("artwork/first.jpg"), "/artwork/first.jpg");
+    process.env.V2_MEDIA_DELIVERY_BACKEND = "unknown";
+    assert.throws(() => resolveMediaUrl("music", key), /Unsupported V2_MEDIA_DELIVERY_BACKEND/);
+    delete process.env.V2_MEDIA_DELIVERY_BACKEND;
     console.info("PASS: local/default config, unsupported backend rejection, hard-link/no-overwrite, size/SHA-256, private cleanup, artwork/source hash, publish validation, bundled artwork, symlink/path rejection, delete/missing and unchanged delivery URLs.");
   } finally {
     if (previousBackend === undefined) delete process.env.V2_MEDIA_STORAGE_BACKEND;

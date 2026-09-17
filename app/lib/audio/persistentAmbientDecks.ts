@@ -1,5 +1,6 @@
 type Deck = { id: "A" | "B"; audio: HTMLAudioElement; source: MediaElementAudioSourceNode; gate: GainNode; primed: boolean; primeProgressed: boolean; primeStart: number; primeTimer: ReturnType<typeof setInterval> | null };
 type Status = (status: "loading" | "playing" | "error", sourceKind: "network" | "blob", currentTime: number, error?: string) => void;
+function createAmbientAudio(url: string): HTMLAudioElement { const audio = new Audio(); audio.crossOrigin = "anonymous"; audio.src = url; return audio; }
 
 const OVERLAP_SECONDS = 5;
 const PREPARE_SECONDS = 6;
@@ -29,7 +30,7 @@ export class PersistentAmbientDecks {
     this.volumeGain.gain.value = volume;
     this.volumeGain.connect(this.context.destination);
     const makeDeck = (id: "A" | "B"): Deck => {
-      const audio = new Audio(sourceUrl);
+      const audio = createAmbientAudio(sourceUrl);
       audio.preload = "auto"; audio.loop = false; audio.volume = 1;
       const gate = this.context.createGain();
       gate.gain.value = id === "A" ? 1 : 0;
