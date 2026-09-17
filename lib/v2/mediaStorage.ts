@@ -2,31 +2,24 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { createWriteStream } from "node:fs";
-import { appendFile, chmod, link, mkdir, mkdtemp, realpath, rm, stat, lstat, unlink } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { appendFile, chmod, mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
 import sharp from "sharp";
-import { resolveImageUrl, resolveMediaUrl } from "../../app/v2/mediaUrls";
+import { UploadError } from "./uploadError";
+import { mediaRoot, safeDirectory } from "./uploadWorkspace";
+import { canonicalMediaStorage, type ChannelReference, type TrackReference } from "./canonicalMediaStorage";
+
+export { UploadError } from "./uploadError";
+export { mediaRoot } from "./uploadWorkspace";
+// Compatibility exports for existing local filesystem callers/tests.
+export { publishImmutable, inspectOwnedTrackFile, removeOwnedTrackFile } from "./localMediaStorage";
 
 const execute = promisify(execFile);
 export const MP3_LIMIT = 128 * 1024 * 1024;
 export const ARTWORK_LIMIT = 10 * 1024 * 1024;
-export class UploadError extends Error {
-  constructor(message: string, public status = 422) { super(message); this.name = "UploadError"; }
-}
-export async function mediaRoot() {
-  if (!process.env.V2_MEDIA_ROOT) throw new UploadError("External media storage is not configured.", 503);
-  return realpath(process.env.V2_MEDIA_ROOT);
-}
-async function safeDirectory(root: string, relative: string, mode = 755) {
-  const directory = join(root, relative);
-  await mkdir(directory, {recursive:true, mode: mode === 700 ? 0o700 : 0o755});
-  const actual = await realpath(directory);
-  if (!actual.startsWith(root + sep)) throw new UploadError("Unsafe media directory.");
-  return actual;
-}
 export async function receiveUpload(request: Request, kind: "track" | "artwork", workspace?:string) {
   const root = await mediaRoot();
   const privateDirectory = await safeDirectory(root, ".uploads", 700);
@@ -88,19 +81,6 @@ export async function receiveUpload(request: Request, kind: "track" | "artwork",
   } catch (error) { await rm(directory,{recursive:true,force:true}); throw error; }
 }
 
-// Same-filesystem hard-link publishes atomically and fails with EEXIST. Rename
-// would silently overwrite an existing object; it is deliberately not used.
-export async function publishImmutable(root: string, source: string, key: string) {
-  const parts = key.split("/");
-  if (!parts.every((part)=>/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(part))) throw new UploadError("Invalid generated media key.");
-  const parent = await safeDirectory(root, parts.slice(0,-1).join("/"));
-  const destination = join(parent,parts.at(-1)!);
-  await chmod(source,0o644);
-  await link(source,destination);
-  // The private link is removed by request cleanup. Nothing fallible follows
-  // publication here, so the caller can always account for the canonical file.
-}
-
 export async function recordOrphan(root: string, key: string, channelId: string, reason = "DB outcome failed or ambiguous; reconcile before deletion") {
   try {
     const directory = await safeDirectory(root,".uploads",700);
@@ -108,51 +88,9 @@ export async function recordOrphan(root: string, key: string, channelId: string,
   } finally { console.error("[V2Upload] orphan-review-required", {key,channelId}); }
 }
 
-// Only DB-derived music/ambient keys may be passed here. Never follow symlinks.
-export async function inspectOwnedTrackFile(root: string, key: string) {
-  if (!/^(music|ambient)\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.mp3$/.test(key) || key.split("/").some(part => !part || part === "." || part === "..")) throw new UploadError("Unsafe track storage key; deletion rejected.");
-  resolveMediaUrl(key.startsWith("music/") ? "music" : "ambient",key);
-  const canonicalRoot = await realpath(root);
-  const file = resolve(canonicalRoot,key);
-  if (!file.startsWith(canonicalRoot+sep)) throw new UploadError("Unsafe media path.");
-  let parent=dirname(file);
-  while(parent!==canonicalRoot){
-    try {if(await realpath(parent)!==parent) throw new UploadError("Symlink media paths cannot be deleted.");break;}
-    catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;parent=dirname(parent);}
-  }
+export async function validateChannelReferences(channel: ChannelReference, tracks: TrackReference[]) {
   try {
-    const info=await lstat(file);
-    if(!info.isFile() || await realpath(file)!==file) throw new UploadError("Only owned regular track files can be deleted.");
-    return {file,missing:false};
-  } catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {file,missing:true};throw error;}
-}
-export async function removeOwnedTrackFile(root:string,key:string) {
-  const target=await inspectOwnedTrackFile(root,key);
-  if(target.missing)return "already-missing" as const;
-  try {await unlink(target.file);return "removed" as const;}
-  catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return "already-missing" as const;throw error;}
-}
-
-async function existingFile(root: string, key: string) {
-  const file = await realpath(join(root,key));
-  if (!file.startsWith(root+sep)) throw new UploadError("Media reference escapes storage.");
-  const info = await stat(file);
-  if (!info.isFile() || info.size === 0) throw new UploadError("Missing or empty referenced media.");
-  return {file,info};
-}
-export async function validateChannelReferences(channel: {kind:"music"|"ambient";imageKey:string|null}, tracks: {storageKey:string;sizeBytes:bigint;isEnabled:boolean}[]) {
-  try {
-    if (!channel.imageKey) throw new Error("Missing artwork.");
-    resolveImageUrl(channel.imageKey);
-    const root = await mediaRoot();
-    const artworkRoot = channel.imageKey.startsWith("artwork/") ? root : resolve(process.cwd(),"public");
-    const artwork = await existingFile(artworkRoot,channel.imageKey);
-    const metadata = await sharp(artwork.file,{limitInputPixels:16_000_000}).metadata();
-    if (!["jpeg","png"].includes(metadata.format ?? "")) throw new Error("Invalid artwork.");
-    for (const track of tracks.filter((track)=>track.isEnabled)) {
-      resolveMediaUrl(channel.kind,track.storageKey);
-      const stored = await existingFile(root,track.storageKey);
-      if (BigInt(stored.info.size) !== track.sizeBytes) throw new Error("Size mismatch.");
-    }
+    const storage = canonicalMediaStorage(await mediaRoot());
+    await storage.validateReferences(channel, tracks);
   } catch { throw new UploadError("Cannot publish: artwork or enabled track media is missing, invalid, or has an unexpected size."); }
 }

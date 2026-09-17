@@ -4,7 +4,8 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { join } from "node:path";
 import { z } from "zod";
-import { mediaRoot, MP3_LIMIT, receiveUpload, UploadError } from "./mediaStorage";
+import { mediaRoot } from "./uploadWorkspace";
+import { MP3_LIMIT, receiveUpload, UploadError } from "./mediaStorage";
 
 export const CHUNK_BYTES = 512 * 1024;
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;

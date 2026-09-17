@@ -18,6 +18,7 @@ services:
       # Empty values fail closed for Admin only; public catalog remains available.
       V2_ADMIN_USERNAME: ${V2_ADMIN_USERNAME:-}
       V2_ADMIN_PASSWORD: ${V2_ADMIN_PASSWORD:-}
+      V2_MEDIA_STORAGE_BACKEND: ${V2_MEDIA_STORAGE_BACKEND:-local}
       V2_MEDIA_ROOT: /var/lib/soundspa-v2-media
     volumes:
       - type: bind
