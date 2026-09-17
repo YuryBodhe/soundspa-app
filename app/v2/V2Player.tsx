@@ -7,6 +7,7 @@ import { Mp3Engine, type Mp3EngineState } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
+import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
@@ -68,6 +69,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   const engineRef = useRef<Mp3Engine | null>(null);
   const engineChannelIdRef = useRef<string | null>(null);
   const engineUnsubscribeRef = useRef<(() => void) | null>(null);
+  const musicWantsPlaybackRef = useRef(new MusicPlaybackIntent());
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
@@ -114,8 +116,13 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
 
   const toggleMusicPlayback = () => {
     recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status });
-    if (playback.status === "playing" || playback.status === "loading") engineRef.current?.pause();
-    else void engineRef.current?.play();
+    if (playback.status === "playing" || playback.status === "loading") {
+      musicWantsPlaybackRef.current.stop();
+      engineRef.current?.pause();
+    } else {
+      musicWantsPlaybackRef.current.start();
+      void engineRef.current?.play();
+    }
   };
 
   const selectMusic = (channel: PlayerChannel) => {
@@ -125,7 +132,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
       if (playlist) toggleMusicPlayback();
       return;
     }
-    const shouldContinuePlaying = playback.status === "playing" || playback.status === "loading";
+    const shouldContinuePlaying = musicWantsPlaybackRef.current.wantsPlayback;
     setActiveChannelId(channel.id);
     if (!playlist) {
       engineRef.current?.pause();
