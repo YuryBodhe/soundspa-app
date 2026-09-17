@@ -52,6 +52,9 @@ async function main() {
     assert.equal(await storage.matchesOwnedTrack(key, { sha256: "0".repeat(64) }), false);
     assert.equal(fake.objects.get(key)?.contentType, "audio/mpeg");
     assert.equal(fake.objects.get(key)?.cacheControl, "public, max-age=2592000");
+    fake.objects.get(key)!.metadata = { sha256: "0".repeat(64) };
+    assert.equal(await storage.matchesOwnedTrack(key, { size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }), false, "SHA-256 metadata is part of verification");
+    fake.objects.get(key)!.metadata = { sha256: createHash("sha256").update(bytes).digest("hex") };
     await assert.rejects(storage.publishImmutable(source, key), error => error instanceof S3ObjectAlreadyExistsError && storage.isAlreadyExistsError(error));
     assert.deepEqual(fake.objects.get(key)?.bytes, bytes);
     await assert.rejects(storage.removeOwnedTrack(key), /deletion is disabled/);

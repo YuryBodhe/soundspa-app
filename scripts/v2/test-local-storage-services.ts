@@ -104,6 +104,17 @@ async function main() {
       assert(!tables.get("channel_tracks")!.some(row => row.id === collision.id));
       assert.equal((await readFile(join(root, collision.key))).toString(), "different");
 
+      const prepared = makeIdentity();
+      await storage.publishImmutable(upload.file, prepared.key);
+      const canonicalReceipt = { mode: "s3-local" as const, key: prepared.key, size: upload.size, sha256: upload.sha256, s3Verified: true, localVerified: true };
+      failCommit = true;
+      await assert.rejects(attachContentUpload(channelId, "track", upload, "Prepared.mp3", prepared, canonicalReceipt), /orphan review/);
+      failCommit = false;
+      assert(!tables.get("channel_tracks")!.some(row => row.id === prepared.id));
+      assert.deepEqual(await readFile(join(root, prepared.key)), bytes, "DB failure retains prepared canonical media");
+      await attachContentUpload(channelId, "track", upload, "Prepared.mp3", prepared, canonicalReceipt);
+      assert(tables.get("channel_tracks")!.some(row => row.id === prepared.id));
+
       const a = await attachContentUpload(channelId, "artwork", artwork, "first.png");
       const b = await attachContentUpload(channelId, "artwork", artwork, "second.png");
       assert.notEqual(a.key, b.key);
@@ -112,6 +123,7 @@ async function main() {
       const service = contentAdminService(connection as unknown as Parameters<typeof contentAdminService>[0]);
       await service.publication(channelId, true);
       assert.equal(tables.get("channels")!.find(row => row.id === channelId)!.isPublished, true);
+      assert.match(await deleteContentTrack(prepared.id), /permanently deleted/);
 
       const track = tables.get("channel_tracks")!.find(row => row.id === first.id)!;
       assert.match(await cleanupDeletedTrack(track as never, root, async () => true), /another track/);

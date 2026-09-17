@@ -9,6 +9,7 @@ import {createUploadSession,acceptUploadChunk,uploadSessionStatus,finalizeUpload
 import {publishImmutable} from "../../lib/v2/mediaStorage";
 import {AsyncLocalStorage} from "node:async_hooks";
 import {resumeMp3Upload,UploadResponseError} from "../../app/app/admin/channels/v2/resumableClient";
+import {CanonicalMediaPreparationError,type CanonicalMediaReceipt} from "../../lib/v2/resumableCanonicalMedia";
 async function main(){
  const root=await mkdtemp(join(tmpdir(),"soundspa-resumable-test-"));process.env.V2_MEDIA_ROOT=root;
  const rows=new Map<string,{key:string;size:number}>();let attachments=0;
@@ -43,6 +44,20 @@ async function main(){
   const receipt=join(root,".uploads/sessions",m.uploadId,"session.json");
   await writeFile(receipt,JSON.stringify({...done,state:"finalizing"}));
   assert.equal((await uploadSessionStatus(m.uploadId,adapter)).state,"completed");assert.equal(attachments,1);
+  // S3 success followed by local-retention failure persists a receipt and can
+  // retry the same uploadId without changing its identity.
+  const retry=metadata();let prepareAttempts=0;let retryAttachments=0;const retryRows=new Set<string>();
+  const retryAdapter={channel:adapter.channel,find:async(s:Session)=>!!s.trackId&&retryRows.has(s.trackId),
+   prepare:async(_s:Session,u:{size:number;sha256:string},identity:{id:string;key:string}):Promise<CanonicalMediaReceipt>=>{
+    prepareAttempts++;const r:CanonicalMediaReceipt={mode:"s3-local",key:identity.key,size:u.size,sha256:u.sha256,s3Verified:true,localVerified:prepareAttempts>1};
+    if(!r.localVerified)throw new CanonicalMediaPreparationError("local retention failed",r);return r;
+   },
+   attach:async(_s:Session,_u:unknown,identity:{id:string})=>{retryAttachments++;retryRows.add(identity.id);}};
+  await createUploadSession(retry,retryAdapter);let rs=await uploadSessionStatus(retry.uploadId,retryAdapter);
+  while(rs.offset<bytes.length)rs=await acceptUploadChunk(retry.uploadId,rs.offset,request(retry,bytes.subarray(rs.offset,Math.min(bytes.length,rs.offset+CHUNK_BYTES))));
+  await assert.rejects(finalizeUploadSession(retry.uploadId,retryAdapter),/local retention failed/);
+  const failed=await uploadSessionStatus(retry.uploadId,retryAdapter);assert.equal(failed.state,"failed");assert.equal(failed.canonical?.s3Verified,true);assert.equal(failed.canonical?.localVerified,false);assert.equal(retryAttachments,0);
+  const retried=await finalizeUploadSession(retry.uploadId,retryAdapter);assert.equal(retried.state,"completed");assert.equal(retried.trackId,retry.uploadId);assert.equal(prepareAttempts,2);assert.equal(retryAttachments,1);
   const expired=metadata();await createUploadSession(expired,adapter);await acceptUploadChunk(expired.uploadId,0,request(expired,bytes.subarray(0,100)));
   const ep=join(root,".uploads/sessions",expired.uploadId);const es=JSON.parse(await readFile(join(ep,"session.json"),"utf8"));es.expiresAt=Date.now()-1;await writeFile(join(ep,"session.json"),JSON.stringify(es));await cleanupExpiredSessions();
   assert.equal((await uploadSessionStatus(expired.uploadId,adapter)).state,"expired");await assert.rejects(stat(join(ep,"partial")),{code:"ENOENT"});assert.deepEqual(await readFile(join(root,done.key!)),bytes);

@@ -5,15 +5,16 @@ import { Readable } from "node:stream";
 import { join } from "node:path";
 import { z } from "zod";
 import { mediaRoot } from "./uploadWorkspace";
-import { MP3_LIMIT, receiveUpload, UploadError } from "./mediaStorage";
+import { MP3_LIMIT, receiveUpload, recordOrphan, UploadError } from "./mediaStorage";
+import { CanonicalMediaPreparationError, prepareResumableCanonicalMedia, type CanonicalMediaReceipt } from "./resumableCanonicalMedia";
 
 export const CHUNK_BYTES = 512 * 1024;
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const metadataSchema = z.object({uploadId:z.string().uuid(),channelId:z.string().uuid(),originalFilename:z.string().min(1).max(200).refine(v=>!/[\/\\\x00-\x1f\x7f]/.test(v)),expectedSize:z.number().int().positive().max(MP3_LIMIT),contentType:z.literal("audio/mpeg")});
 export type UploadMetadata = z.infer<typeof metadataSchema>;
-export type Session = UploadMetadata & {version:1;createdAt:number;expiresAt:number;offset:number;state:"uploading"|"ready"|"finalizing"|"completed"|"failed"|"expired";key?:string;trackId?:string;sha256?:string;error?:string;integrity?:{expectedSize:number;receivedSize:number;tempSize:number;storedSize:number;sourceSha256:string}};
+export type Session = UploadMetadata & {version:1;createdAt:number;expiresAt:number;offset:number;state:"uploading"|"ready"|"finalizing"|"completed"|"failed"|"expired";key?:string;trackId?:string;sha256?:string;error?:string;integrity?:{expectedSize:number;receivedSize:number;tempSize:number;storedSize:number;sourceSha256:string};canonical?:CanonicalMediaReceipt};
 type Attachment = {id:string;key:string};
-type Adapter = {channel:(id:string)=>Promise<{kind:string;slug:string;archivedAt:unknown}|null>;find:(session:Session)=>Promise<boolean>;attach:(session:Session,upload:Awaited<ReturnType<typeof receiveUpload>>,identity:Attachment)=>Promise<void>};
+type Adapter = {channel:(id:string)=>Promise<{kind:string;slug:string;archivedAt:unknown}|null>;find:(session:Session)=>Promise<boolean>;prepare?:(session:Session,upload:Awaited<ReturnType<typeof receiveUpload>>,identity:Attachment)=>Promise<CanonicalMediaReceipt|undefined>;attach:(session:Session,upload:Awaited<ReturnType<typeof receiveUpload>>,identity:Attachment,receipt?:CanonicalMediaReceipt)=>Promise<void>};
 const adapter:Adapter = {
  async channel(id){return (await import("../../db/v2/queries/contentAdmin")).getAdminChannel(id);},
  async find(s){
@@ -24,7 +25,8 @@ const adapter:Adapter = {
   if(t.channelId!==s.channelId||t.storageKey!==s.key||t.originalFilename!==s.originalFilename||t.sizeBytes!==BigInt(s.expectedSize))throw new UploadError("Upload identity conflict; operator review required.",409);
   return true;
  },
- async attach(s,u,identity){await (await import("../../db/v2/services/contentUpload")).attachContentUpload(s.channelId,"track",u,s.originalFilename,identity);}
+ async prepare(_s,u,identity){return prepareResumableCanonicalMedia(u.root,u.file,identity.key,{size:u.size,sha256:u.sha256});},
+ async attach(s,u,identity,receipt){await (await import("../../db/v2/services/contentUpload")).attachContentUpload(s.channelId,"track",u,s.originalFilename,identity,receipt);}
 };
 // This filesystem protocol supports the existing single staging app process.
 // Serializing the entire operation also excludes expiry cleanup from active work.
@@ -153,9 +155,9 @@ export async function finalizeUploadSession(id:string,a:Adapter=adapter):Promise
  if(finalizers>=2)throw new UploadError("Validation busy; query status and retry shortly.",429);
  finalizers++;
  try{return await exclusive(id,async()=>{
-  const {dir}=await paths(id);const s=await load(dir);await reconcile(dir,s,a);await expire(dir,s);
+  const {dir,root}=await paths(id);const s=await load(dir);await reconcile(dir,s,a);await expire(dir,s);
   if(s.state==="completed")return s;
-  if(!["ready","finalizing"].includes(s.state)||s.offset!==s.expectedSize)throw new UploadError("Upload is not complete.",409);
+  if(!["ready","finalizing","failed"].includes(s.state)||s.offset!==s.expectedSize)throw new UploadError("Upload is not complete.",409);
   if((await stat(join(dir,"partial"))).size!==s.expectedSize)throw new UploadError("Incomplete partial file.",422);
   const c=await a.channel(s.channelId);if(!c||c.archivedAt)throw new UploadError("Channel missing or archived.",409);
   s.trackId??=s.uploadId;s.key??=`${c.kind}/${c.slug}/${s.uploadId}.mp3`;s.state="finalizing";await save(dir,s);log("finalize-start",s);
@@ -166,9 +168,12 @@ export async function finalizeUploadSession(id:string,a:Adapter=adapter):Promise
    const body=Readable.toWeb(createReadStream(join(dir,"partial"))) as ReadableStream;
    upload=await receiveUpload(new Request("http://internal.invalid",{method:"POST",headers:{"x-upload-size":String(s.expectedSize),"content-length":String(s.expectedSize)},body,duplex:"half"} as RequestInit),"track",dir);
    s.sha256=upload.sha256;s.integrity={expectedSize:upload.expectedSize,receivedSize:upload.receivedSize,tempSize:upload.tempSize,storedSize:upload.size,sourceSha256:upload.sha256};await save(dir,s);
-   await a.attach(s,upload,{id:s.trackId,key:s.key});
+   const identity={id:s.trackId,key:s.key};
+   s.canonical=await a.prepare?.(s,upload,identity);await save(dir,s);
+   await a.attach(s,upload,identity,s.canonical);
    s.state="completed";s.expiresAt=Date.now()+SESSION_TTL_MS;await save(dir,s);await rm(join(dir,"partial"),{force:true});log("finalize-complete",s,{trackId:s.trackId,size:s.expectedSize,sha256:s.sha256});return s;
   } catch(e){
+   if(e instanceof CanonicalMediaPreparationError){s.canonical=e.receipt;await save(dir,s);if(e.receipt.s3Verified)await recordOrphan(root,s.key!,s.channelId,"S3 object verified; local retention or later finalize step failed. Retry the same upload session.").catch(()=>undefined);}
    // A committed row wins over a lost response or receipt-write failure.
    if(await a.find(s)){s.state="completed";await save(dir,s);await rm(join(dir,"partial"),{force:true});return s;}
    s.state="failed";s.error=e instanceof UploadError?e.message:"Finalize failed; operator review required.";await save(dir,s);log("finalize-failed",s,{reason:s.error});throw e;

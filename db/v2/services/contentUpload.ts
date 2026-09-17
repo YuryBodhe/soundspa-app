@@ -5,12 +5,14 @@ import { v2Db } from "../client";
 import { channels, channelTracks } from "../schema";
 import { recordOrphan, UploadError } from "../../../lib/v2/mediaStorage";
 import { canonicalMediaStorage } from "../../../lib/v2/canonicalMediaStorage";
+import type { CanonicalMediaReceipt } from "../../../lib/v2/resumableCanonicalMedia";
 
-export async function attachContentUpload(channelId: string, kind: "track"|"artwork", upload: {root:string;file:string;extension:string;size:number;sha256?:string}, originalFilename: string, identity?:{id:string;key:string}) {
+export async function attachContentUpload(channelId: string, kind: "track"|"artwork", upload: {root:string;file:string;extension:string;size:number;sha256?:string}, originalFilename: string, identity?:{id:string;key:string}, prepared?:CanonicalMediaReceipt) {
   z.string().uuid().parse(channelId);
   if(identity){z.string().uuid().parse(identity.id);if(kind!=="track"||!upload.sha256)throw new UploadError("Invalid resumable identity.");}
+  if(prepared&&(!identity||kind!=="track"||prepared.key!==identity.key||prepared.size!==upload.size||prepared.sha256!==upload.sha256||!prepared.s3Verified||!prepared.localVerified))throw new UploadError("Invalid canonical media receipt.",409);
   const storage = canonicalMediaStorage(upload.root);
-  let createdKey: string | null = null;
+  let createdKey: string | null = prepared?.key ?? null;
   try {
     return await v2Db.transaction(async(tx)=>{
       await tx.execute(sql`SELECT id FROM channels WHERE id=${channelId}::uuid FOR UPDATE`);
@@ -22,19 +24,21 @@ export async function attachContentUpload(channelId: string, kind: "track"|"artw
         const [existing]=await tx.select().from(channelTracks).where(eq(channelTracks.id,identity.id));
         if(existing){
           if(existing.channelId!==channelId||existing.storageKey!==key||existing.originalFilename!==originalFilename||existing.sizeBytes!==BigInt(upload.size))throw new UploadError("Upload identity conflict.",409);
-          if(!await storage.matchesOwnedTrack(key,{size:upload.size,sha256:upload.sha256!}))throw new UploadError("Committed upload media mismatch.",409);
+          if(!prepared&&!await storage.matchesOwnedTrack(key,{size:upload.size,sha256:upload.sha256!}))throw new UploadError("Committed upload media mismatch.",409);
           return {key,trackId:existing.id};
         }
       }
-      try {await storage.publishImmutable(upload.file,key);}
-      catch(error){
-        // Only a durable resumable session can reuse its exact immutable object
-        // after a crash between filesystem publication and transaction commit.
-        if(!identity||!storage.isAlreadyExistsError(error))throw error;
-        if(!await storage.matchesOwnedTrack(key,{sha256:upload.sha256!}))throw new UploadError("Existing upload object differs; operator review required.",409);
+      if(!prepared){
+        try {await storage.publishImmutable(upload.file,key);}
+        catch(error){
+          // Only a durable resumable session can reuse its exact immutable object
+          // after a crash between filesystem publication and transaction commit.
+          if(!identity||!storage.isAlreadyExistsError(error))throw error;
+          if(!await storage.matchesOwnedTrack(key,{sha256:upload.sha256!}))throw new UploadError("Existing upload object differs; operator review required.",409);
+        }
+        createdKey = key;
       }
-      createdKey = key;
-      const canonicalSize = await storage.size(key);
+      const canonicalSize = prepared?.size ?? await storage.size(key);
       if (canonicalSize !== upload.size) throw new UploadError("Canonical upload size mismatch.");
       if (kind === "artwork") {
         await tx.update(channels).set({imageKey:key,updatedAt:new Date()}).where(eq(channels.id,channelId));

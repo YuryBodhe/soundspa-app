@@ -85,6 +85,7 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
     try {
       const head = await client.send(new HeadObjectCommand(input(key)));
       if (expected.size !== undefined && head.ContentLength !== expected.size) return false;
+      if (head.Metadata?.sha256 !== expected.sha256) return false;
       const bytes = await remoteBytes(key);
       if (expected.size !== undefined && bytes.byteLength !== expected.size) return false;
       return createHash("sha256").update(bytes).digest("hex") === expected.sha256;
