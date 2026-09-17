@@ -17,10 +17,13 @@ async function main() {
   try {
     delete process.env.V2_MEDIA_STORAGE_BACKEND;
     assert.equal(mediaStorageBackend(), "local");
-    for (const backend of ["s3", "unknown", "", "LOCAL"]) {
+    for (const backend of ["unknown", "", "LOCAL"]) {
       process.env.V2_MEDIA_STORAGE_BACKEND = backend;
       assert.throws(() => canonicalMediaStorage(root), error => error instanceof UploadError && error.status === 503);
     }
+    process.env.V2_MEDIA_STORAGE_BACKEND = "s3";
+    assert.equal(mediaStorageBackend(), "s3");
+    assert.throws(() => canonicalMediaStorage(root), /Missing server-only S3 configuration/);
     process.env.V2_MEDIA_STORAGE_BACKEND = "local";
     assert.equal(mediaStorageBackend(), "local");
     const storage = canonicalMediaStorage(root);

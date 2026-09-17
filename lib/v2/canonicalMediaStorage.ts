@@ -1,5 +1,6 @@
 import { UploadError } from "./uploadError";
 import { localMediaStorage } from "./localMediaStorage";
+import { s3MediaStorage, s3MediaStorageConfig } from "./s3MediaStorage";
 
 export type ChannelReference = { kind: "music" | "ambient"; imageKey: string | null };
 export type TrackReference = { storageKey: string; sizeBytes: bigint; isEnabled: boolean };
@@ -20,14 +21,15 @@ export interface CanonicalMediaStorage {
 
 // Read at operation time, not build/import time. Omitted configuration preserves
 // existing deployments. Unsupported backends fail closed; there is no S3 fallback.
-export function mediaStorageBackend(): "local" {
+export function mediaStorageBackend(): "local" | "s3" {
   const backend = process.env.V2_MEDIA_STORAGE_BACKEND ?? "local";
-  if (backend !== "local") throw new UploadError("Unsupported V2 media storage backend.", 503);
+  if (backend !== "local" && backend !== "s3") throw new UploadError("Unsupported V2 media storage backend.", 503);
   return backend;
 }
 
 export function canonicalMediaStorage(localRoot: string): CanonicalMediaStorage {
   switch (mediaStorageBackend()) {
     case "local": return localMediaStorage(localRoot);
+    case "s3": return s3MediaStorage(localRoot, s3MediaStorageConfig());
   }
 }
