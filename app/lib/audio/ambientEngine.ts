@@ -1,4 +1,3 @@
-import { ambientOverlapDiagnosticsEnabled, recordAmbientOverlapDiagnostic } from "./ambientOverlapDiagnostics";
 import { PersistentAmbientDecks } from "./persistentAmbientDecks";
 
 export interface AmbientTrack { id: string; url: string; }
@@ -13,7 +12,6 @@ type CandidateDeck = {
   index: number; generation: number; started: boolean; progressed: boolean; startTime: number;
   progressTimer: ReturnType<typeof setInterval> | null;
   transitionTimer: ReturnType<typeof setTimeout> | null;
-  transitionId: number; currentTimeAtPlay: number; lastSampleAt: number; realOverlapProven: boolean;
   onError: () => void; onLoadedMetadata: () => void;
 };
 
@@ -43,8 +41,6 @@ export class AmbientEngine {
   private activeTrackIndex = 0;
   private activeSelectionId: string | null = null;
   private candidateAttemptedForCurrent = false;
-  private transitionSequence = 0;
-  private diagnosticOnceKeys = new Set<string>();
   private readonly overlapEnabled: boolean;
   private cache = new Map<string, CachedAmbient>();
   private pendingFetches = new Map<string, PendingFetch>();
@@ -100,7 +96,6 @@ export class AmbientEngine {
       this.startPersistentOneTrack(selectionId, tracks[0]);
       return;
     }
-    if (this.candidate) this.diagnostic("overlap-cancelled", { transitionId: this.candidate.transitionId, reason: "channel-switch" });
     this.requestPlaybackAudioSession();
     const generation = ++this.generation;
     this.cancelPendingFetchesExcept(new Set(tracks.map((track) => track.id)));
@@ -122,7 +117,6 @@ export class AmbientEngine {
 
   stop = () => {
     if (this.disposed) return;
-    if (this.candidate) this.diagnostic("overlap-cancelled", { transitionId: this.candidate.transitionId, reason: "stop" });
     this.generation += 1;
     this.cleanupPlayback();
     this.playlist = [];
@@ -134,7 +128,6 @@ export class AmbientEngine {
 
   dispose = () => {
     if (this.disposed) return;
-    if (this.candidate) this.diagnostic("overlap-cancelled", { transitionId: this.candidate.transitionId, reason: "dispose" });
     this.disposed = true;
     this.generation += 1;
     this.cleanupPlayback();
@@ -183,7 +176,6 @@ export class AmbientEngine {
     const onTimeUpdate = () => {
       if (!this.isPlaybackCurrent(audio, generation)) return;
       this.update({ currentTime: audio.currentTime });
-      this.captureOverlapSample(audio, generation);
       this.maybePrepareCandidate(generation);
       this.maybeStartCandidate(generation);
     };
@@ -206,7 +198,6 @@ export class AmbientEngine {
         const cached = this.cache.get(track.id);
         if (cached) { cached.lastUsed = ++this.usageSequence; URL.revokeObjectURL(objectUrl); return; }
         this.cache.set(track.id, { objectUrl, lastUsed: ++this.usageSequence });
-        this.diagnostic("next-blob-ready", { trackId: track.id, blobSize: blob.size });
         if (this.state.activeTrackId === track.id) this.persistentDecks?.setBlobUrl(objectUrl);
         this.evictLeastRecentlyUsed();
       })
@@ -232,19 +223,15 @@ export class AmbientEngine {
     const nextIndex = (this.activeTrackIndex + 1) % this.playlist.length;
     const nextTrack = this.playlist[nextIndex];
     const cached = this.cache.get(nextTrack.id);
-    if (!cached) { this.diagnosticOnce(`not-ready:${generation}:${nextTrack.id}`, "fallback", { reason: "candidate-not-blob-ready", generation, currentTrackId: this.state.activeTrackId, nextTrackId: nextTrack.id, currentTime: current.currentTime, duration: current.duration }); return; }
+    if (!cached) return;
     this.candidateAttemptedForCurrent = true;
     cached.lastUsed = ++this.usageSequence;
     const audio = new Audio(cached.objectUrl);
-    const transitionId = ++this.transitionSequence;
-    this.diagnostic("candidate-window", { transitionId, generation, currentTrackId: this.state.activeTrackId, nextTrackId: nextTrack.id, currentTime: current.currentTime, duration: current.duration, overlapStart: current.duration - OVERLAP_SECONDS, allowed: true });
-    this.diagnostic("candidate-audio-created", { transitionId, generation, trackId: nextTrack.id, selfOverlap: nextTrack.id === this.state.activeTrackId, sameObjectUrl: current.src === cached.objectUrl });
     let sourceNode: MediaElementAudioSourceNode | null = null;
     try {
       audio.preload = "auto"; audio.loop = false; audio.volume = this.state.volume;
       sourceNode = this.attachToAudioGraph(audio);
-    } catch (error) {
-      this.diagnostic("fallback", { transitionId, reason: "graph-error", error: error instanceof Error ? error.message : String(error) });
+    } catch {
       audio.pause();
       sourceNode?.disconnect();
       audio.removeAttribute("src");
@@ -254,9 +241,8 @@ export class AmbientEngine {
     const candidate: CandidateDeck = {
       audio, sourceNode, track: nextTrack, index: nextIndex, generation, started: false, progressed: false, startTime: 0,
       progressTimer: null, transitionTimer: null,
-      transitionId, currentTimeAtPlay: 0, lastSampleAt: 0, realOverlapProven: false,
-      onError: () => { if (this.candidate === candidate) { this.diagnostic("fallback", { transitionId, reason: "candidate-error" }); this.disposeCandidate(candidate); } },
-      onLoadedMetadata: () => { if (this.candidate === candidate) { this.diagnostic("candidate-metadata-ready", { transitionId, candidateDuration: candidate.audio.duration, readyState: candidate.audio.readyState }); this.maybeStartCandidate(generation); } },
+      onError: () => { if (this.candidate === candidate) this.disposeCandidate(candidate); },
+      onLoadedMetadata: () => { if (this.candidate === candidate) this.maybeStartCandidate(generation); },
     };
     audio.addEventListener("error", candidate.onError); audio.addEventListener("loadedmetadata", candidate.onLoadedMetadata);
     this.candidate = candidate;
@@ -266,50 +252,33 @@ export class AmbientEngine {
   private maybeStartCandidate(generation: number) {
     const current = this.audio; const candidate = this.candidate;
     if (!current || !candidate || candidate.started) return;
-    const blockedReason = !this.isPlaybackCurrent(current, generation) || candidate.generation !== generation ? "stale-generation"
-      : !Number.isFinite(current.duration) ? "current-duration-unavailable"
-        : current.duration - current.currentTime > OVERLAP_SECONDS ? "before-overlap-window"
-          : candidate.audio.readyState < HTMLMediaElement.HAVE_METADATA ? "candidate-metadata-unavailable"
-            : !this.audioContext || this.audioContext.state !== "running" ? "audio-context-not-running"
-              : null;
-    if (blockedReason) {
-      this.diagnosticOnce(`candidate-blocked:${candidate.transitionId}:${blockedReason}`, "candidate-attempt", { transitionId: candidate.transitionId, allowed: false, reason: blockedReason, currentTime: current.currentTime, duration: current.duration, candidateReadyState: candidate.audio.readyState, audioContextState: this.audioContext?.state ?? null });
-      return;
-    }
-    this.diagnostic("candidate-attempt", { transitionId: candidate.transitionId, allowed: true, currentTime: current.currentTime, duration: current.duration, candidateReadyState: candidate.audio.readyState, audioContextState: this.audioContext?.state ?? null });
+    if (!this.isPlaybackCurrent(current, generation) || candidate.generation !== generation ||
+      !Number.isFinite(current.duration) || current.duration - current.currentTime > OVERLAP_SECONDS ||
+      candidate.audio.readyState < HTMLMediaElement.HAVE_METADATA || !this.audioContext || this.audioContext.state !== "running") return;
     candidate.started = true; candidate.startTime = candidate.audio.currentTime;
-    candidate.currentTimeAtPlay = current.currentTime;
-    this.diagnostic("candidate-play-called", { transitionId: candidate.transitionId, generation, currentTrackId: this.state.activeTrackId, candidateTrackId: candidate.track.id, currentTime: current.currentTime, duration: current.duration, candidateTime: candidate.audio.currentTime, readyState: candidate.audio.readyState });
     void candidate.audio.play().then(() => {
-      if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) { this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "stale-generation" }); return; }
-      this.diagnostic("candidate-play-resolved", { transitionId: candidate.transitionId, currentTime: current.currentTime, candidateTime: candidate.audio.currentTime });
+      if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) return;
       const startedAt = Date.now();
       candidate.progressTimer = setInterval(() => {
-        if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) { this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "stale-generation" }); this.disposeCandidate(candidate); return; }
-        this.captureOverlapSample(current, generation);
+        if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) { this.disposeCandidate(candidate); return; }
         if (candidate.audio.currentTime > candidate.startTime + 0.05) {
           candidate.progressed = true;
-          this.maybeRecordOverlapProof(current, candidate);
-          if (!candidate.realOverlapProven) this.diagnostic("candidate-progression-only", { transitionId: candidate.transitionId, currentTimeAtPlay: candidate.currentTimeAtPlay, currentTime: current.currentTime, candidateStartTime: candidate.startTime, candidateTime: candidate.audio.currentTime, beforeCurrentEnded: !current.ended });
           if (candidate.progressTimer) clearInterval(candidate.progressTimer);
           candidate.progressTimer = null;
           this.startTransitionWatchdog(current, candidate, generation);
-        } else if (Date.now() - startedAt >= CANDIDATE_PROGRESS_TIMEOUT_MS) { this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "no-progression", currentTime: current.currentTime, candidateTime: candidate.audio.currentTime }); this.disposeCandidate(candidate); }
+        } else if (Date.now() - startedAt >= CANDIDATE_PROGRESS_TIMEOUT_MS) this.disposeCandidate(candidate);
       }, CANDIDATE_PROGRESS_INTERVAL_MS);
-    }).catch((error) => { if (this.candidate === candidate) { this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "play-rejected", errorName: error instanceof Error ? error.name : null, errorMessage: error instanceof Error ? error.message : String(error) }); this.disposeCandidate(candidate); } });
+    }).catch(() => { if (this.candidate === candidate) this.disposeCandidate(candidate); });
   }
 
   private startTransitionWatchdog(current: HTMLAudioElement, candidate: CandidateDeck, generation: number) {
     const remainingMs = Math.max(0, current.duration - current.currentTime) * 1_000;
-    this.diagnostic("watchdog-start", { transitionId: candidate.transitionId, currentTime: current.currentTime, duration: current.duration, remainingMs, deadlineMs: remainingMs + OVERLAP_END_TOLERANCE_MS });
     candidate.transitionTimer = setTimeout(() => {
       if (this.candidate !== candidate || !this.isPlaybackCurrent(current, generation)) return;
       candidate.transitionTimer = null;
       if (candidate.progressed && !candidate.audio.paused && !candidate.audio.ended && !candidate.audio.error) {
-        this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "watchdog-candidate-wins", realOverlapProven: candidate.realOverlapProven });
         this.promoteCandidate(candidate, generation);
       } else {
-        this.diagnostic("fallback", { transitionId: candidate.transitionId, reason: "watchdog-current-wins" });
         this.disposeCandidate(candidate);
       }
     }, remainingMs + OVERLAP_END_TOLERANCE_MS);
@@ -318,10 +287,8 @@ export class AmbientEngine {
   private async handlePlaylistEnded(audio: HTMLAudioElement, generation: number) {
     if (!this.isPlaybackCurrent(audio, generation)) return;
     const candidate = this.candidate;
-    this.diagnostic("current-ended", { generation, trackId: this.state.activeTrackId, currentTime: audio.currentTime, duration: audio.duration, candidateTrackId: candidate?.track.id ?? null, candidateProgressed: candidate?.progressed ?? false, realOverlapProven: candidate?.realOverlapProven ?? false });
-    if (candidate?.progressed && candidate.generation === generation) { this.diagnostic("transition", { transitionId: candidate.transitionId, reason: "normal-overlap-promotion", realOverlapProven: candidate.realOverlapProven }); this.promoteCandidate(candidate, generation); return; }
+    if (candidate?.progressed && candidate.generation === generation) { this.promoteCandidate(candidate, generation); return; }
     if (candidate) this.disposeCandidate(candidate);
-    this.diagnostic("fallback", { reason: "sequential-fallback", generation, trackId: this.state.activeTrackId });
     const nextIndex = (this.activeTrackIndex + 1) % this.playlist.length;
     this.cleanupCurrentPlayback();
     if (this.isGenerationCurrent(generation)) await this.startPlaylistTrack(nextIndex, generation);
@@ -335,7 +302,6 @@ export class AmbientEngine {
     candidate.transitionTimer = null;
     candidate.audio.removeEventListener("error", candidate.onError); candidate.audio.removeEventListener("loadedmetadata", candidate.onLoadedMetadata);
     this.audio = candidate.audio; this.mediaSourceNode = candidate.sourceNode; this.activeTrackIndex = candidate.index;
-    this.diagnostic("candidate-promoted", { transitionId: candidate.transitionId, generation, trackId: candidate.track.id, candidateTime: candidate.audio.currentTime, realOverlapProven: candidate.realOverlapProven });
     this.candidateAttemptedForCurrent = false;
     this.installPlaylistListeners(candidate.audio, generation);
     this.update({ status: "playing", activeTrackId: candidate.track.id, sourceKind: "blob", currentTime: candidate.audio.currentTime, error: null });
@@ -412,14 +378,12 @@ export class AmbientEngine {
     if (cached) cached.lastUsed = ++this.usageSequence;
     this.update({ status: "loading", activeTrackId: track.id, sourceKind: cached ? "blob" : "network", currentTime: 0, error: null });
     try {
-      this.persistentDecks = new PersistentAmbientDecks(track, cached?.objectUrl ?? track.url, cached?.objectUrl ?? null, this.state.volume,
-        (event, details) => this.diagnostic(event, details),
+      this.persistentDecks = new PersistentAmbientDecks(cached?.objectUrl ?? track.url, cached?.objectUrl ?? null, this.state.volume,
         (status, sourceKind, currentTime, error) => {
           if (!this.isGenerationCurrent(generation)) return;
           this.update({ status, sourceKind, currentTime, error: error ?? null });
         });
     } catch (error) {
-      this.diagnostic("persistent-construction-failed", { error: error instanceof Error ? error.message : String(error) });
       if (this.isGenerationCurrent(generation)) this.update({ status: "error", error: error instanceof Error ? error.message : String(error) });
       return;
     }
@@ -463,30 +427,6 @@ export class AmbientEngine {
       try { audioSession.type = "playback"; console.info("[AmbientEngine] Audio Session", { supported: true, playbackSet: audioSession.type === "playback" }); }
       catch (error) { console.warn("[AmbientEngine] Audio Session playback could not be set", error); }
     } else console.info("[AmbientEngine] Audio Session", { supported: false });
-  }
-
-  private diagnostic(event: string, details: Record<string, unknown>) {
-    recordAmbientOverlapDiagnostic(event, { selectionId: this.activeSelectionId, generation: this.generation, activeTrackId: this.state.activeTrackId, ...details });
-  }
-
-  private diagnosticOnce(key: string, event: string, details: Record<string, unknown>) {
-    if (!ambientOverlapDiagnosticsEnabled() || this.diagnosticOnceKeys.has(key)) return;
-    this.diagnosticOnceKeys.add(key);
-    this.diagnostic(event, details);
-  }
-
-  private captureOverlapSample(current: HTMLAudioElement, generation: number) {
-    const candidate = this.candidate;
-    if (!candidate || !ambientOverlapDiagnosticsEnabled() || !this.isPlaybackCurrent(current, generation) || candidate.generation !== generation || !candidate.started || Date.now() - candidate.lastSampleAt < 250) return;
-    candidate.lastSampleAt = Date.now();
-    this.diagnostic("overlap-sample", { transitionId: candidate.transitionId, currentTime: current.currentTime, currentDuration: current.duration, currentPaused: current.paused, currentEnded: current.ended, currentReadyState: current.readyState, candidateTime: candidate.audio.currentTime, candidatePaused: candidate.audio.paused, candidateEnded: candidate.audio.ended, candidateReadyState: candidate.audio.readyState });
-    this.maybeRecordOverlapProof(current, candidate);
-  }
-
-  private maybeRecordOverlapProof(current: HTMLAudioElement, candidate: CandidateDeck) {
-    if (candidate.realOverlapProven || !candidate.progressed || current.ended || current.currentTime <= candidate.currentTimeAtPlay + 0.05 || candidate.audio.currentTime <= candidate.startTime + 0.05) return;
-    candidate.realOverlapProven = true;
-    this.diagnostic("overlap-proven", { transitionId: candidate.transitionId, currentTimeAtPlay: candidate.currentTimeAtPlay, currentTime: current.currentTime, candidateStartTime: candidate.startTime, candidateTime: candidate.audio.currentTime, beforeCurrentEnded: true });
   }
 
   private update(patch: Partial<AmbientEngineState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach((listener) => listener()); }

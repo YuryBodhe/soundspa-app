@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { AmbientEngine } from "../../app/lib/audio/ambientEngine";
-import { clearAmbientOverlapDiagnostics, exportAmbientOverlapDiagnostics } from "../../app/lib/audio/ambientOverlapDiagnostics";
 
 type Handler = (event: Event) => void;
 class FakeAudio {
@@ -29,16 +28,13 @@ Object.defineProperty(URL, "createObjectURL", { value: () => "blob:persistent-te
 Object.defineProperty(URL, "revokeObjectURL", { value: () => undefined, configurable: true });
 Object.defineProperty(globalThis, "fetch", { value: async () => ({ ok: true, blob: async () => new Blob(["ambient"]) }), configurable: true });
 process.env.NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_DECKS = "1";
-process.env.NEXT_PUBLIC_V2_AMBIENT_OVERLAP_DIAGNOSTICS = "1";
 
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)); };
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const track = { id: "a", url: "/noise/a.mp3" };
 const internals = (engine: AmbientEngine) => engine as unknown as { persistentDecks: { current: { audio: FakeAudio; id: string }; standby: { audio: FakeAudio; id: string; primeProgressed: boolean }; candidateStarted: boolean } | null };
-const events = () => (JSON.parse(exportAmbientOverlapDiagnostics()) as { entries: { event: string; details: Record<string, unknown> }[] }).entries;
-
 async function run() {
-  clearAmbientOverlapDiagnostics(); FakeAudio.instances = [];
+  FakeAudio.instances = [];
   const engine = new AmbientEngine(true);
   const promise = engine.togglePlaylist("one", [track]);
   assert.equal(FakeAudio.instances.length, 2, "both persistent decks created synchronously before toggle returns");
@@ -66,30 +62,31 @@ async function run() {
     assert.equal(state.current.id, expected);
     assert.equal(FakeAudio.instances.length, 2, "no third Audio across repeated transitions");
   }
-  assert(events().some(entry => entry.event === "overlap-proven"), "simultaneous currentTime progression is recorded");
   engine.stop(); assert(FakeAudio.instances.every(audio => audio.destroyed));
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const rejected = new AmbientEngine(true);
   FakeAudio.rejectNextPlay = true; await rejected.togglePlaylist("reject-prime", [track]); await flush();
-  assert.equal(FakeAudio.instances.length, 2); assert(events().some(entry => entry.event === "persistent-prime-play-rejected"));
+  assert.equal(FakeAudio.instances.length, 2);
+  assert.equal(internals(rejected).persistentDecks?.current.audio.paused, false, "prime rejection does not stop current playback");
   rejected.stop();
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const later = new AmbientEngine(true); await later.togglePlaylist("reject-later", [track]); await flush();
   state = internals(later).persistentDecks!; state.standby.audio.currentTime = 0.1; await wait(120);
   FakeAudio.rejectNextPlay = true; state.current.audio.currentTime = 7.1; state.current.audio.dispatch("timeupdate"); await flush();
-  assert(events().some(entry => entry.event === "persistent-fallback" && entry.details.reason === "play-rejected"));
+  assert.equal(state.candidateStarted, false, "later play rejection uses sequential fallback state");
+  assert.equal(state.standby.audio.paused, true, "rejected standby remains silent");
   assert.equal(state.current.audio.destroyed, false); later.dispose(); assert(FakeAudio.instances.every(audio => audio.destroyed));
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const stopped = new AmbientEngine(true); await stopped.togglePlaylist("stop", [track]); await flush();
   state = internals(stopped).persistentDecks!; state.standby.audio.currentTime = 0.1; await wait(120);
   state.current.audio.currentTime = 7.1; state.current.audio.dispatch("timeupdate");
   const stale = state.standby.audio; stopped.stop(); stale.currentTime = 0.1; stale.dispatch("timeupdate"); stale.dispatch("ended"); await wait(120);
   assert(FakeAudio.instances.every(audio => audio.destroyed), "stop releases both decks and stale callbacks do nothing");
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const switched = new AmbientEngine(true); await switched.togglePlaylist("first", [track]); await flush();
   state = internals(switched).persistentDecks!; state.standby.audio.currentTime = 0.1; await wait(120);
   state.current.audio.currentTime = 7.1; state.current.audio.dispatch("timeupdate");
@@ -100,14 +97,14 @@ async function run() {
   assert.equal(FakeAudio.instances.filter(audio => !audio.destroyed).length, 2, "only new selection's two decks remain");
   switched.dispose(); assert(FakeAudio.instances.every(audio => audio.destroyed));
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const disposed = new AmbientEngine(true); await disposed.togglePlaylist("dispose", [track]); await flush();
   state = internals(disposed).persistentDecks!; state.standby.audio.currentTime = 0.1; await wait(120);
   state.current.audio.currentTime = 7.1; state.current.audio.dispatch("timeupdate");
   disposed.dispose(); await wait(120);
   assert(FakeAudio.instances.every(audio => audio.destroyed), "dispose during overlap releases both decks");
 
-  FakeAudio.instances = []; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = [];
   const off = process.env.NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_DECKS; process.env.NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_DECKS = "0";
   const legacy = new AmbientEngine(true); await legacy.togglePlaylist("flag-off", [track]); await flush();
   assert.equal(FakeAudio.instances.length, 1, "persistent flag OFF preserves prior candidate transport"); legacy.dispose();

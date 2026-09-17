@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { AmbientEngine, type AmbientTrack } from "../../app/lib/audio/ambientEngine";
-import { clearAmbientOverlapDiagnostics, exportAmbientOverlapDiagnostics } from "../../app/lib/audio/ambientOverlapDiagnostics";
 
 type EventHandler = (event: Event) => void;
 
@@ -53,7 +52,6 @@ const tracks: AmbientTrack[] = [
 ];
 let objectUrlSequence = 0;
 
-process.env.NEXT_PUBLIC_V2_AMBIENT_OVERLAP_DIAGNOSTICS = "1";
 Object.defineProperty(globalThis, "window", { value: { AudioContext: FakeAudioContext, location: { hostname: "test.soundspa.bodhemusic.com" } }, configurable: true });
 Object.defineProperty(globalThis, "navigator", { value: { userAgent: "ambient-overlap-test" }, configurable: true });
 Object.defineProperty(globalThis, "Audio", { value: FakeAudio, configurable: true });
@@ -102,14 +100,12 @@ async function prepareCandidate(engine: AmbientEngine, currentTime = 4) {
 }
 
 async function run() {
-  FakeAudio.instances = []; objectUrlSequence = 0; clearAmbientOverlapDiagnostics();
+  FakeAudio.instances = []; objectUrlSequence = 0;
   const playlistEngine = new AmbientEngine(true);
   await playlistEngine.togglePlaylist("ambient-channel", tracks);
   await flush();
   await progressCandidate(playlistEngine);
   assert.equal(playlistEngine.getSnapshot().activeTrackId, "b");
-  const diagnosticEvents = (JSON.parse(exportAmbientOverlapDiagnostics()) as { entries: { event: string }[] }).entries.map((entry) => entry.event);
-  for (const event of ["next-blob-ready", "candidate-window", "candidate-audio-created", "candidate-attempt", "candidate-play-called", "candidate-play-resolved", "overlap-sample", "overlap-proven", "watchdog-start", "current-ended", "transition", "candidate-promoted"]) assert(diagnosticEvents.includes(event), `missing diagnostic ${event}`);
   await progressCandidate(playlistEngine);
   assert.equal(playlistEngine.getSnapshot().activeTrackId, "c");
   await progressCandidate(playlistEngine);

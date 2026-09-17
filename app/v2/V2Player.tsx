@@ -8,7 +8,6 @@ import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
-import { ambientOverlapDiagnosticsEnabled, clearAmbientOverlapDiagnostics, exportAmbientOverlapDiagnostics } from "../lib/audio/ambientOverlapDiagnostics";
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   const [enabled, setEnabled] = useState(false);
@@ -29,27 +28,6 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
     <button type="button" onClick={() => { clearMusicDiagnostics(); setTrace(""); setResult("Trace cleared; now reproduce the issue."); }}>Clear trace</button>
     <p role="status">{result || "Rolling in-memory trace. Copy before refresh or Stop/Play."}</p>
     {trace && <textarea readOnly aria-label="Music diagnostic trace" value={trace} onFocus={event => event.currentTarget.select()} style={{ boxSizing: "border-box", width: "100%", height: 150 }} />}
-  </details>;
-}
-
-function AmbientOverlapDiagnosticPanel() {
-  const [enabled, setEnabled] = useState(false);
-  const [trace, setTrace] = useState("");
-  const [result, setResult] = useState("");
-  useEffect(() => { setEnabled(ambientOverlapDiagnosticsEnabled()); }, []);
-  if (!enabled) return null;
-  const copy = async () => {
-    const text = exportAmbientOverlapDiagnostics();
-    setTrace(text);
-    try { await navigator.clipboard.writeText(text); setResult("Copied. Send this trace to support."); }
-    catch { setResult("Copy unavailable: select and copy the trace below."); }
-  };
-  return <details style={{ maxWidth: "100%", marginTop: 12, fontSize: 12 }}>
-    <summary>Ambient overlap diagnostics · staging only</summary>
-    <button type="button" onClick={() => void copy()}>Copy ambient diagnostics</button>{" "}
-    <button type="button" onClick={() => { clearAmbientOverlapDiagnostics(); setTrace(""); setResult("Trace cleared; now let ambient cross several boundaries."); }}>Clear trace</button>
-    <p role="status">{result || "Rolling in-memory trace. Copy after several ambient transitions."}</p>
-    {trace && <textarea readOnly aria-label="Ambient overlap diagnostic trace" value={trace} onFocus={event => event.currentTarget.select()} style={{ boxSizing: "border-box", width: "100%", height: 150 }} />}
   </details>;
 }
 
@@ -235,7 +213,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
         </section>
       </main>
 
-      <footer className={s.footer}><div><div className={s.footerLabel}>Prototype access</div><div className={s.footerText}>Local test · no account required</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /><AmbientOverlapDiagnosticPanel /></div></footer>
+      <footer className={s.footer}><div><div className={s.footerLabel}>Prototype access</div><div className={s.footerText}>Local test · no account required</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
     </div>
   );
 }
