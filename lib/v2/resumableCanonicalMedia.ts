@@ -3,9 +3,24 @@ import { localMediaStorage } from "./localMediaStorage";
 import { s3MediaStorage, s3MediaStorageConfig } from "./s3MediaStorage";
 import { UploadError } from "./uploadError";
 
-export type MediaFinalizeMode = "local" | "s3-local";
+export type MediaFinalizeMode = "local" | "s3-local" | "s3-only";
 export type CanonicalMediaReceipt = {
   mode: "s3-local";
+  key: string;
+  size: number;
+  sha256: string;
+  s3Verified: boolean;
+  localVerified: boolean;
+} | {
+  mode: "s3-only";
+  key: string;
+  size: number;
+  sha256: string;
+  s3Verified: boolean;
+  localVerified?: boolean;
+};
+type CanonicalMediaPreparationReceipt = {
+  mode: "s3-local" | "s3-only";
   key: string;
   size: number;
   sha256: string;
@@ -14,12 +29,12 @@ export type CanonicalMediaReceipt = {
 };
 
 export class CanonicalMediaPreparationError extends UploadError {
-  constructor(message: string, readonly receipt: CanonicalMediaReceipt, readonly cause?: unknown) { super(message, cause instanceof UploadError ? cause.status : 503); }
+  constructor(message: string, readonly receipt: CanonicalMediaPreparationReceipt, readonly cause?: unknown) { super(message, cause instanceof UploadError ? cause.status : 503); }
 }
 
 export function mediaFinalizeMode(): MediaFinalizeMode {
   const mode = process.env.V2_MEDIA_FINALIZE_MODE ?? "local";
-  if (mode !== "local" && mode !== "s3-local") throw new UploadError("Unsupported V2 media finalize mode.", 503);
+  if (mode !== "local" && mode !== "s3-local" && mode !== "s3-only") throw new UploadError("Unsupported V2 media finalize mode.", 503);
   return mode;
 }
 
@@ -39,15 +54,18 @@ export async function prepareResumableCanonicalMedia(
   expected: { size: number; sha256: string },
   stores?: { s3: CanonicalMediaStorage; local: CanonicalMediaStorage },
 ) {
-  if (mediaFinalizeMode() === "local") return undefined;
-  const receipt: CanonicalMediaReceipt = { mode: "s3-local", key, ...expected, s3Verified: false, localVerified: false };
+  const mode = mediaFinalizeMode();
+  if (mode === "local") return undefined;
+  const receipt: CanonicalMediaPreparationReceipt = { mode, key, ...expected, s3Verified: false, localVerified: false };
   const selected = stores ?? { s3: s3MediaStorage(localRoot, s3MediaStorageConfig()), local: localMediaStorage(localRoot) };
   try {
     await publishOrReconcile(selected.s3, source, key, expected, "Existing S3 object differs; operator review required.");
     receipt.s3Verified = true;
-    await publishOrReconcile(selected.local, source, key, expected, "Existing local object differs; operator review required.");
-    receipt.localVerified = true;
-    return receipt;
+    if (mode === "s3-local") {
+      await publishOrReconcile(selected.local, source, key, expected, "Existing local object differs; operator review required.");
+      receipt.localVerified = true;
+    }
+    return receipt as CanonicalMediaReceipt;
   } catch (error) {
     throw new CanonicalMediaPreparationError(error instanceof Error ? error.message : "Canonical media preparation failed.", receipt, error);
   }

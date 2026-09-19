@@ -10,7 +10,7 @@ import type { CanonicalMediaReceipt } from "../../../lib/v2/resumableCanonicalMe
 export async function attachContentUpload(channelId: string, kind: "track"|"artwork", upload: {root:string;file:string;extension:string;size:number;sha256?:string}, originalFilename: string, identity?:{id:string;key:string}, prepared?:CanonicalMediaReceipt) {
   z.string().uuid().parse(channelId);
   if(identity){z.string().uuid().parse(identity.id);if(kind!=="track"||!upload.sha256)throw new UploadError("Invalid resumable identity.");}
-  if(prepared&&(!identity||kind!=="track"||prepared.key!==identity.key||prepared.size!==upload.size||prepared.sha256!==upload.sha256||!prepared.s3Verified||!prepared.localVerified))throw new UploadError("Invalid canonical media receipt.",409);
+  if (prepared && (!identity || kind !== "track" || prepared.key !== identity.key || prepared.size !== upload.size || prepared.sha256 !== upload.sha256 || !prepared.s3Verified || (prepared.mode === "s3-local" && !prepared.localVerified))) throw new UploadError("Invalid canonical media receipt.",409);
   const storage = canonicalMediaStorage(upload.root);
   let createdKey: string | null = prepared?.key ?? null;
   try {

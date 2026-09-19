@@ -11,6 +11,7 @@ import sharp from "sharp";
 import { UploadError } from "./uploadError";
 import { mediaRoot, safeDirectory } from "./uploadWorkspace";
 import { canonicalMediaStorage, type ChannelReference, type TrackReference } from "./canonicalMediaStorage";
+import { s3MediaStorage, s3MediaStorageConfig } from "./s3MediaStorage";
 
 export { UploadError } from "./uploadError";
 export { mediaRoot } from "./uploadWorkspace";
@@ -90,7 +91,12 @@ export async function recordOrphan(root: string, key: string, channelId: string,
 
 export async function validateChannelReferences(channel: ChannelReference, tracks: TrackReference[]) {
   try {
-    const storage = canonicalMediaStorage(await mediaRoot());
+    const root = await mediaRoot();
+    // s3-only permits a mixed catalog with no local canonical file for new
+    // tracks; S3 still validates enabled MP3s and local artwork.
+    const storage = process.env.V2_MEDIA_FINALIZE_MODE === "s3-only"
+      ? s3MediaStorage(root, s3MediaStorageConfig())
+      : canonicalMediaStorage(root);
     await storage.validateReferences(channel, tracks);
   } catch { throw new UploadError("Cannot publish: artwork or enabled track media is missing, invalid, or has an unexpected size."); }
 }

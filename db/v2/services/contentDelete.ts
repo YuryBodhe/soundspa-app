@@ -35,6 +35,10 @@ export async function cleanupDeletedTrack(deleted:typeof channelTracks.$inferSel
   try {
     if(await isReferenced())return "Track deleted. Media retained because another track references it.";
     const result=await canonicalMediaStorage(root).removeOwnedTrack(deleted.storageKey);
+    if (result === "already-missing" && process.env.V2_MEDIA_FINALIZE_MODE === "s3-only") {
+      await recordOrphan(root, deleted.storageKey, deleted.channelId, "Track deleted; local canonical file was absent and remote S3 media is retained because S3 deletion is disabled.");
+      return "Track deleted. Local media was absent; remote S3 media was retained for orphan review.";
+    }
     return result==="removed"?"Track and owned media permanently deleted.":"Track deleted. Its media file was already missing.";
   } catch {
     try {await recordOrphan(root,deleted.storageKey,deleted.channelId,"Track deleted from DB; physical cleanup failed. Recheck references before cleanup.");}

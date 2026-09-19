@@ -51,6 +51,16 @@ async function main() {
     assert.deepEqual(order, ["s3:publish", "s3:verify", "local:publish", "local:verify"]);
     assert.deepEqual(receipt, { mode: "s3-local", key, ...expected, s3Verified: true, localVerified: true });
 
+    // S3-only publishes and verifies the immutable remote object without a
+    // permanent local canonical publication.
+    process.env.V2_MEDIA_FINALIZE_MODE = "s3-only";
+    order = []; s3 = memoryStorage("s3", order); local = memoryStorage("local", order);
+    const s3Only = await prepareResumableCanonicalMedia(root, source, key, expected, { s3: s3.storage, local: local.storage });
+    assert.deepEqual(order, ["s3:publish", "s3:verify"]);
+    assert.deepEqual(s3Only, { mode: "s3-only", key, ...expected, s3Verified: true });
+    assert.equal(local.objects.has(key), false);
+    process.env.V2_MEDIA_FINALIZE_MODE = "s3-local";
+
     // Repeated finalize reconciles both immutable copies without overwriting.
     order = []; s3 = memoryStorage("s3", order); local = memoryStorage("local", order);
     s3.objects.set(key, bytes); local.objects.set(key, bytes);
