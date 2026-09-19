@@ -158,17 +158,18 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     engineRef.current?.previous();
   };
 
+  const currentTrackName = activeChannel.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
   const playbackLabel = !activeChannel.tracks.length
     ? "Planned channel"
     : playback.status === "loading"
-      ? "Buffering"
+      ? currentTrackName ? `Buffering: ${currentTrackName}` : "Buffering"
       : playback.status === "error"
         ? "Playback error"
         : playing
-          ? `Playing track ${playback.currentTrackIndex + 1}`
+          ? currentTrackName ? `Playing: ${currentTrackName}` : "Playing track"
           : playback.status === "paused"
-            ? "Preview paused"
-            : "Ready to play";
+            ? currentTrackName ? `Paused: ${currentTrackName}` : "Preview paused"
+            : currentTrackName ? `Ready: ${currentTrackName}` : "Ready to play";
 
   const toggleAmbient = (channel: PlayerChannel) => {
     if (channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
@@ -207,7 +208,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
             <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
           </button>
           <WaveVisualization playing={playing} />
-          <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={playing ? s.statusPlaying : buffering ? s.statusBuffering : ""}>{playbackLabel}</span></div>
+          <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label="Music track controls">
             <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track">⏮ Previous</button>
             <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track">Next ⏭</button>

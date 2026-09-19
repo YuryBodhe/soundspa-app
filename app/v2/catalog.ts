@@ -4,7 +4,7 @@ import { resolveImageUrl, resolveMediaUrl } from "./mediaUrls";
 export type PlayerChannel = {
   id: string; slug: string; kind: "music" | "ambient"; title: string;
   mood: string; image: string | null;
-  tracks: { id: string; url: string; sizeBytes: string }[];
+  tracks: { id: string; url: string; sizeBytes: string; originalFilename?: string }[];
 };
 
 // Existing visual captions only: these do not define catalog entries/playlists.
@@ -17,6 +17,11 @@ export function toPlayerCatalog(content: Awaited<ReturnType<typeof getPublishedC
     id: channel.id, slug: channel.slug, kind: channel.kind, title: channel.displayName,
     mood: channel.description ?? (channel.kind === "music" ? musicCaptions[channel.slug] ?? "" : ""),
     image: resolveImageUrl(channel.imageKey),
-    tracks: channel.tracks.map((track) => ({ id: track.id, url: resolveMediaUrl(channel.kind, track.storageKey), sizeBytes: track.sizeBytes.toString() })),
+    tracks: channel.tracks.map((track) => ({
+      id: track.id,
+      url: resolveMediaUrl(channel.kind, track.storageKey),
+      sizeBytes: track.sizeBytes.toString(),
+      ...(channel.kind === "music" ? { originalFilename: track.originalFilename } : {}),
+    })),
   }));
 }
