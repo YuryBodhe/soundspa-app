@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngine";
-import { Mp3Engine, type Mp3EngineState } from "../lib/audio/mp3Engine";
+import { Mp3Engine, type Mp3EngineState, type PlaybackMode } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
@@ -70,6 +70,8 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   const engineChannelIdRef = useRef<string | null>(null);
   const engineUnsubscribeRef = useRef<(() => void) | null>(null);
   const musicWantsPlaybackRef = useRef(new MusicPlaybackIntent());
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
+  const playbackModeRef = useRef<PlaybackMode>("normal");
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
@@ -84,6 +86,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     engineUnsubscribeRef.current = null;
     engineRef.current?.dispose();
     const engine = new Mp3Engine(playlist,undefined,{channelId});
+    engine.setPlaybackMode(playbackModeRef.current);
     engineRef.current = engine;
     engineChannelIdRef.current = channelId;
     setPlayback(engine.getSnapshot());
@@ -158,6 +161,15 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     engineRef.current?.previous();
   };
 
+  const cyclePlaybackMode = () => {
+    const nextMode: PlaybackMode = playbackMode === "normal" ? "shuffle" : playbackMode === "shuffle" ? "repeat-one" : "normal";
+    playbackModeRef.current = nextMode;
+    setPlaybackMode(nextMode);
+    engineRef.current?.setPlaybackMode(nextMode);
+  };
+
+  const playbackModeLabel = playbackMode === "repeat-one" ? "Repeat one" : playbackMode[0].toUpperCase() + playbackMode.slice(1);
+
   const currentTrackName = activeChannel.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
   const playbackLabel = !activeChannel.tracks.length
     ? "Planned channel"
@@ -211,6 +223,11 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label="Music track controls">
             <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track"><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>Previous</span></button>
+            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} aria-label={`Playback mode: ${playbackModeLabel}`} title={`Playback mode: ${playbackModeLabel}`}>
+              {playbackMode === "normal" && <span className={s.modeNormalIcon} aria-hidden="true"><i /><i /></span>}
+              {playbackMode === "shuffle" && <span className={s.modeShuffleIcon} aria-hidden="true"><i /><i /></span>}
+              {playbackMode === "repeat-one" && <span className={s.modeRepeatIcon} aria-hidden="true"><i /><i /><b>1</b></span>}
+            </button>
             <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track"><span>Next</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div>
         </section>

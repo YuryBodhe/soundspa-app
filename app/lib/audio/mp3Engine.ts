@@ -3,6 +3,7 @@ import { MusicResumeStore, musicResumeStore, RESUME_SAVE_INTERVAL_MS, validateRe
 import { allocateMusicDiagnosticId, musicDiagnosticsEnabled, recordMusicDiagnostic } from "./musicDiagnostics";
 
 export interface Mp3Track { id: string; url: string }
+export type PlaybackMode = "normal" | "shuffle" | "repeat-one";
 export type Mp3PlaybackStatus = "idle" | "loading" | "playing" | "paused" | "error";
 export interface Mp3EngineState {
   status: Mp3PlaybackStatus;
@@ -54,6 +55,10 @@ export class Mp3Engine {
   private audibleSource: AudibleSource | null = null;
   private slots: [CachedTrack | null, CachedTrack | null] = [null, null];
   private desiredNextIndex = 0;
+  private playbackMode: PlaybackMode;
+  private shuffleBag: number[] = [];
+  private shuffleHistory: number[] = [];
+  private shuffleHistoryPosition = -1;
   private cachePromise: Promise<void> | null = null;
   private cacheController: AbortController | null = null;
   private cacheAbortReason: "playback" | "dispose" | null = null;
@@ -113,10 +118,12 @@ export class Mp3Engine {
     private readonly tracks: readonly Mp3Track[],
     private readonly sessionCache: MusicSessionCache = musicSessionCache,
     private readonly resume?: {channelId:string;store?:MusicResumeStore},
+    playbackMode: PlaybackMode = "normal",
   ) {
     if (tracks.length === 0) throw new Error("MP3 playlist must contain at least one track");
     const saved=resume?(resume.store??musicResumeStore).read(resume.channelId,tracks.map(t=>t.id)):null;
     if(saved)this.state={...INITIAL_STATE,currentTrackIndex:tracks.findIndex(t=>t.id===saved.trackId),currentTime:saved.positionSeconds};
+    this.playbackMode = playbackMode;
     this.sessionCache.logSnapshot("engine-created-before-restore");
     this.hydrateSlotsFromSessionCache();
     this.sessionCache.logSnapshot("engine-created-after-restore");
@@ -130,6 +137,50 @@ export class Mp3Engine {
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  };
+
+  setPlaybackMode = (mode: PlaybackMode) => {
+    if (this.playbackMode === mode) return;
+    this.playbackMode = mode;
+    this.resetShuffleState();
+    this.captureDiagnostic("playback-mode-change", { mode });
+  };
+
+  private resetShuffleState = () => {
+    this.shuffleBag = [];
+    this.shuffleHistory = this.playbackMode === "shuffle" ? [this.state.currentTrackIndex] : [];
+    this.shuffleHistoryPosition = this.playbackMode === "shuffle" ? 0 : -1;
+    if (this.playbackMode === "shuffle") this.refillShuffleBag(this.state.currentTrackIndex);
+  };
+
+  private refillShuffleBag = (currentIndex: number) => {
+    const candidates = this.tracks.map((_, index) => index).filter(index => index !== currentIndex);
+    for (let index = candidates.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
+    }
+    this.shuffleBag = candidates;
+  };
+
+  private chooseShuffleNext = (explicit: boolean) => {
+    const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
+    if (explicit && this.shuffleHistoryPosition < this.shuffleHistory.length - 1) {
+      this.shuffleHistoryPosition += 1;
+      return this.shuffleHistory[this.shuffleHistoryPosition];
+    }
+    if (!this.shuffleBag.length) this.refillShuffleBag(currentIndex);
+    const nextIndex = this.shuffleBag.shift() ?? currentIndex;
+    if (this.shuffleHistoryPosition < this.shuffleHistory.length - 1) this.shuffleHistory = this.shuffleHistory.slice(0, this.shuffleHistoryPosition + 1);
+    this.shuffleHistory.push(nextIndex);
+    this.shuffleHistoryPosition = this.shuffleHistory.length - 1;
+    return nextIndex;
+  };
+
+  private chooseNextIndex = (explicit: boolean) => {
+    const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
+    if (this.playbackMode === "repeat-one" && !explicit) return currentIndex;
+    if (this.playbackMode === "shuffle") return this.chooseShuffleNext(explicit);
+    return (currentIndex + 1) % this.tracks.length;
   };
 
   play = async () => {
@@ -211,18 +262,23 @@ export class Mp3Engine {
   next = () => {
     if (this.disposed || this.tracks.length < 2) return;
     const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
-    const nextIndex = (currentIndex + 1) % this.tracks.length;
+    const nextIndex = this.chooseNextIndex(true);
     this.desiredNextIndex = (nextIndex + 1) % this.tracks.length;
-    this.captureDiagnostic("explicit-next", { fromTrackIndex: currentIndex, toTrackIndex: nextIndex, wantsPlayback: this.wantsPlayback });
+    this.captureDiagnostic(this.playbackMode === "shuffle" ? "shuffle-next" : "explicit-next", { fromTrackIndex: currentIndex, toTrackIndex: nextIndex, wantsPlayback: this.wantsPlayback });
     void this.startPlaylistTrack(nextIndex);
   };
 
   previous = () => {
     if (this.disposed || this.tracks.length < 2) return;
     const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
-    const previousIndex = (currentIndex - 1 + this.tracks.length) % this.tracks.length;
+    let previousIndex = (currentIndex - 1 + this.tracks.length) % this.tracks.length;
+    if (this.playbackMode === "shuffle") {
+      if (this.shuffleHistoryPosition <= 0) return;
+      this.shuffleHistoryPosition -= 1;
+      previousIndex = this.shuffleHistory[this.shuffleHistoryPosition];
+    }
     this.desiredNextIndex = (previousIndex + 1) % this.tracks.length;
-    this.captureDiagnostic("explicit-previous", { fromTrackIndex: currentIndex, toTrackIndex: previousIndex, wantsPlayback: this.wantsPlayback });
+    this.captureDiagnostic(this.playbackMode === "shuffle" ? "shuffle-previous" : "explicit-previous", { fromTrackIndex: currentIndex, toTrackIndex: previousIndex, wantsPlayback: this.wantsPlayback });
     void this.startPlaylistTrack(previousIndex);
   };
 
@@ -986,7 +1042,9 @@ export class Mp3Engine {
         return;
       }
     }
-    const logicalNextIndex = this.desiredNextIndex;
+    const logicalNextIndex = this.chooseNextIndex(false);
+    if (this.playbackMode === "repeat-one") this.captureDiagnostic("repeat-one-ended", { trackIndex: logicalNextIndex });
+    this.desiredNextIndex = (logicalNextIndex + 1) % this.tracks.length;
     const logicalNextSlot = this.findSlotByTrackIndex(logicalNextIndex);
     if (logicalNextSlot !== null) {
       this.desiredNextIndex = (logicalNextIndex + 1) % this.tracks.length;

@@ -212,6 +212,18 @@
 .skipIcon { display: inline-flex; align-items: center; gap: 2px; color: currentColor; }
 .skipIcon i { display: block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-right: 7px solid currentColor; }
 .skipIconNext i { border-right: 0; border-left: 7px solid currentColor; }
+.modeButton { min-width: 44px; padding-inline: 10px; }
+.modeNormalIcon, .modeShuffleIcon, .modeRepeatIcon { position: relative; display: inline-block; width: 20px; height: 16px; color: currentColor; }
+.modeNormalIcon i { position: absolute; left: 1px; width: 18px; height: 2px; background: currentColor; }
+.modeNormalIcon i:first-child { top: 4px; }
+.modeNormalIcon i:last-child { top: 10px; }
+.modeShuffleIcon i { position: absolute; left: 0; width: 20px; height: 7px; border-top: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: skewY(28deg); }
+.modeShuffleIcon i:first-child { top: 0; }
+.modeShuffleIcon i:last-child { top: 8px; transform: skewY(-28deg); }
+.modeRepeatIcon i { position: absolute; left: 1px; width: 17px; height: 7px; border: 2px solid currentColor; border-bottom: 0; border-radius: 8px 8px 0 0; }
+.modeRepeatIcon i:first-child { top: 0; }
+.modeRepeatIcon i:nth-child(2) { top: 7px; transform: rotate(180deg); }
+.modeRepeatIcon b { position: absolute; inset: 2px 0 0; font-size: 9px; line-height: 12px; font-weight: 500; text-align: center; }
 @keyframes dotPulse { 50% { opacity: 0.4; } }
 
 .section { min-width: 0; }
