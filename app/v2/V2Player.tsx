@@ -153,6 +153,11 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     engineRef.current?.next();
   };
 
+  const previousMusicTrack = () => {
+    recordMusicDiagnostic("ui-previous-track", { channelId: activeChannelId, status: playback.status, intent: musicWantsPlaybackRef.current });
+    engineRef.current?.previous();
+  };
+
   const playbackLabel = !activeChannel.tracks.length
     ? "Planned channel"
     : playback.status === "loading"
@@ -203,7 +208,10 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
           </button>
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={playing ? s.statusPlaying : buffering ? s.statusBuffering : ""}>{playbackLabel}</span></div>
-          <button type="button" className={s.nextButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track">Next track <span aria-hidden="true">›</span></button>
+          <div className={s.trackControls} aria-label="Music track controls">
+            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track">⏮</button>
+            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track">⏭</button>
+          </div>
         </section>
 
         <section className={s.section}>

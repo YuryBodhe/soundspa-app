@@ -182,22 +182,27 @@
 .statusDotBuffering { animation: dotPulse 1.2s ease-in-out infinite; background: #8a9e82; }
 .statusPlaying { color: #8a9e82; }
 .statusBuffering { color: #8a9e82; }
-.nextButton {
+.trackControls {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.trackButton {
+  width: 44px;
+  height: 44px;
   min-width: 44px;
   min-height: 44px;
-  margin-top: 10px;
-  padding: 8px 16px;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 22px;
+  border-radius: 50%;
   background: rgba(255, 255, 255, 0.035);
   color: #b8b0a0;
   font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 18px;
+  line-height: 1;
   cursor: pointer;
 }
-.nextButton span { margin-left: 5px; font-size: 17px; line-height: 0; }
-.nextButton:disabled { cursor: default; opacity: 0.35; }
+.trackButton:disabled { cursor: default; opacity: 0.35; }
 @keyframes dotPulse { 50% { opacity: 0.4; } }
 
 .section { min-width: 0; }

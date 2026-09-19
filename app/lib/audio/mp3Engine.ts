@@ -217,6 +217,15 @@ export class Mp3Engine {
     void this.startPlaylistTrack(nextIndex);
   };
 
+  previous = () => {
+    if (this.disposed || this.tracks.length < 2) return;
+    const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
+    const previousIndex = (currentIndex - 1 + this.tracks.length) % this.tracks.length;
+    this.desiredNextIndex = (previousIndex + 1) % this.tracks.length;
+    this.captureDiagnostic("explicit-previous", { fromTrackIndex: currentIndex, toTrackIndex: previousIndex, wantsPlayback: this.wantsPlayback });
+    void this.startPlaylistTrack(previousIndex);
+  };
+
   dispose = () => {
     this.emptyRangesEligibility = null;
     if (this.disposed) return;
