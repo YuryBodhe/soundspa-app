@@ -202,8 +202,16 @@
   letter-spacing: 0.05em;
   line-height: 1;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #d4c9b0;
 }
 .trackButton:disabled { cursor: default; opacity: 0.35; }
+.skipIcon { display: inline-flex; align-items: center; gap: 2px; color: currentColor; }
+.skipIcon i { display: block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-right: 7px solid currentColor; }
+.skipIconNext i { border-right: 0; border-left: 7px solid currentColor; }
 @keyframes dotPulse { 50% { opacity: 0.4; } }
 
 .section { min-width: 0; }

@@ -210,8 +210,8 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label="Music track controls">
-            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track">⏮ Previous</button>
-            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track">Next ⏭</button>
+            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track"><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>Previous</span></button>
+            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track"><span>Next</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div>
         </section>
 
