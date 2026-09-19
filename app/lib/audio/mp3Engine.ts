@@ -208,6 +208,15 @@ export class Mp3Engine {
     if (this.cachePreparationStarted) void this.ensureCachePipeline();
   };
 
+  next = () => {
+    if (this.disposed || this.tracks.length < 2) return;
+    const currentIndex = this.audibleSource?.trackIndex ?? this.state.currentTrackIndex;
+    const nextIndex = (currentIndex + 1) % this.tracks.length;
+    this.desiredNextIndex = (nextIndex + 1) % this.tracks.length;
+    this.captureDiagnostic("explicit-next", { fromTrackIndex: currentIndex, toTrackIndex: nextIndex, wantsPlayback: this.wantsPlayback });
+    void this.startPlaylistTrack(nextIndex);
+  };
+
   dispose = () => {
     this.emptyRangesEligibility = null;
     if (this.disposed) return;

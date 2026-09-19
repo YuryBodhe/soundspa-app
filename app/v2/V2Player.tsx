@@ -148,6 +148,11 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     if (activeChannel.tracks.length && engineChannelIdRef.current === activeChannelId) toggleMusicPlayback();
   };
 
+  const nextMusicTrack = () => {
+    recordMusicDiagnostic("ui-next-track", { channelId: activeChannelId, status: playback.status, intent: musicWantsPlaybackRef.current });
+    engineRef.current?.next();
+  };
+
   const playbackLabel = !activeChannel.tracks.length
     ? "Planned channel"
     : playback.status === "loading"
@@ -198,6 +203,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
           </button>
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={playing ? s.statusPlaying : buffering ? s.statusBuffering : ""}>{playbackLabel}</span></div>
+          <button type="button" className={s.nextButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track">Next track <span aria-hidden="true">›</span></button>
         </section>
 
         <section className={s.section}>
