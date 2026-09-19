@@ -224,9 +224,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
           <div className={s.trackControls} aria-label="Music track controls">
             <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track"><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>Previous</span></button>
             <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} aria-label={`Playback mode: ${playbackModeLabel}`} title={`Playback mode: ${playbackModeLabel}`}>
-              {playbackMode === "normal" && <span className={s.modeNormalIcon} aria-hidden="true"><i /><i /></span>}
-              {playbackMode === "shuffle" && <span className={s.modeShuffleIcon} aria-hidden="true"><i /><i /></span>}
-              {playbackMode === "repeat-one" && <span className={s.modeRepeatIcon} aria-hidden="true"><i /><i /><b>1</b></span>}
+              {playbackModeLabel}
             </button>
             <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track"><span>Next</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div>
