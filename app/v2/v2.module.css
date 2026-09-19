@@ -193,9 +193,9 @@
   height: 44px;
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.035);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #b8b0a0;
   font: inherit;
   font-size: 12px;
@@ -209,6 +209,9 @@
   color: #d4c9b0;
 }
 .trackButton:disabled { cursor: default; opacity: 0.35; }
+.trackButton:hover:not(:disabled) { opacity: 0.8; }
+.trackButton:active:not(:disabled) { opacity: 0.62; }
+.trackButton:focus-visible { outline: 2px solid #d4c9b0; outline-offset: 3px; }
 .skipIcon { display: inline-flex; align-items: center; gap: 2px; color: currentColor; }
 .skipIcon i { display: block; width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-right: 7px solid currentColor; }
 .skipIconNext i { border-right: 0; border-left: 7px solid currentColor; }
