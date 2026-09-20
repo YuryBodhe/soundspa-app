@@ -36,6 +36,13 @@
       "when": 1789873271579,
       "tag": "0004_global_base",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789980000000,
+      "tag": "0005_admin_grants",
+      "breakpoints": true
     }
   ]
 }
