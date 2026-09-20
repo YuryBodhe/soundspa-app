@@ -12,3 +12,12 @@ export async function getBaseChannels(db: Pick<typeof v2Db, "select"> = v2Db) {
     .innerJoin(channels, eq(channels.id, baseChannels.channelId))
     .orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
 }
+
+export async function addBaseChannel(channelId: string, db: Pick<typeof v2Db, "select" | "insert"> = v2Db) {
+  const [channel] = await db.select({ id: channels.id, isPublished: channels.isPublished, archivedAt: channels.archivedAt }).from(channels).where(eq(channels.id, channelId));
+  if (!channel || !channel.isPublished || channel.archivedAt) throw new Error("Channel is not eligible for Base.");
+  await db.insert(baseChannels).values({ channelId }).onConflictDoNothing();
+}
+export async function removeBaseChannel(channelId: string, db: Pick<typeof v2Db, "delete"> = v2Db) {
+  await db.delete(baseChannels).where(eq(baseChannels.channelId, channelId));
+}
