@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { resolveImageUrl, resolveMediaUrl } from "@/app/v2/mediaUrls";
 
 const COOKIE = "soundspa_v2_device";
+export const dynamic = "force-dynamic";
 export async function GET() {
   const credential = (await cookies()).get(COOKIE)?.value;
   if (!credential) return Response.json({ error: "Device authentication required." }, { status: 401 });
