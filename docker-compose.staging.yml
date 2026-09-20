@@ -46,6 +46,10 @@ services:
         source: /var/www/soundspa-v2/scripts
         target: /app/scripts
         read_only: true
+      - type: bind
+        source: /var/www/soundspa-v2/db
+        target: /app/db
+        read_only: true
     depends_on:
       v2-postgres:
         condition: service_healthy
