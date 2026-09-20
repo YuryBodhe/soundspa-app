@@ -29,6 +29,13 @@
       "when": 1789869455953,
       "tag": "0003_monitoring_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789873271579,
+      "tag": "0004_global_base",
+      "breakpoints": true
     }
   ]
 }
