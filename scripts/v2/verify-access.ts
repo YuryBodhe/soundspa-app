@@ -60,7 +60,7 @@ async function main() {
         assert.deepEqual(await playableNames(), []);
         assert((await getLocationCatalog(location.id, now, tx)).every((c) => c.tracks.length === 0));
         await tx.update(locationServiceAccess).set({ suspendedAt: null, paidThrough: now, trialEndsAt: now }).where(eq(locationServiceAccess.locationId, location.id));
-        assert.deepEqual(await playableNames(), []); // Expiry equals serverNow is expired.
+        assert.deepEqual(await playableNames(), ["included", "preview"]); // Commercial dates at serverNow disable only subscribed access.
         await tx.update(locationServiceAccess).set({ paidThrough: future }).where(eq(locationServiceAccess.locationId, location.id));
         await tx.update(locations).set({ archivedAt: now }).where(eq(locations.id, location.id));
         assert.deepEqual(await getLocationCatalog(location.id, now, tx), []);
