@@ -41,6 +41,11 @@ services:
         source: /var/www/soundspa-v2/.v2-test-device-credential
         target: /run/soundspa-v2/device-credential
         read_only: true
+      # Keep rollback-only staging verification scripts aligned with the checked-out commit.
+      - type: bind
+        source: /var/www/soundspa-v2/scripts
+        target: /app/scripts
+        read_only: true
     depends_on:
       v2-postgres:
         condition: service_healthy
