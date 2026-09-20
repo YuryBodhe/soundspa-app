@@ -22,6 +22,7 @@ async function main() {
       c=await get(included); assert.deepEqual(c.accessSources,["included"]);
       c=await get(subscribed); assert.equal(c.playable,false);
       c=await get(locked); assert.deepEqual(c.accessSources,[]); assert.deepEqual(c.tracks,[]);
+      await tx.insert(locationServiceAccess).values({locationId});
       await tx.update(locationServiceAccess).set({paidThrough:future}).where(eq(locationServiceAccess.locationId,locationId));
       c=await get(subscribed); assert.deepEqual(c.accessSources,["custom"]);
       await tx.update(locationServiceAccess).set({suspendedAt:now}).where(eq(locationServiceAccess.locationId,locationId));
