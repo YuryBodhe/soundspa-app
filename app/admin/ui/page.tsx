@@ -1,15 +1,10 @@
 import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
-import { resolveEffectiveChannelAccess } from "../../../db/v2/queries/effectiveAccess";
-import { getBaseChannelIds } from "../../../db/v2/queries/base";
-import { getLocationAdminGrants } from "../../../db/v2/queries/adminGrants";
-import { channels, locations, organizations } from "../../../db/v2/schema";
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { v2Db } from "../../../db/v2/client";
 export const dynamic = "force-dynamic";
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
+  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getLocationAdminGrants }, { channels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client")]);
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
   const baseIds = new Set(await getBaseChannelIds());
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
