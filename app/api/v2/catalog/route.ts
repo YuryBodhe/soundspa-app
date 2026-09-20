@@ -1,12 +1,11 @@
 import { cookies } from "next/headers";
-import { authenticateDeviceCredential } from "@/db/v2/queries/devices";
-import { resolveEffectiveChannelAccess } from "@/db/v2/queries/effectiveAccess";
 import { resolveImageUrl, resolveMediaUrl } from "@/app/v2/mediaUrls";
 
 const COOKIE = "soundspa_v2_device";
 export async function GET() {
   const credential = (await cookies()).get(COOKIE)?.value;
   if (!credential) return Response.json({ error: "Device authentication required." }, { status: 401 });
+  const [{ authenticateDeviceCredential }, { resolveEffectiveChannelAccess }] = await Promise.all([import("@/db/v2/queries/devices"), import("@/db/v2/queries/effectiveAccess")]);
   const device = await authenticateDeviceCredential(credential);
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401 });
   const content = await resolveEffectiveChannelAccess(device.locationId, new Date());
