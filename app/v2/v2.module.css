@@ -367,3 +367,4 @@
   .statusDotPlaying,
   .statusDotBuffering { animation-duration: 0.001ms; animation-iteration-count: 1; }
 }
+.cardLocked { opacity: 0.55; cursor: not-allowed; }

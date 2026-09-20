@@ -34,26 +34,26 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
 
 function MusicCard({ channel, active, playing, onSelect }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void }) {
   return (
-    <button type="button" className={`${s.card} ${active ? s.musicCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
+    <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active && playing ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span><span className={s.cardMood}>{channel.mood}</span></span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span><span className={s.cardMood}>{channel.playable === false ? "Locked" : channel.mood}</span></span>
     </button>
   );
 }
 
 function AmbientCard({ channel, active, onSelect }: { channel: PlayerChannel; active: boolean; onSelect: () => void }) {
   return (
-    <button type="button" className={`${s.card} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
+    <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span></span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span>{channel.playable === false && <span className={s.cardMood}>Locked</span>}</span>
     </button>
   );
 }
@@ -65,6 +65,7 @@ function WaveVisualization({ playing }: { playing: boolean }) {
 
 export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
+  const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
   const engineRef = useRef<Mp3Engine | null>(null);
   const engineChannelIdRef = useRef<string | null>(null);
@@ -75,8 +76,8 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
-  const [activeChannelId, setActiveChannelId] = useState(musicChannels[0].id);
-  const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId) ?? musicChannels[0], [activeChannelId, musicChannels]);
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
+  const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
@@ -95,7 +96,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   }, []);
 
   useEffect(() => {
-    const initial = musicChannels[0];
+    const initial = playableMusicChannels[0];
     if (initial.tracks.length) replaceMusicEngine(initial.id, initial.tracks);
     return () => {
       engineUnsubscribeRef.current?.();
@@ -104,7 +105,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
       engineRef.current = null;
       engineChannelIdRef.current = null;
     };
-  }, [replaceMusicEngine, musicChannels]);
+  }, [replaceMusicEngine, playableMusicChannels]);
 
   useEffect(() => {
     const engine = new AmbientEngine();
@@ -131,6 +132,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
   const selectMusic = (channel: PlayerChannel) => {
     recordMusicDiagnostic("ui-channel-select", { fromChannelId: activeChannelId, toChannelId: channel.id, title: channel.title, status: playback.status, intent: musicWantsPlaybackRef.current });
     const playlist = channel.tracks.length ? channel.tracks : null;
+    if (channel.playable === false || !channel.tracks.length) return;
     if (channel.id === activeChannelId) {
       if (playlist) toggleMusicPlayback();
       return;
@@ -184,8 +186,10 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
             : currentTrackName ? `Ready: ${currentTrackName}` : "Ready to play";
 
   const toggleAmbient = (channel: PlayerChannel) => {
-    if (channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
+    if (channel.playable !== false && channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
+
+  if (!activeChannel) return <div className={s.shell}><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
 
   return (
     <div

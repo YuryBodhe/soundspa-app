@@ -3,7 +3,7 @@ import { resolveImageUrl, resolveMediaUrl } from "./mediaUrls";
 
 export type PlayerChannel = {
   id: string; slug: string; kind: "music" | "ambient"; title: string;
-  mood: string; image: string | null;
+  mood: string; image: string | null; playable?: boolean; accessSources?: string[]; accessExpiries?: Record<string,string>;
   tracks: { id: string; url: string; sizeBytes: string; originalFilename?: string }[];
 };
 
