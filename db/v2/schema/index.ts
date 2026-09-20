@@ -10,3 +10,7 @@ export * from "./product/channelTracks";
 export * from "./product/relations";
 export * from "./access/locationServiceAccess";
 export * from "./access/locationChannelEntitlements";
+export * from "./monitoring/devices";
+export * from "./monitoring/deviceCurrentState";
+export * from "./monitoring/deviceEvents";
+export * from "./monitoring/relations";

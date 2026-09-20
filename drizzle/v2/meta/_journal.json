@@ -22,6 +22,13 @@
       "when": 1789217496138,
       "tag": "0002_access",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789869455953,
+      "tag": "0003_monitoring_foundation",
+      "breakpoints": true
     }
   ]
 }
