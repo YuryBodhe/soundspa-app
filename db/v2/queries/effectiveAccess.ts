@@ -9,7 +9,7 @@ export type EffectiveChannelAccess = {
   description: string | null; imageKey: string | null; playable: boolean; suspended: boolean;
   accessSources: EffectiveAccessSource[]; underlyingSources: EffectiveAccessSource[];
   accessExpiries: { preview?: Date; custom?: Date };
-  tracks: { id: string; storageKey: string; sortOrder: number }[];
+  tracks: { id: string; storageKey: string; originalFilename: string; sizeBytes: bigint; sortOrder: number }[];
 };
 const sourceOrder: EffectiveAccessSource[] = ["base", "included", "preview", "custom"];
 
@@ -21,7 +21,7 @@ export async function resolveEffectiveChannelAccess(locationId: string, serverNo
     commercialActive: sql<boolean>`(${locationServiceAccess.locationId} IS NOT NULL AND ${locationServiceAccess.suspendedAt} IS NULL AND (${locationServiceAccess.paidThrough} > ${serverNow} OR ${locationServiceAccess.trialEndsAt} > ${serverNow})) IS TRUE`,
     suspended: sql<boolean>`(${locationServiceAccess.suspendedAt} IS NOT NULL) IS TRUE`,
     accessType: locationChannelEntitlements.accessType, enabled: locationChannelEntitlements.enabled, expiresAt: locationChannelEntitlements.expiresAt,
-    trackId: channelTracks.id, storageKey: channelTracks.storageKey, trackOrder: channelTracks.sortOrder,
+    trackId: channelTracks.id, storageKey: channelTracks.storageKey, originalFilename: channelTracks.originalFilename, sizeBytes: channelTracks.sizeBytes, trackOrder: channelTracks.sortOrder,
   }).from(locations).innerJoin(organizations, and(eq(organizations.id, locations.organizationId), isNull(organizations.archivedAt)))
     .innerJoin(channels, and(eq(channels.isPublished, true), isNull(channels.archivedAt))).leftJoin(baseChannels, eq(baseChannels.channelId, channels.id))
     .leftJoin(locationServiceAccess, eq(locationServiceAccess.locationId, locations.id))
@@ -41,7 +41,7 @@ export async function resolveEffectiveChannelAccess(locationId: string, serverNo
     item.accessSources = item.underlyingSources;
     if (row.expiresAt && row.accessType === "preview" && row.expiresAt > serverNow) item.accessExpiries.preview = row.expiresAt;
     item.playable = item.underlyingSources.length > 0 && !row.suspended;
-    if (item.playable && row.trackId && row.storageKey && row.trackOrder !== null) item.tracks.push({ id: row.trackId, storageKey: row.storageKey, sortOrder: row.trackOrder });
+    if (item.playable && row.trackId && row.storageKey && row.originalFilename && row.sizeBytes !== null && row.trackOrder !== null) item.tracks.push({ id: row.trackId, storageKey: row.storageKey, originalFilename: row.originalFilename, sizeBytes: row.sizeBytes, sortOrder: row.trackOrder });
     result.set(row.id, item);
   }
   return [...result.values()];
