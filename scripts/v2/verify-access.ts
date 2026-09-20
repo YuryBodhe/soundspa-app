@@ -14,7 +14,7 @@ async function main() {
     assert.equal(target.rows[0]?.user, "soundspa_v2");
     console.info("V2 Access target verified:", target.rows[0]);
     const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`);
-    assert.equal(journal.rows[0]?.count, 3);
+    assert.equal(journal.rows[0]?.count, 4);
     let organizationId: string | undefined;
     let locationId: string | undefined;
     const channelIds: string[] = [];
@@ -95,7 +95,7 @@ async function main() {
     assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
     assert.equal((await v2Db.select().from(locations).where(eq(locations.id, locationId))).length, 0);
     for (const id of channelIds) assert.equal((await v2Db.select().from(channels).where(eq(channels.id, id))).length, 0);
-    console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=3.");
+    console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=4.");
   } finally { await v2Pool.end(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });
