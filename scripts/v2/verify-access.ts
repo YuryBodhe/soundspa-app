@@ -14,7 +14,7 @@ async function main() {
     assert.equal(target.rows[0]?.user, "soundspa_v2");
     console.info("V2 Access target verified:", target.rows[0]);
     const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`);
-    assert.equal(journal.rows[0]?.count, 3);
+    assert.equal(journal.rows[0]?.count, 4);
     let organizationId: string | undefined;
     let locationId: string | undefined;
     const channelIds: string[] = [];
@@ -40,7 +40,7 @@ async function main() {
             expiresAt: name === "preview" ? future : name === "expired" ? past : null, enabled: name !== "disabled" });
         }
         const playableNames = async () => (await getPlayableChannelsForLocation(location.id, now, tx)).map((c) => c.displayName).sort();
-        assert.deepEqual(await playableNames(), []); // Missing service row denies access.
+        assert.deepEqual(await playableNames(), ["included", "preview"]); // Included and unexpired preview do not require commercial service.
         await tx.insert(locationServiceAccess).values({ locationId: location.id, trialEndsAt: future });
         assert.deepEqual(await playableNames(), ["included", "preview", "subscribed"]);
         const catalog = await getLocationCatalog(location.id, now, tx);
@@ -53,7 +53,7 @@ async function main() {
         assert.equal(catalog.find((c) => c.displayName === "no-tracks")?.playable, false);
         console.info("PASS: included/preview/subscribed; expired/disabled/locked; published/archive/enabled tracks");
         await tx.update(locationServiceAccess).set({ trialEndsAt: past }).where(eq(locationServiceAccess.locationId, location.id));
-        assert.deepEqual(await playableNames(), []);
+        assert.deepEqual(await playableNames(), ["included", "preview"]);
         await tx.update(locationServiceAccess).set({ paidThrough: future }).where(eq(locationServiceAccess.locationId, location.id));
         assert.deepEqual(await playableNames(), ["included", "preview", "subscribed"]);
         await tx.update(locationServiceAccess).set({ suspendedAt: now }).where(eq(locationServiceAccess.locationId, location.id));
@@ -95,7 +95,7 @@ async function main() {
     assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
     assert.equal((await v2Db.select().from(locations).where(eq(locations.id, locationId))).length, 0);
     for (const id of channelIds) assert.equal((await v2Db.select().from(channels).where(eq(channels.id, id))).length, 0);
-    console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=3.");
+    console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=4.");
   } finally { await v2Pool.end(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

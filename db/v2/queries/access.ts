@@ -1,6 +1,7 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { v2Db } from "../client";
 import { channels, channelTracks, locations, organizations, locationServiceAccess, locationChannelEntitlements } from "../schema";
+import { evaluateCatalogAccess } from "../accessPolicy";
 
 export type CatalogAccess = "included" | "preview" | "subscribed" | "locked" | "expired" | "disabled";
 type Track = { id: string; storageKey: string; sortOrder: number };
@@ -18,7 +19,8 @@ export async function getLocationCatalog(locationId: string, serverNow: Date, db
   const rows = await db.select({
     id: channels.id, slug: channels.slug, displayName: channels.displayName, kind: channels.kind,
     description: channels.description, imageKey: channels.imageKey,
-    serviceActive: sql<boolean>`(${locationServiceAccess.locationId} IS NOT NULL AND ${locationServiceAccess.suspendedAt} IS NULL AND (${locationServiceAccess.paidThrough} > ${serverNow} OR ${locationServiceAccess.trialEndsAt} > ${serverNow})) IS TRUE`,
+    commercialActive: sql<boolean>`(${locationServiceAccess.locationId} IS NOT NULL AND ${locationServiceAccess.suspendedAt} IS NULL AND (${locationServiceAccess.paidThrough} > ${serverNow} OR ${locationServiceAccess.trialEndsAt} > ${serverNow})) IS TRUE`,
+    suspended: sql<boolean>`(${locationServiceAccess.suspendedAt} IS NOT NULL) IS TRUE`,
     accessType: locationChannelEntitlements.accessType, enabled: locationChannelEntitlements.enabled,
     expiresAt: locationChannelEntitlements.expiresAt,
     trackId: channelTracks.id, storageKey: channelTracks.storageKey, trackOrder: channelTracks.sortOrder,
@@ -32,18 +34,16 @@ export async function getLocationCatalog(locationId: string, serverNow: Date, db
     .orderBy(asc(channels.sortOrder), asc(channels.id), asc(channelTracks.sortOrder), asc(channelTracks.id));
   const catalog = new Map<string, LocationCatalogChannel>();
   for (const row of rows) {
-    const access: CatalogAccess = !row.accessType ? "locked" : !row.enabled ? "disabled"
-      : row.expiresAt && row.expiresAt <= serverNow ? "expired" : row.accessType;
-    const entitled = access === "included" || access === "preview" || access === "subscribed";
+    const decision = evaluateCatalogAccess({ accessType: row.accessType, enabled: row.enabled, expiresAt: row.expiresAt, commercialActive: row.commercialActive, suspended: row.suspended, now: serverNow });
     let item = catalog.get(row.id);
     if (!item) {
       item = { id: row.id, slug: row.slug, displayName: row.displayName, kind: row.kind,
-        description: row.description, imageKey: row.imageKey, access,
-        serviceActive: row.serviceActive, playable: false, tracks: [] };
+        description: row.description, imageKey: row.imageKey, access: decision.access,
+        serviceActive: row.commercialActive, playable: false, tracks: [] };
       catalog.set(row.id, item);
     }
     // Never return storage identities for denied service/entitlements.
-    if (row.serviceActive && entitled && row.trackId && row.storageKey && row.trackOrder !== null) {
+    if (decision.playable && row.trackId && row.storageKey && row.trackOrder !== null) {
       item.tracks.push({ id: row.trackId, storageKey: row.storageKey, sortOrder: row.trackOrder });
       item.playable = true;
     }
