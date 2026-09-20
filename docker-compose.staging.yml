@@ -23,6 +23,7 @@ services:
       V2_MEDIA_DELIVERY_BACKEND: ${V2_MEDIA_DELIVERY_BACKEND:-local}
       V2_MEDIA_CDN_BASE_URL: ${V2_MEDIA_CDN_BASE_URL:-https://media.soundspa.bodhemusic.com}
       V2_DEVICE_BOOTSTRAP_ENABLED: ${V2_DEVICE_BOOTSTRAP_ENABLED:-0}
+      V2_PUBLIC_ORIGIN: ${V2_PUBLIC_ORIGIN:-https://test.soundspa.bodhemusic.com}
       V2_TEST_DEVICE_CREDENTIAL_FILE: ${V2_TEST_DEVICE_CREDENTIAL_FILE:-/run/soundspa-v2/device-credential}
       V2_S3_ENDPOINT: ${V2_S3_ENDPOINT:-}
       V2_S3_BUCKET: ${V2_S3_BUCKET:-}

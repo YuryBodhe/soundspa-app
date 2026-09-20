@@ -16,7 +16,8 @@ export async function GET(request: Request) {
   catch { return new Response("Device bootstrap is unavailable.", { status: 503 }); }
   const device = await authenticateDeviceCredential(credential);
   if (!device) return new Response("Device bootstrap is unavailable.", { status: 503 });
-  const response = NextResponse.redirect(new URL("/v2", request.url));
+  const publicOrigin = process.env.V2_PUBLIC_ORIGIN?.trim() || new URL(request.url).origin;
+  const response = NextResponse.redirect(new URL("/player", publicOrigin));
   response.cookies.set(COOKIE, credential, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 365 });
   response.headers.set("Cache-Control", "no-store");
   return response;
