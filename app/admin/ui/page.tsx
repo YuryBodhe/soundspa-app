@@ -1,17 +1,50 @@
 import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
+
 export const dynamic = "force-dynamic";
+
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getLocationAdminGrants }, { channels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client")]);
+  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getLocationAdminGrants }, { getHiddenChannelIds }, { channels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
+  ]);
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
   const baseIds = new Set(await getBaseChannelIds());
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
   const selected = locs.find(({ location }) => location.id === params.location) ?? locs[0];
-  const effective = selected ? await resolveEffectiveChannelAccess(selected.location.id, new Date()) : [];
-  const grants = selected ? await getLocationAdminGrants(selected.location.id) : [];
+  const [effective, grants, hiddenIds] = selected ? await Promise.all([
+    resolveEffectiveChannelAccess(selected.location.id, new Date()), getLocationAdminGrants(selected.location.id), getHiddenChannelIds(selected.location.id),
+  ]) : [[], [], new Set<string>()];
   const grantByChannel = new Map(grants.map(({ grant }) => [grant.channelId, grant]));
- return <><div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1></div>{params.message && <p role="status">{params.message.slice(0, 200)}</p>}<section className="admin-card"><h2 className="admin-card-title">Base</h2><p className="text-dim">Global package membership uses the effective access resolver.</p><table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Base</th><th /></tr></thead><tbody>{published.map((channel) => <tr key={channel.id}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{baseIds.has(channel.id) ? <span className="badge badge-ok">BASE</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={baseIds.has(channel.id) ? "remove-base" : "add-base"} channelId={channel.id}><button className="btn btn-sm">{baseIds.has(channel.id) ? "Remove from Base" : "Add to Base"}</button></AccessMutationForm></td></tr>)}</tbody></table></section><section className="admin-card"><h2 className="admin-card-title">Locations</h2><div className="admin-page-nav">{locs.map(({ location, organization }) => <a className="btn" key={location.id} href={`/admin?location=${location.id}`}>{location.name} · {organization.name}</a>)}</div></section>{selected && <section className="admin-card"><h2 className="admin-card-title">{selected.location.name}</h2><p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p><table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Effective</th><th>Sources</th><th>Admin Override</th><th /></tr></thead><tbody>{effective.map((channel) => { const grant = grantByChannel.get(channel.id); return <tr key={channel.id}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{channel.playable ? <span className="badge badge-ok">PLAYABLE</span> : <span className="badge badge-warn">LOCKED</span>}</td><td>{channel.accessSources.length ? channel.accessSources.join(", ") : "—"}</td><td>{grant ? <span className={grant.enabled ? "badge badge-ok" : "badge badge-neutral"}>{grant.enabled ? "ADMIN ON" : "ADMIN OFF"}</span> : "OFF"}</td><td><AccessMutationForm operation={grant?.enabled ? "disable-admin" : "enable-admin"} locationId={selected.location.id} channelId={channel.id}><button className="btn btn-sm">{grant ? (grant.enabled ? "Disable Override" : "Enable Override") : "Add Admin Override"}</button></AccessMutationForm></td></tr>; })}</tbody></table></section>}</>;
+
+  return <>
+    <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1></div>
+    {params.message && <p role="status">{params.message.slice(0, 200)}</p>}
+    <section className="admin-card">
+      <h2 className="admin-card-title">Base</h2><p className="text-dim">Global package membership uses the effective access resolver.</p>
+      <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Base</th><th /></tr></thead><tbody>
+        {published.map((channel) => <tr key={channel.id}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{baseIds.has(channel.id) ? <span className="badge badge-ok">BASE</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={baseIds.has(channel.id) ? "remove-base" : "add-base"} channelId={channel.id}><button className="btn btn-sm">{baseIds.has(channel.id) ? "Remove from Base" : "Add to Base"}</button></AccessMutationForm></td></tr>)}
+      </tbody></table>
+    </section>
+    <section className="admin-card"><h2 className="admin-card-title">Locations</h2><div className="admin-page-nav">{locs.map(({ location, organization }) => <a className="btn" key={location.id} href={`/admin?location=${location.id}`}>{location.name} · {organization.name}</a>)}</div></section>
+    {selected && <section className="admin-card">
+      <h2 className="admin-card-title">{selected.location.name}</h2>
+      <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
+      <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Admin Override</th><th /></tr></thead><tbody>
+        {effective.map((channel) => {
+          const grant = grantByChannel.get(channel.id); const hidden = hiddenIds.has(channel.id);
+          return <tr key={channel.id}>
+            <td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td>
+            <td><span className={hidden ? "badge badge-warn" : "badge badge-ok"}>{hidden ? "HIDDEN" : "VISIBLE"}</span></td>
+            <td>{channel.playable ? <span className="badge badge-ok">PLAYABLE</span> : <span className="badge badge-warn">LOCKED</span>}</td>
+            <td>{channel.accessSources.length ? channel.accessSources.join(", ") : "—"}</td>
+            <td>{grant ? <span className={grant.enabled ? "badge badge-ok" : "badge badge-neutral"}>{grant.enabled ? "ADMIN ON" : "ADMIN OFF"}</span> : "OFF"}</td>
+            <td><AccessMutationForm operation={hidden ? "show-channel" : "hide-channel"} locationId={selected.location.id} channelId={channel.id}><button className="btn btn-sm">{hidden ? "Show" : "Hide"}</button></AccessMutationForm></td>
+          </tr>;
+        })}
+      </tbody></table>
+    </section>}
+  </>;
 }

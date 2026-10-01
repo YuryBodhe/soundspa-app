@@ -43,6 +43,13 @@
       "when": 1789980000000,
       "tag": "0005_admin_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790845077411,
+      "tag": "0006_location_channel_visibility",
+      "breakpoints": true
     }
   ]
 }

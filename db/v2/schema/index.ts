@@ -12,6 +12,7 @@ export * from "./access/locationServiceAccess";
 export * from "./access/locationChannelEntitlements";
 export * from "./access/baseChannels";
 export * from "./access/locationChannelGrants";
+export * from "./access/locationChannelVisibility";
 export * from "./monitoring/devices";
 export * from "./monitoring/deviceCurrentState";
 export * from "./monitoring/deviceEvents";

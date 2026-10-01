@@ -6,10 +6,12 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const credential = (await cookies()).get(COOKIE)?.value;
   if (!credential) return Response.json({ error: "Device authentication required." }, { status: 401 });
-  const [{ authenticateDeviceCredential }, { resolveEffectiveChannelAccess }] = await Promise.all([import("@/db/v2/queries/devices"), import("@/db/v2/queries/effectiveAccess")]);
+  const [{ authenticateDeviceCredential }, { resolveEffectiveChannelAccess }, { filterVisibleChannels, getHiddenChannelIds }] = await Promise.all([import("@/db/v2/queries/devices"), import("@/db/v2/queries/effectiveAccess"), import("@/db/v2/queries/locationChannelVisibility")]);
   const device = await authenticateDeviceCredential(credential);
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401 });
-  const content = await resolveEffectiveChannelAccess(device.locationId, new Date());
+  const now = new Date();
+  const [effectiveAccess, hiddenChannelIds] = await Promise.all([resolveEffectiveChannelAccess(device.locationId, now), getHiddenChannelIds(device.locationId)]);
+  const content = filterVisibleChannels(effectiveAccess, hiddenChannelIds);
   const catalog = content.map((channel) => ({
     id: channel.id, slug: channel.slug, displayName: channel.displayName, kind: channel.kind,
     description: channel.description, imageUrl: resolveImageUrl(channel.imageKey), playable: channel.playable,
