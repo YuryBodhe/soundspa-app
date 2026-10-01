@@ -50,6 +50,13 @@
       "when": 1790845077411,
       "tag": "0006_location_channel_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790858890813,
+      "tag": "0007_device_activation",
+      "breakpoints": true
     }
   ]
 }

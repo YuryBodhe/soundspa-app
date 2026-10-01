@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
 import CustomerProvisioningForm from "./customerProvisioningForm";
+import DeviceProvisioningPanel from "./deviceProvisioningPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +17,9 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const baseIds = new Set(await getBaseChannelIds());
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
   const selected = locs.find(({ location }) => location.id === params.location) ?? locs[0];
-  const [effective, grants, hiddenIds] = selected ? await Promise.all([
-    resolveEffectiveChannelAccess(selected.location.id, new Date()), getLocationAdminGrants(selected.location.id), getHiddenChannelIds(selected.location.id),
-  ]) : [[], [], new Set<string>()];
+  const [effective, grants, hiddenIds, selectedDevices] = selected ? await Promise.all([
+    resolveEffectiveChannelAccess(selected.location.id, new Date()), getLocationAdminGrants(selected.location.id), getHiddenChannelIds(selected.location.id), import("../../../db/v2/queries/devices").then(({ listDevicesForLocation }) => listDevicesForLocation(selected.location.id)),
+  ]) : [[], [], new Set<string>(), []];
   const grantByChannel = new Map(grants.map(({ grant }) => [grant.channelId, grant]));
 
   return <>
@@ -48,6 +49,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
       <h2 className="admin-card-title">{selected.location.name}</h2>
       <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
       {!selected.organization.archivedAt && <p><a className="btn btn-primary" href={`/admin/ui/locations/${encodeURIComponent(selected.location.id)}/player-preview`} target="_blank" rel="noopener noreferrer">Open Player Preview</a></p>}
+      {!selected.organization.archivedAt && <DeviceProvisioningPanel locationId={selected.location.id} devices={selectedDevices} />}
       <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Admin Override</th><th /></tr></thead><tbody>
         {effective.map((channel) => {
           const grant = grantByChannel.get(channel.id); const hidden = hiddenIds.has(channel.id);

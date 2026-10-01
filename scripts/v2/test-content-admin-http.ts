@@ -50,7 +50,7 @@ async function main() {
     assert(ready, "SSH tunnel did not open");
     phase = "local HTTP server";
     app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-H", "127.0.0.1", "-p", String(appPort)], {
-      env:{...process.env, DATABASE_URL:"postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL:database.toString(),...(uploadRoot?{V2_MEDIA_ROOT:uploadRoot}:{})}, stdio:"ignore",
+      env:{...process.env, DATABASE_URL:"postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL:database.toString(), V2_PUBLIC_ORIGIN:"https://test.soundspa.bodhemusic.com",...(uploadRoot?{V2_MEDIA_ROOT:uploadRoot}:{})}, stdio:"ignore",
     });
     const origin = `http://127.0.0.1:${appPort}`;
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -135,8 +135,8 @@ async function main() {
     const publicHtml = await publicPage.text(); assert(publicHtml.includes('data-catalog-source="v2-db"'));
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(publicHtml.includes(title));
     phase = "existing staging regressions";
-    const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin };
-    for (const script of ["test-customer-provisioning", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
+    const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin, V2_PUBLIC_ORIGIN: "https://test.soundspa.bodhemusic.com" };
+    for (const script of ["test-customer-provisioning", "test-device-activation", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
       execFileSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", `scripts/v2/${script}.ts`, "--staging"], { env: testEnv, stdio: "inherit" });
     }
     if(uploadRoot){

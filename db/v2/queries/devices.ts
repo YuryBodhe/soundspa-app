@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { v2Db } from "../client";
 import { devices, locations, organizations } from "../schema";
 
@@ -11,4 +11,19 @@ export async function authenticateDeviceCredential(credential: string, db: Pick<
     .innerJoin(organizations, and(eq(organizations.id, locations.organizationId), isNull(organizations.archivedAt)))
     .where(and(eq(devices.credentialHash, credentialHash), eq(devices.status, "active"), isNull(devices.revokedAt), isNull(locations.archivedAt)));
   return context ?? null;
+}
+
+export async function listDevicesForLocation(locationId: string) {
+  const rows = await v2Db.select({
+    id: devices.id,
+    label: devices.label,
+    status: devices.status,
+    credentialHash: devices.credentialHash,
+    revokedAt: devices.revokedAt,
+    createdAt: devices.createdAt,
+  }).from(devices).where(eq(devices.locationId, locationId)).orderBy(asc(devices.createdAt), asc(devices.id));
+  return rows.map(({ credentialHash, revokedAt, ...device }) => ({
+    ...device,
+    activationState: revokedAt || device.status === "revoked" ? "revoked" as const : credentialHash ? "activated" as const : "pending" as const,
+  }));
 }

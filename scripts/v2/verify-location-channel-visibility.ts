@@ -15,7 +15,7 @@ async function main() {
     const target = await v2Db.execute(sql`SELECT current_database() AS database, current_user AS "user"`);
     assert.equal(target.rows[0]?.database, "soundspa_v2"); assert.equal(target.rows[0]?.user, "soundspa_v2");
     const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`);
-    assert.equal(journal.rows[0]?.count, 7);
+    assert.equal(journal.rows[0]?.count, 8);
 
     try {
       await v2Db.transaction(async (tx) => {

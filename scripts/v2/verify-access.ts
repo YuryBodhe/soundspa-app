@@ -14,7 +14,7 @@ async function main() {
     assert.equal(target.rows[0]?.user, "soundspa_v2");
     console.info("V2 Access target verified:", target.rows[0]);
     const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`);
-    assert.equal(journal.rows[0]?.count, 7);
+    assert.equal(journal.rows[0]?.count, 8);
     let organizationId: string | undefined;
     let locationId: string | undefined;
     const channelIds: string[] = [];

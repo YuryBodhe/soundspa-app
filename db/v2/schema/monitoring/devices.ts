@@ -5,7 +5,7 @@ import { locations } from "../core/locations";
 export const devices = pgTable("devices", {
   id: uuid("id").defaultRandom().primaryKey(),
   locationId: uuid("location_id").notNull().references(() => locations.id, { onDelete: "restrict" }),
-  credentialHash: text("credential_hash").notNull(),
+  credentialHash: text("credential_hash"),
   status: deviceStatus("status").notNull().default("active"),
   label: text("label"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -40,7 +40,7 @@ async function captureBaseline() {
   ]);
   assert.equal(target.rows[0]?.database, "soundspa_v2");
   assert.equal(target.rows[0]?.user, "soundspa_v2");
-  assert.equal(migrationCount.rows[0]?.count, 7);
+  assert.equal(migrationCount.rows[0]?.count, 8);
   return {
     counts: {
       organizations: organizationCount[0].count,
