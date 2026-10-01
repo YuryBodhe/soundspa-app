@@ -2,7 +2,6 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { and, eq, isNull } from "drizzle-orm";
 import { operatorAuthStatus } from "../../../../../../lib/v2/adminOperator";
-import { getLocationCustomerCatalog } from "../../../../../../lib/v2/customerCatalog";
 import CustomerCatalogPlayer from "../../../../../v2/customerCatalog";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +27,7 @@ export default async function LocationPlayerPreview({ params }: { params: Promis
     .limit(1);
   if (!location) notFound();
 
+  const { getLocationCustomerCatalog } = await import("../../../../../../lib/v2/customerCatalog");
   const catalog = await getLocationCustomerCatalog(location.id);
   return <>
     <div role="note" style={{ position: "sticky", top: 0, zIndex: 20, padding: "10px 16px", background: "#26352d", color: "#e7efe8", textAlign: "center" }}>
