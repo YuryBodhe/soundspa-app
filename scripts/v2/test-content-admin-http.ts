@@ -59,8 +59,19 @@ async function main() {
     }
     phase = "unauthorized access";
     assert.equal((await fetch(`${origin}/app/admin/channels/v2`)).status, 401);
+    const adminChallenge = await fetch(`${origin}/admin`, { redirect: "manual" });
+    assert.equal(adminChallenge.status, 401);
+    assert.match(adminChallenge.headers.get("www-authenticate") ?? "", /^Basic\s/i);
+    const uiChallenge = await fetch(`${origin}/admin/ui`, { redirect: "manual" });
+    assert.equal(uiChallenge.status, 401);
+    assert.match(uiChallenge.headers.get("www-authenticate") ?? "", /^Basic\s/i);
     assert.equal((await fetch(`${origin}/api/v2/admin/content`, {method:"POST", headers:{Origin:origin}})).status, 401);
     phase = "authorized six-channel Admin page";
+    const adminRedirect = await fetch(`${origin}/admin`, { headers: { Authorization: authorization }, redirect: "manual" });
+    assert.equal(adminRedirect.status, 307);
+    assert.equal(adminRedirect.headers.get("location"), "/admin/ui");
+    const adminUi = await fetch(`${origin}/admin/ui`, { headers: { Authorization: authorization } });
+    assert.equal(adminUi.status, 200);
     const response = await fetch(`${origin}/app/admin/channels/v2`, {headers:{Authorization:authorization}});
     assert.equal(response.status, 200); const html = await response.text();
     const expectedCounts={channels:Number(process.env.V2_TEST_CHANNELS??6),tracks:Number(process.env.V2_TEST_TRACKS??8)};
@@ -84,7 +95,7 @@ async function main() {
       const {verifyContentUploads}=await import("./verify-content-uploads");
       await verifyContentUploads(origin,authorization,undefined,expectedCounts);
     }
-    console.info("PASS: missing config fail-closed, Basic auth, unauthorized page/mutation 401, authorized six-channel Admin 200, cross-origin mutation 403, explicit validation feedback, public six-card DB catalog 200. Local test app/tunnel only; staging runtime unchanged.");
+    console.info("PASS: missing config fail-closed, Basic auth challenge on /admin and /admin/ui, authorized Admin redirect/page, unauthorized mutation 401, authorized V2 Content Admin 200, cross-origin mutation 403, explicit validation feedback, public DB catalog 200. Local test app/tunnel only; staging runtime unchanged.");
   } finally {
     app?.kill(); tunnel.kill();
     if(uploadRoot)await rm(uploadRoot,{recursive:true,force:true});
