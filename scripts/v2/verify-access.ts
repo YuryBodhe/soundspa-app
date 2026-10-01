@@ -95,7 +95,7 @@ async function main() {
     assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
     assert.equal((await v2Db.select().from(locations).where(eq(locations.id, locationId))).length, 0);
     for (const id of channelIds) assert.equal((await v2Db.select().from(channels).where(eq(channels.id, id))).length, 0);
-        console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=7.");
+        console.info("V2 Access verification PASS; exact synthetic IDs absent after full transaction rollback; journal=8.");
   } finally { await v2Pool.end(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

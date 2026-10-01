@@ -66,7 +66,7 @@ async function main() {
     const grantsAfter = (await v2Db.select().from(locationChannelGrants).where(and(eq(locationChannelGrants.locationId, LOCATION_ID), eq(locationChannelGrants.source, "admin")))).map((row) => ({ channelId: row.channelId, source: row.source, enabled: row.enabled, startsAt: row.startsAt?.toISOString() ?? null, endsAt: row.endsAt?.toISOString() ?? null })).sort((a, b) => a.channelId.localeCompare(b.channelId));
     assert.deepEqual(grantsAfter, grantsBefore);
     assert.equal((await v2Db.select().from(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, LOCATION_ID))).length, 0, "no test visibility rows remain");
-    console.info("V2 staging visibility lifecycle PASS: current Base/grants unchanged; Divnitsa visible→hidden(absent)→visible/playable(admin); unauthenticated/device-only=401, cross-origin=403; catalog=11/32/31; journal=7.");
+    console.info("V2 staging visibility lifecycle PASS: current Base/grants unchanged; Divnitsa visible→hidden(absent)→visible/playable(admin); unauthenticated/device-only=401, cross-origin=403; catalog=11/32/31; journal=8.");
   } catch (error) {
     if (mutationStarted && origin && basic) {
       try {
