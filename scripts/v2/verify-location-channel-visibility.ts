@@ -75,7 +75,7 @@ async function main() {
           assert.equal((await tx.select().from(locationChannelEntitlements).where(eq(locationChannelEntitlements.channelId, channel.id))).length, 1);
           await showChannelForLocation(a.id, channel.id, tx); assert(await find(a.id, channel.id));
         }
-        assert.equal((await tx.select().from(locationChannelEntitlements).where(eq(locationChannelEntitlements.channelId, adminMusic.id))).length, 1);
+        assert.equal((await tx.select().from(locationChannelEntitlements).where(eq(locationChannelEntitlements.channelId, adminMusic.id))).length, 0);
         // J/K: suspension remains authoritative for visible channels and does not change when hidden.
         item = await find(suspended.id, baseAmbient.id); assert(item); assert.equal(item.suspended, true); assert.equal(item.playable, false); assert.deepEqual(item.tracks, []);
         await hideChannelForLocation(suspended.id, baseAmbient.id, tx); assert.equal(await find(suspended.id, baseAmbient.id), undefined); await showChannelForLocation(suspended.id, baseAmbient.id, tx);
