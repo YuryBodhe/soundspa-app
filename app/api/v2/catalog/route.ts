@@ -1,22 +1,14 @@
 import { cookies } from "next/headers";
-import { resolveImageUrl, resolveMediaUrl } from "@/app/v2/mediaUrls";
 
 const COOKIE = "soundspa_v2_device";
 export const dynamic = "force-dynamic";
 export async function GET() {
   const credential = (await cookies()).get(COOKIE)?.value;
   if (!credential) return Response.json({ error: "Device authentication required." }, { status: 401 });
-  const [{ authenticateDeviceCredential }, { resolveEffectiveChannelAccess }, { filterVisibleChannels, getHiddenChannelIds }] = await Promise.all([import("@/db/v2/queries/devices"), import("@/db/v2/queries/effectiveAccess"), import("@/db/v2/queries/locationChannelVisibility")]);
+  const { authenticateDeviceCredential } = await import("@/db/v2/queries/devices");
   const device = await authenticateDeviceCredential(credential);
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401 });
-  const now = new Date();
-  const [effectiveAccess, hiddenChannelIds] = await Promise.all([resolveEffectiveChannelAccess(device.locationId, now), getHiddenChannelIds(device.locationId)]);
-  const content = filterVisibleChannels(effectiveAccess, hiddenChannelIds);
-  const catalog = content.map((channel) => ({
-    id: channel.id, slug: channel.slug, displayName: channel.displayName, kind: channel.kind,
-    description: channel.description, imageUrl: resolveImageUrl(channel.imageKey), playable: channel.playable,
-    suspended: channel.suspended, accessSources: channel.accessSources, accessExpiries: channel.accessExpiries,
-    tracks: channel.playable ? channel.tracks.map((track) => ({ id: track.id, url: resolveMediaUrl(channel.kind, track.storageKey), sizeBytes: track.sizeBytes.toString(), originalFilename: channel.kind === "music" ? track.originalFilename : undefined })) : [],
-  }));
+  const { getLocationCustomerCatalog } = await import("@/lib/v2/customerCatalog");
+  const catalog = await getLocationCustomerCatalog(device.locationId);
   return Response.json({ channels: catalog }, { headers: { "Cache-Control": "no-store" } });
 }

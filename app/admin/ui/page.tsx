@@ -47,6 +47,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
     {selected && <section className="admin-card">
       <h2 className="admin-card-title">{selected.location.name}</h2>
       <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
+      {!selected.organization.archivedAt && <p><a className="btn btn-primary" href={`/admin/ui/locations/${encodeURIComponent(selected.location.id)}/player-preview`} target="_blank" rel="noopener noreferrer">Open Player Preview</a></p>}
       <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Admin Override</th><th /></tr></thead><tbody>
         {effective.map((channel) => {
           const grant = grantByChannel.get(channel.id); const hidden = hiddenIds.has(channel.id);

@@ -65,7 +65,52 @@ async function main() {
     const uiChallenge = await fetch(`${origin}/admin/ui`, { redirect: "manual" });
     assert.equal(uiChallenge.status, 401);
     assert.match(uiChallenge.headers.get("www-authenticate") ?? "", /^Basic\s/i);
+    const previewPath = "/admin/ui/locations/15452bf7-c196-41fc-a1a4-9a0ed9e1a044/player-preview";
+    const previewChallenge = await fetch(`${origin}${previewPath}`, { redirect: "manual" });
+    assert.equal(previewChallenge.status, 401);
+    assert.match(previewChallenge.headers.get("www-authenticate") ?? "", /^Basic\s/i);
+    assert.equal((await fetch(`${origin}${previewPath}`, { headers: { Cookie: "soundspa_v2_device=not-an-operator" }, redirect: "manual" })).status, 401, "device cookie alone must not authorize operator preview");
+    assert.equal((await fetch(`${origin}/admin/ui/locations/00000000-0000-4000-8000-000000000000/player-preview`, { redirect: "manual" })).status, 401, "arbitrary Location ID must still require operator auth");
+    phase = "authorized operator preview";
+    const preview = await fetch(`${origin}${previewPath}`, { headers: { Authorization: authorization } });
+    assert.equal(preview.status, 200);
+    const previewHtml = await preview.text();
+    assert(previewHtml.includes("Operator Player Preview"));
+    assert(previewHtml.includes("Yury Test Spa"));
+    assert(previewHtml.includes('data-testid="v2-player"'));
+    assert(previewHtml.includes("Divnitsa"));
+    phase = "preview/customer catalog equivalence";
+    process.env.V2_DATABASE_URL = database.toString();
+    const [{ getLocationCustomerCatalog }, { resolveEffectiveChannelAccess }, { filterVisibleChannels, getHiddenChannelIds }, { resolveImageUrl, resolveMediaUrl }, { v2Db, v2Pool }, schema, drizzle] = await Promise.all([
+      import("../../lib/v2/customerCatalog"), import("../../db/v2/queries/effectiveAccess"), import("../../db/v2/queries/locationChannelVisibility"), import("../../app/v2/mediaUrls"), import("../../db/v2/client"), import("../../db/v2/schema"), import("drizzle-orm"),
+    ]);
+    try {
+      const locationId = "15452bf7-c196-41fc-a1a4-9a0ed9e1a044";
+      const [{ id: fixtureId }] = await v2Db.select({ id: schema.locations.id }).from(schema.locations).where(drizzle.eq(schema.locations.id, locationId)).limit(1);
+      assert.equal(fixtureId, locationId, "Yury Test Spa must exist for preview equivalence verification");
+      const now = new Date();
+      const [actual, access, hidden] = await Promise.all([getLocationCustomerCatalog(locationId, now), resolveEffectiveChannelAccess(locationId, now), getHiddenChannelIds(locationId)]);
+      const expected = filterVisibleChannels(access, hidden).map((channel) => ({
+        id: channel.id, slug: channel.slug, displayName: channel.displayName, kind: channel.kind, description: channel.description,
+        imageUrl: resolveImageUrl(channel.imageKey), playable: channel.playable, suspended: channel.suspended,
+        accessSources: channel.accessSources,
+        accessExpiries: Object.fromEntries(Object.entries(channel.accessExpiries).map(([key, value]) => [key, value.toISOString()])),
+        tracks: channel.playable ? channel.tracks.map((track) => ({ id: track.id, url: resolveMediaUrl(channel.kind, track.storageKey), sizeBytes: track.sizeBytes.toString(), ...(channel.kind === "music" ? { originalFilename: track.originalFilename } : {}) })) : [],
+      }));
+      assert.deepEqual(actual, expected);
+      assert.deepEqual(actual.map(({ id }) => id), expected.map(({ id }) => id));
+      for (const hiddenId of hidden) assert(!actual.some(({ id }) => id === hiddenId), "hidden channel must be omitted");
+      for (const channel of actual.filter(({ playable }) => !playable)) assert.deepEqual(channel.tracks, [], "locked channel must expose no media URLs");
+      assert(actual.some(({ slug, playable, accessSources }) => slug === "divnitsa" && playable && accessSources.includes("admin")), "existing Divnitsa admin grant should remain playable in Yury Test Spa preview");
+      const serialized = JSON.stringify(actual);
+      for (const forbidden of ["storageKey", "underlyingSources", "credentialHash"]) assert(!serialized.includes(forbidden));
+    } finally { await v2Pool.end(); }
+    assert.equal((await fetch(`${origin}/admin/ui/locations/not-a-uuid/player-preview`, { headers: { Authorization: authorization }, redirect: "manual" })).status, 404);
+    assert.equal((await fetch(`${origin}/admin/ui/locations/00000000-0000-4000-8000-000000000000/player-preview`, { headers: { Authorization: authorization }, redirect: "manual" })).status, 404);
     assert.equal((await fetch(`${origin}/api/v2/admin/content`, {method:"POST", headers:{Origin:origin}})).status, 401);
+    assert.equal((await fetch(`${origin}/api/v2/catalog`)).status, 401, "normal customer catalog still requires device auth");
+    assert.equal((await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: "soundspa_v2_device=invalid" } })).status, 401);
+    assert.equal((await fetch(`${origin}/player`)).status, 200, "normal player route remains unchanged and continues resolving through the existing device-authenticated catalog request");
     phase = "authorized six-channel Admin page";
     const adminRedirect = await fetch(`${origin}/admin`, { headers: { Authorization: authorization }, redirect: "manual" });
     assert.equal(adminRedirect.status, 307);
@@ -89,13 +134,18 @@ async function main() {
     const publicPage = await fetch(`${origin}/v2`); assert.equal(publicPage.status, 200);
     const publicHtml = await publicPage.text(); assert(publicHtml.includes('data-catalog-source="v2-db"'));
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(publicHtml.includes(title));
+    phase = "existing staging regressions";
+    const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin };
+    for (const script of ["test-customer-provisioning", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
+      execFileSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", `scripts/v2/${script}.ts`, "--staging"], { env: testEnv, stdio: "inherit" });
+    }
     if(uploadRoot){
       phase="synthetic upload verification";
       process.env.V2_DATABASE_URL=database.toString();process.env.V2_MEDIA_ROOT=uploadRoot;
       const {verifyContentUploads}=await import("./verify-content-uploads");
       await verifyContentUploads(origin,authorization,undefined,expectedCounts);
     }
-    console.info("PASS: missing config fail-closed, Basic auth challenge on /admin and /admin/ui, authorized Admin redirect/page, unauthorized mutation 401, authorized V2 Content Admin 200, cross-origin mutation 403, explicit validation feedback, public DB catalog 200. Local test app/tunnel only; staging runtime unchanged.");
+    console.info("PASS: missing config fail-closed; Basic challenge for Admin and Location preview; device-cookie-only and arbitrary-ID preview rejected; authorized Yury Test Spa preview rendered by shared Player; malformed/unknown Location return 404; Admin mutation protections and public DB catalog regression. Local test app/tunnel only; staging runtime unchanged.");
   } finally {
     app?.kill(); tunnel.kill();
     if(uploadRoot)await rm(uploadRoot,{recursive:true,force:true});

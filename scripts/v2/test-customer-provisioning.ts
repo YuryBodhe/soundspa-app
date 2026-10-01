@@ -86,7 +86,7 @@ async function main() {
   const username = process.env.V2_ADMIN_USERNAME;
   const password = process.env.V2_ADMIN_PASSWORD;
   assert(username && password, "Staging operator authorization must be configured.");
-  const origin = "http://127.0.0.1:3000";
+  const origin = process.env.V2_VERIFY_ORIGIN ?? "http://127.0.0.1:3000";
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
   const baseline = await captureBaseline();
   const suffix = randomUUID();
@@ -176,6 +176,8 @@ async function main() {
     assert(detailHtml.includes(createdLocation.name));
     assert(detailHtml.includes(createdLocation.slug));
     assert(detailHtml.includes("Effective playable channels"));
+    assert(detailHtml.includes("Open Player Preview"));
+    assert(detailHtml.includes(`/admin/ui/locations/${createdLocation.id}/player-preview`));
 
     assert.equal((await v2Db.select({ id: users.id }).from(users)).length, baseline.counts.users);
     assert.equal((await v2Db.select({ organizationId: organizationMembers.organizationId }).from(organizationMembers).where(eq(organizationMembers.organizationId, createdOrganization.id))).length, 0);
