@@ -1,4 +1,3 @@
-import { createCustomerWithFirstLocation, CustomerProvisioningError } from "../../../../../db/v2/services/customerProvisioning";
 import { isSameOriginMutation, operatorAuthResponse, operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +15,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    const { createCustomerWithFirstLocation, CustomerProvisioningError } = await import("../../../../../db/v2/services/customerProvisioning");
     const created = await createCustomerWithFirstLocation(body);
     return Response.json({
       ok: true,
@@ -23,9 +23,11 @@ export async function POST(request: Request) {
       locationId: created.location.id,
     }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    if (error instanceof CustomerProvisioningError) {
-      const status = error.code === "slug_conflict" ? 409 : 400;
-      return Response.json({ ok: false, code: error.code, message: error.message }, { status, headers: { "Cache-Control": "no-store" } });
+    const provisioningError = error as { name?: unknown; code?: unknown; message?: unknown };
+    if (provisioningError?.name === "CustomerProvisioningError" && (provisioningError.code === "validation" || provisioningError.code === "slug_conflict")) {
+      const status = provisioningError.code === "slug_conflict" ? 409 : 400;
+      const message = typeof provisioningError.message === "string" ? provisioningError.message : "Customer and Location details are invalid.";
+      return Response.json({ ok: false, code: provisioningError.code, message }, { status, headers: { "Cache-Control": "no-store" } });
     }
     console.error("[V2 customer provisioning] Provisioning transaction failed.");
     return Response.json({ ok: false, code: "provisioning_failed", message: "Customer and Location could not be created. Please review the details and try again." }, { status: 500, headers: { "Cache-Control": "no-store" } });
