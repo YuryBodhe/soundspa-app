@@ -1,15 +1,17 @@
 import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
+import CustomerProvisioningForm from "./customerProvisioningForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getLocationAdminGrants }, { getHiddenChannelIds }, { channels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
-    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
+  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getLocationAdminGrants }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
   ]);
+  const customers = await listOrganizationsWithLocations();
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
   const baseIds = new Set(await getBaseChannelIds());
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
@@ -28,7 +30,20 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
         {published.map((channel) => <tr key={channel.id}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{baseIds.has(channel.id) ? <span className="badge badge-ok">BASE</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={baseIds.has(channel.id) ? "remove-base" : "add-base"} channelId={channel.id}><button className="btn btn-sm">{baseIds.has(channel.id) ? "Remove from Base" : "Add to Base"}</button></AccessMutationForm></td></tr>)}
       </tbody></table>
     </section>
-    <section className="admin-card"><h2 className="admin-card-title">Locations</h2><div className="admin-page-nav">{locs.map(({ location, organization }) => <a className="btn" key={location.id} href={`/admin?location=${location.id}`}>{location.name} · {organization.name}</a>)}</div></section>
+    <section className="admin-card">
+      <CustomerProvisioningForm />
+      <table className="admin-table"><thead><tr><th>Organization</th><th>Location</th><th>Slug</th><th>State</th><th /></tr></thead><tbody>
+        {customers.flatMap(({ organization, locations: customerLocations }) => customerLocations.length
+          ? customerLocations.map((location) => <tr key={`${organization.id}-${location.id}`}>
+            <td>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td>
+            <td>{location.name}</td><td>{location.slug}</td>
+            <td>{location.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : <span className="badge badge-ok">ACTIVE</span>}</td>
+            <td>{!organization.archivedAt && !location.archivedAt ? <a className="btn btn-sm" href={`/admin/ui?location=${encodeURIComponent(location.id)}`}>Open Location</a> : null}</td>
+          </tr>)
+          : [<tr key={organization.id}><td>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td><td colSpan={4} className="text-dim">No Locations yet</td></tr>])}
+        {!customers.length && <tr><td colSpan={5} className="text-dim">No Customers yet.</td></tr>}
+      </tbody></table>
+    </section>
     {selected && <section className="admin-card">
       <h2 className="admin-card-title">{selected.location.name}</h2>
       <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
