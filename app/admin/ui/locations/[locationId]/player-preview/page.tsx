@@ -33,6 +33,6 @@ export default async function LocationPlayerPreview({ params }: { params: Promis
     <div role="note" style={{ position: "sticky", top: 0, zIndex: 20, padding: "10px 16px", background: "#26352d", color: "#e7efe8", textAlign: "center" }}>
       Operator Player Preview · {location.organizationName} / {location.name} · <a href={`/admin/ui?location=${encodeURIComponent(location.id)}`}>Return to Admin</a>
     </div>
-    <CustomerCatalogPlayer initialCatalog={catalog} />
+    <CustomerCatalogPlayer initialCatalog={catalog} locationName={location.name} />
   </>;
 }

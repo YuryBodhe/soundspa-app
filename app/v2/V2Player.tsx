@@ -63,7 +63,14 @@ function WaveVisualization({ playing }: { playing: boolean }) {
   return <div className={s.waveZone} aria-hidden="true"><canvas ref={canvasRef} className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ""}`} /></div>;
 }
 
-export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
+function PlayerHeader({ locationName }: { locationName?: string }) {
+  return <header className={s.header}>
+    <div><div className={s.brand}>{locationName || "Sound Spa 2"}</div>{!locationName && <div className={s.platformTag}>Local prototype</div>}</div>
+    <div className={s.badge}>Test mode</div>
+  </header>;
+}
+
+export default function V2Player({ catalog, locationName }: { catalog: PlayerChannel[]; locationName?: string }) {
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
   const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
@@ -189,7 +196,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
     if (channel.playable !== false && channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
-  if (!activeChannel) return <div className={s.shell}><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
+  if (!activeChannel) return <div className={s.shell}><PlayerHeader locationName={locationName} /><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
 
   return (
     <div
@@ -208,10 +215,7 @@ export default function V2Player({ catalog }: { catalog: PlayerChannel[] }) {
       data-ambient-volume={ambientPlayback.volume}
       data-ambient-current-time={ambientPlayback.currentTime}
     >
-      <header className={s.header}>
-        <div><div className={s.brand}>Sound Spa 2</div><div className={s.platformTag}>Local prototype</div></div>
-        <div className={s.badge}>Test mode</div>
-      </header>
+      <PlayerHeader locationName={locationName} />
 
       <main className={s.main}>
         <section className={s.hero}>

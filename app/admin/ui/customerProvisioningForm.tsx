@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 type ProvisioningResponse = { ok?: boolean; message?: string; locationId?: string };
 
-export default function CustomerProvisioningForm() {
+export default function CustomerProvisioningForm({ timeZones }: { timeZones: string[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -67,7 +67,7 @@ export default function CustomerProvisioningForm() {
       <div className="form-row"><label htmlFor="customer-organization-name">Organization name</label><input id="customer-organization-name" name="organizationName" required maxLength={160} /></div>
       <div className="form-row"><label htmlFor="customer-location-name">First Location name</label><input id="customer-location-name" name="locationName" required maxLength={160} /></div>
       <div className="form-row"><label htmlFor="customer-location-slug">Location slug</label><input id="customer-location-slug" name="slug" required maxLength={100} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="lowercase-with-hyphens" /></div>
-      <div className="form-row"><label htmlFor="customer-location-timezone">Time zone</label><input id="customer-location-timezone" name="timezone" required maxLength={100} placeholder="Europe/Moscow or UTC" /></div>
+      <div className="form-row"><label htmlFor="customer-location-timezone">Time zone</label><select id="customer-location-timezone" name="timezone" required defaultValue=""><option value="" disabled>Select an IANA time zone…</option>{timeZones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}</select></div>
       <div className="form-actions"><button type="submit" className="btn btn-primary" disabled={pending}>{pending ? "Creating…" : "Create Customer and Location"}</button></div>
       {error && <p role="alert" className="text-dim">{error}</p>}
     </form>}

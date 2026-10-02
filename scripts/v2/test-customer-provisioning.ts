@@ -96,7 +96,7 @@ async function main() {
     organizationName: `  ${organizationName}  `,
     locationName: `  First Location ${suffix}  `,
     slug: `gate-3a-${suffix}`,
-    timezone: "UTC",
+    timezone: "Asia/Ho_Chi_Minh",
   };
   const testBase = await v2Db.select({ id: channels.id }).from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.sortOrder), asc(channels.id));
   const baseIds = new Set(baseline.base);
@@ -104,9 +104,18 @@ async function main() {
   const nonBaseChannel = testBase.find(({ id }) => !baseIds.has(id));
   assert(baseChannel && nonBaseChannel, "Staging must have a current Base and a non-Base published Channel for access checks.");
   const otherLocation = (await v2Db.select({ id: locations.id }).from(locations).where(isNull(locations.archivedAt)).orderBy(asc(locations.id)))[0];
+  const extraTimezoneOrganizations: string[] = [];
   assert(otherLocation, "Existing technical Location fixture is required for isolation checks.");
 
   try {
+    const { getTimeZoneOptions } = await import("../../lib/v2/timeZones");
+    const { validateCustomerProvisioningInput } = await import("../../db/v2/services/customerProvisioning");
+    const timeZoneOptions = getTimeZoneOptions();
+    for (const timezone of ["Asia/Ho_Chi_Minh", "Europe/Moscow", "Asia/Bangkok"]) {
+      assert(timeZoneOptions.includes(timezone), `${timezone} must be available in the timezone selector.`);
+      assert.equal(validateCustomerProvisioningInput({ ...input, timezone }).timezone, timezone, "The canonical IANA value must reach server-side validation unchanged.");
+    }
+
     const unauthAdmin = await fetch(`${origin}/admin`, { redirect: "manual" });
     assert.equal(unauthAdmin.status, 401);
     assert.match(unauthAdmin.headers.get("www-authenticate") ?? "", /^Basic\s/i);
@@ -164,10 +173,24 @@ async function main() {
     assert.equal(createdLocation.slug, input.slug);
     assert.equal(createdLocation.timezone, input.timezone);
 
+    for (const timezone of ["Europe/Moscow", "Asia/Bangkok"]) {
+      const extraOrganizationName = `Gate 3A timezone ${timezone} ${suffix}`;
+      extraTimezoneOrganizations.push(extraOrganizationName);
+      const timezoneResponse = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ ...input, organizationName: extraOrganizationName, locationName: `Timezone test ${timezone}`, slug: `${input.slug}-${timezone.toLowerCase().replaceAll("_", "-").replaceAll("/", "-")}`, timezone }) });
+      assert.equal(timezoneResponse.status, 201);
+      const timezoneResult = await timezoneResponse.json() as { locationId: string };
+      const [timezoneLocation] = await v2Db.select({ timezone: locations.timezone }).from(locations).where(eq(locations.id, timezoneResult.locationId));
+      assert.equal(timezoneLocation.timezone, timezone, "The selected canonical IANA identifier must be stored unchanged.");
+    }
+
     const customersPage = await fetch(`${origin}/admin/ui`, { headers: { authorization } });
     assert.equal(customersPage.status, 200);
     const customerHtml = await customersPage.text();
     assert(customerHtml.includes(organizationName));
+    assert(customerHtml.includes('name="timezone"'));
+    assert(customerHtml.includes('value="Asia/Ho_Chi_Minh"'));
+    assert(customerHtml.includes('value="Europe/Moscow"'));
+    assert(customerHtml.includes('value="Asia/Bangkok"'));
     assert(customerHtml.includes(`Open Location`));
     const detailPage = await fetch(`${origin}/admin/ui?location=${encodeURIComponent(createdLocation.id)}`, { headers: { authorization } });
     assert.equal(detailPage.status, 200);
@@ -178,6 +201,11 @@ async function main() {
     assert(detailHtml.includes("Effective playable channels"));
     assert(detailHtml.includes("Open Player Preview"));
     assert(detailHtml.includes(`/admin/ui/locations/${createdLocation.id}/player-preview`));
+    const syntheticPreview = await fetch(`${origin}/admin/ui/locations/${createdLocation.id}/player-preview`, { headers: { authorization } });
+    assert.equal(syntheticPreview.status, 200);
+    const syntheticPreviewHtml = await syntheticPreview.text();
+    assert(syntheticPreviewHtml.includes(`>${createdLocation.name}</div>`), "Operator Preview must brand the shared player with the Location name.");
+    assert(!syntheticPreviewHtml.includes("Local prototype"), "Customer-context preview must not show technical prototype branding.");
 
     assert.equal((await v2Db.select({ id: users.id }).from(users)).length, baseline.counts.users);
     assert.equal((await v2Db.select({ organizationId: organizationMembers.organizationId }).from(organizationMembers).where(eq(organizationMembers.organizationId, createdOrganization.id))).length, 0);
@@ -221,6 +249,7 @@ async function main() {
     try {
       await cleanupCustomerByName(organizationName);
       await cleanupCustomerByName(duplicateOrganizationName);
+      for (const name of extraTimezoneOrganizations) await cleanupCustomerByName(name);
       const after = await captureBaseline();
       assert.deepEqual(after, baseline, "Staging live state must exactly return to its captured pre-test state.");
     } finally {

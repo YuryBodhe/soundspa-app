@@ -3,6 +3,7 @@ import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
 import CustomerProvisioningForm from "./customerProvisioningForm";
 import DeviceProvisioningPanel from "./deviceProvisioningPanel";
+import { getTimeZoneOptions } from "../../../lib/v2/timeZones";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
       </tbody></table>
     </section>
     <section className="admin-card">
-      <CustomerProvisioningForm />
+      <CustomerProvisioningForm timeZones={getTimeZoneOptions()} />
       <table className="admin-table"><thead><tr><th>Organization</th><th>Location</th><th>Slug</th><th>State</th><th /></tr></thead><tbody>
         {customers.flatMap(({ organization, locations: customerLocations }) => customerLocations.length
           ? customerLocations.map((location) => <tr key={`${organization.id}-${location.id}`}>

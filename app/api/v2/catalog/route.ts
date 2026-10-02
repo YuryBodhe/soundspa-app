@@ -10,5 +10,5 @@ export async function GET() {
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401 });
   const { getLocationCustomerCatalog } = await import("@/lib/v2/customerCatalog");
   const catalog = await getLocationCustomerCatalog(device.locationId);
-  return Response.json({ channels: catalog }, { headers: { "Cache-Control": "no-store" } });
+  return Response.json({ locationName: device.locationName, channels: catalog }, { headers: { "Cache-Control": "no-store" } });
 }
