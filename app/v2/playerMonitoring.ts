@@ -5,6 +5,12 @@ export type MonitoringSignal = MonitoringSnapshot & { sessionId: string; generat
 
 export type ProgressTracker = { key: string | null; position: number | null; sampledAt: number | null; progressedAt: number };
 
+export function advanceFailureEpisode(previousKey: string | null, state: string, episodeKey: string): { key: string | null; shouldReport: boolean } {
+  if (state !== "error") return { key: null, shouldReport: false };
+  if (previousKey === episodeKey) return { key: previousKey, shouldReport: false };
+  return { key: episodeKey, shouldReport: true };
+}
+
 /** Derive playing only from observed media-time movement, never from play() resolving alone. */
 export function observeLaneProgress(input: {
   status: string;
@@ -66,6 +72,18 @@ async function sendSignalRequest(signal: MonitoringSignal): Promise<boolean> {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(signal),
   });
   return response.ok;
+}
+
+/** Best-effort typed error signal; no client-supplied IDs, codes, or messages are accepted. */
+export async function reportPlaybackFailure(lane: "music" | "ambient") {
+  try {
+    await fetch("/api/v2/monitoring/error", {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lane }),
+    });
+  } catch {
+    // Error analytics is a sidecar and must never affect playback.
+  }
 }
 
 /** Best-effort monitoring transport: one request in flight and one coalesced latest snapshot. */

@@ -6,7 +6,7 @@ import { isSameOriginMutation } from "../../lib/v2/adminOperator";
 import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
-  locations, organizationMembers, organizations, users,
+  locations, organizationMembers, organizations, users, monitoringLifecycleEvents,
 } from "../../db/v2/schema";
 
 const LOCATION_ID = "15452bf7-c196-41fc-a1a4-9a0ed9e1a044";
@@ -38,7 +38,7 @@ async function baseline() {
     v2Db.select({ channelId: baseChannels.channelId }).from(baseChannels),
     v2Db.select({ locationId: locationChannelGrants.locationId, channelId: locationChannelGrants.channelId, source: locationChannelGrants.source, enabled: locationChannelGrants.enabled, startsAt: locationChannelGrants.startsAt, endsAt: locationChannelGrants.endsAt }).from(locationChannelGrants),
     v2Db.select({ locationId: locationChannelVisibility.locationId, channelId: locationChannelVisibility.channelId, hidden: locationChannelVisibility.hidden }).from(locationChannelVisibility),
-    v2Db.select({ name: locations.name, organizationName: organizations.name, archivedAt: locations.archivedAt, organizationArchivedAt: organizations.archivedAt }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(eq(locations.id, LOCATION_ID)).limit(1),
+    v2Db.select({ name: locations.name, organizationId: organizations.id, organizationName: organizations.name, archivedAt: locations.archivedAt, organizationArchivedAt: organizations.archivedAt }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(eq(locations.id, LOCATION_ID)).limit(1),
   ]);
   assert.equal(target.rows[0]?.database, "soundspa_v2");
   assert.equal(target.rows[0]?.user, "soundspa_v2");
@@ -46,7 +46,7 @@ async function baseline() {
   assert.equal(fixture[0]?.archivedAt, null);
   assert.equal(fixture[0]?.organizationArchivedAt, null);
   const countValues = counts.map((rows: any) => Array.isArray(rows) ? rows[0]?.count : rows.rows[0]?.count);
-  assert.equal(countValues[15], 9, "V2 migration journal must contain the Gate 4A migration");
+  assert.equal(countValues[15], 10, "V2 migration journal must remain at the accepted Gate 4A state");
   return {
     // A real customer Player can update these heartbeat rows while the
     // synthetic activation test runs. Compare stable identities only, not
@@ -113,6 +113,9 @@ async function main() {
       assert.equal(Date.parse(result.expiresAt) - Date.now() <= 24 * 60 * 60 * 1000 + 30_000, true);
       const [{ devices: deviceRows }] = await v2Db.select({ devices: sql<number>`count(*)::int` }).from(devices).where(eq(devices.id, result.device.id));
       assert.equal(deviceRows, 1);
+      const createdEvents = await v2Db.select({ eventType: monitoringLifecycleEvents.eventType, deviceId: monitoringLifecycleEvents.deviceId, organizationId: monitoringLifecycleEvents.organizationId, locationId: monitoringLifecycleEvents.locationId }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.deviceId, result.device.id));
+      assert.equal(createdEvents.length, 1, "Device creation produces one durable lifecycle event");
+      assert.deepEqual(createdEvents[0], { eventType: "device_created", deviceId: result.device.id, organizationId: before.fixture.organizationId, locationId: LOCATION_ID });
       const [deviceRow] = await v2Db.select({ credentialHash: devices.credentialHash, locationId: devices.locationId, label: devices.label }).from(devices).where(eq(devices.id, result.device.id));
       assert.equal(deviceRow.locationId, LOCATION_ID); assert.equal(deviceRow.label, name); assert.equal(deviceRow.credentialHash, null);
       const [{ count: tokenCount }] = await v2Db.select({ count: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, result.device.id));
@@ -144,6 +147,7 @@ async function main() {
       assert.equal(stillPending.credentialHash, null, "confirmation GET must not issue a permanent credential");
       assert.equal(stillUnused.usedAt, null, "confirmation GET must not consume the activation token");
     }
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, first.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 0, "repeated activation confirmation GETs must not emit lifecycle events");
     const crossOriginPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: "https://untrusted.invalid" }, redirect: "manual" });
     assert.equal(crossOriginPost.status, 403, "activation POST must reject cross-origin requests");
     const crossOriginRefererPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Referer: "https://untrusted.invalid/activate" }, redirect: "manual" });
@@ -154,6 +158,7 @@ async function main() {
       redirect: "manual",
     });
     assert.equal(nullOriginActivation.status, 303, "Origin:null plus same-origin Fetch Metadata must reach synthetic token validation and activate once");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, first.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 1, "successful activation writes one lifecycle event");
     assert.equal(new URL(nullOriginActivation.headers.get("location")!).pathname, "/player");
     const nullOriginCookie = nullOriginActivation.headers.get("set-cookie") ?? "";
     assert.match(nullOriginCookie, /soundspa_v2_device=[A-Za-z0-9_-]{43}/);
@@ -176,8 +181,10 @@ async function main() {
     assert.equal(activated.locationId, LOCATION_ID); assert.equal(activated.credentialHash, sha256(credential));
     const [{ usedCount }] = await v2Db.select({ usedCount: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(and(eq(deviceActivationTokens.deviceId, concurrentDevice.id), sql`${deviceActivationTokens.usedAt} IS NOT NULL`));
     assert.equal(usedCount, 1);
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, concurrentDevice.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 1, "racing activation requests must write exactly one activation event");
     assert.equal((await fetch(`${origin}${concurrentPath}`, { redirect: "manual" })).status, 410, "activation GET after success must show unavailable state");
     assert.equal((await fetch(`${origin}${concurrentPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, concurrentDevice.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 1, "activation replay must not duplicate lifecycle events");
 
     const activatedCredential = getCookieValue(nullOriginCookie, "soundspa_v2_device"); assert(activatedCredential);
     const customerCatalog = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${activatedCredential}` } });
@@ -204,6 +211,8 @@ async function main() {
     const revokedFixture = await create(`${marker} revoked-link fixture`);
     await v2Db.update(devices).set({ status: "revoked", revokedAt: new Date() }).where(eq(devices.id, revokedFixture.id));
     assert.equal((await fetch(`${origin}${new URL(revokedFixture.activationUrl).pathname}`, { redirect: "manual" })).status, 410, "a revoked Device must not activate");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, expiredFixture.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 0, "expired activation must not emit device_activated");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.deviceId, revokedFixture.id), eq(monitoringLifecycleEvents.eventType, "device_activated")))).length, 0, "failed activation must not emit device_activated");
 
     assert.equal((await v2Db.select({ id: deviceCurrentState.deviceId }).from(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, syntheticIds))).length, 0, "activation must not create fake monitoring state");
     assert.equal((await v2Db.select({ id: deviceEvents.id }).from(deviceEvents).where(inArray(deviceEvents.deviceId, syntheticIds))).length, 0, "activation must not create monitoring events");
@@ -213,12 +222,14 @@ async function main() {
     const cleanupIds = [...new Set([...syntheticIds, ...foundSynthetic.map(({ id }) => id)])];
     if (cleanupIds.length) {
       await v2Db.transaction(async (tx) => {
+        await tx.delete(monitoringLifecycleEvents).where(inArray(monitoringLifecycleEvents.deviceId, cleanupIds));
         await tx.delete(deviceActivationTokens).where(inArray(deviceActivationTokens.deviceId, cleanupIds));
         await tx.delete(devices).where(inArray(devices.id, cleanupIds));
       });
     }
     const after = await baseline();
     assert.deepEqual(after, before, "All scoped staging state must exactly return to its captured baseline.");
+    assert.equal(cleanupIds.length ? (await v2Db.select({ n: sql<number>`count(*)::int` }).from(monitoringLifecycleEvents).where(inArray(monitoringLifecycleEvents.deviceId, cleanupIds)))[0].n : 0, 0, "all synthetic lifecycle events must be cleaned after verification");
     await v2Pool.end();
   }
 }

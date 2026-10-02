@@ -9,7 +9,7 @@ import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
 import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
-import { observeLaneProgress, PlayerMonitoringSidecar, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
+import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   const [enabled, setEnabled] = useState(false);
@@ -85,6 +85,8 @@ export default function V2Player({ catalog, organizationName, locationName, moni
   const activeAmbientChannelRef = useRef<string | null>(null);
   const musicProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
   const ambientProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
+  const musicErrorEpisodeRef = useRef<string | null>(null);
+  const ambientErrorEpisodeRef = useRef<string | null>(null);
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
@@ -139,6 +141,33 @@ export default function V2Player({ catalog, organizationName, locationName, moni
       sidecar.dispose();
     };
   }, [monitoringEnabled, readMonitoringSnapshot]);
+
+  useEffect(() => {
+    if (playback.status !== "error") {
+      musicErrorEpisodeRef.current = null;
+      return;
+    }
+    if (!monitoringEnabled || engineChannelIdRef.current !== activeChannelId) return;
+    const trackId = activeChannel?.tracks[playback.currentTrackIndex]?.id ?? "unknown";
+    const episode = `${activeChannelId ?? "none"}/${trackId}`;
+    const next = advanceFailureEpisode(musicErrorEpisodeRef.current, playback.status, episode);
+    musicErrorEpisodeRef.current = next.key;
+    if (!next.shouldReport) return;
+    void reportPlaybackFailure("music");
+  }, [monitoringEnabled, playback.status, playback.currentTrackIndex, activeChannelId, activeChannel]);
+
+  useEffect(() => {
+    if (ambientPlayback.status !== "error") {
+      ambientErrorEpisodeRef.current = null;
+      return;
+    }
+    if (!monitoringEnabled || !activeAmbientChannelRef.current) return;
+    const episode = `${activeAmbientChannelRef.current}/${ambientPlayback.activeTrackId ?? "unknown"}`;
+    const next = advanceFailureEpisode(ambientErrorEpisodeRef.current, ambientPlayback.status, episode);
+    ambientErrorEpisodeRef.current = next.key;
+    if (!next.shouldReport) return;
+    void reportPlaybackFailure("ambient");
+  }, [monitoringEnabled, ambientPlayback.status, ambientPlayback.activeTrackId]);
 
   const replaceMusicEngine = useCallback((channelId: string, playlist: ConstructorParameters<typeof Mp3Engine>[0]) => {
     engineUnsubscribeRef.current?.();

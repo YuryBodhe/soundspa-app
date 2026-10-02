@@ -8,7 +8,14 @@ export async function GET() {
   const { authenticateDeviceCredential } = await import("@/db/v2/queries/devices");
   const device = await authenticateDeviceCredential(credential);
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401 });
-  const { getLocationCustomerCatalog } = await import("@/lib/v2/customerCatalog");
-  const catalog = await getLocationCustomerCatalog(device.locationId);
-  return Response.json({ organizationName: device.organizationName, locationName: device.locationName, channels: catalog }, { headers: { "Cache-Control": "no-store" } });
+  try {
+    const { getLocationCustomerCatalog } = await import("@/lib/v2/customerCatalog");
+    const catalog = await getLocationCustomerCatalog(device.locationId);
+    return Response.json({ organizationName: device.organizationName, locationName: device.locationName, channels: catalog }, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    void import("@/db/v2/services/monitoringObservability")
+      .then(({ recordCustomerCatalogFailure }) => recordCustomerCatalogFailure(device.deviceId))
+      .catch(() => undefined);
+    return Response.json({ error: "Customer catalog unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
 }

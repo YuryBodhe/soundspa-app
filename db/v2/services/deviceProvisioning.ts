@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { v2Db } from "../client";
 import { devices, deviceActivationTokens, locations, organizations } from "../schema";
+import { recordLifecycleEvent } from "./monitoringObservability";
 
 const ACTIVATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -44,7 +45,7 @@ export async function createDeviceWithActivation(input: { locationId?: unknown; 
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + ACTIVATION_TOKEN_TTL_MS);
   const device = await v2Db.transaction(async (tx) => {
-    const [location] = await tx.select({ id: locations.id })
+    const [location] = await tx.select({ id: locations.id, name: locations.name, organizationId: organizations.id, organizationName: organizations.name })
       .from(locations)
       .innerJoin(organizations, eq(organizations.id, locations.organizationId))
       .where(and(eq(locations.id, locationId), isNull(locations.archivedAt), isNull(organizations.archivedAt)))
@@ -54,6 +55,15 @@ export async function createDeviceWithActivation(input: { locationId?: unknown; 
     await tx.delete(deviceActivationTokens).where(or(isNotNull(deviceActivationTokens.usedAt), lt(deviceActivationTokens.expiresAt, createdAt)));
     const [created] = await tx.insert(devices).values({ locationId, label: name, credentialHash: null }).returning({ id: devices.id, label: devices.label, status: devices.status, createdAt: devices.createdAt });
     await tx.insert(deviceActivationTokens).values({ deviceId: created.id, tokenHash: hash, expiresAt, createdAt });
+    await recordLifecycleEvent(tx, {
+      eventType: "device_created",
+      organizationId: location.organizationId,
+      organizationName: location.organizationName,
+      locationId: location.id,
+      locationName: location.name,
+      deviceId: created.id,
+      deviceLabel: created.label,
+    });
     return created;
   });
   return { device, activationToken, expiresAt };
@@ -67,7 +77,15 @@ export async function activateDevice(token: string) {
   const credentialHash = tokenHash(credential);
 
   await v2Db.transaction(async (tx) => {
-    const [eligible] = await tx.select({ tokenId: deviceActivationTokens.id, deviceId: devices.id })
+    const [eligible] = await tx.select({
+      tokenId: deviceActivationTokens.id,
+      deviceId: devices.id,
+      deviceLabel: devices.label,
+      locationId: locations.id,
+      locationName: locations.name,
+      organizationId: organizations.id,
+      organizationName: organizations.name,
+    })
       .from(deviceActivationTokens)
       .innerJoin(devices, eq(devices.id, deviceActivationTokens.deviceId))
       .innerJoin(locations, eq(locations.id, devices.locationId))
@@ -90,6 +108,16 @@ export async function activateDevice(token: string) {
       .where(and(eq(deviceActivationTokens.id, eligible.tokenId), isNull(deviceActivationTokens.usedAt), gt(deviceActivationTokens.expiresAt, now)))
       .returning({ id: deviceActivationTokens.id });
     if (!consumed) throw new DeviceProvisioningError("activation_invalid");
+
+    await recordLifecycleEvent(tx, {
+      eventType: "device_activated",
+      organizationId: eligible.organizationId,
+      organizationName: eligible.organizationName,
+      locationId: eligible.locationId,
+      locationName: eligible.locationName,
+      deviceId: eligible.deviceId,
+      deviceLabel: eligible.deviceLabel,
+    });
   });
   return credential;
 }

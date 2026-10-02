@@ -3,6 +3,7 @@ import { v2Db } from "../client";
 import { organizationMembers, locations, organizations } from "../schema";
 import { deleteDevicesForLocation } from "./deviceAdministration";
 import { deleteLocationOwnedData } from "./locationOwnedData";
+import { recordLifecycleEvent } from "./monitoringObservability";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -22,7 +23,7 @@ export async function deleteOrganization(organizationId: string, confirmationNam
     if (!organization) throw new OrganizationDeletionError("not_found");
     if (typeof confirmationName !== "string" || confirmationName !== organization.name) throw new OrganizationDeletionError("confirmation_mismatch");
 
-    const ownedLocations = await tx.select({ id: locations.id })
+    const ownedLocations = await tx.select({ id: locations.id, name: locations.name })
       .from(locations).where(eq(locations.organizationId, organizationId)).orderBy(locations.id).for("update");
 
     const removed = {
@@ -49,11 +50,23 @@ export async function deleteOrganization(organizationId: string, confirmationNam
       removed.grants += locationData.grants;
       removed.entitlements += locationData.entitlements;
       removed.serviceAccess += locationData.serviceAccess;
+      await recordLifecycleEvent(tx, {
+        eventType: "location_deleted",
+        organizationId: organization.id,
+        organizationName: organization.name,
+        locationId: location.id,
+        locationName: location.name,
+      });
       await tx.delete(locations).where(and(eq(locations.id, location.id), eq(locations.organizationId, organizationId)));
       removed.locations++;
     }
 
     const memberships = await tx.delete(organizationMembers).where(eq(organizationMembers.organizationId, organizationId)).returning({ userId: organizationMembers.userId });
+    await recordLifecycleEvent(tx, {
+      eventType: "organization_deleted",
+      organizationId: organization.id,
+      organizationName: organization.name,
+    });
     await tx.delete(organizations).where(eq(organizations.id, organizationId));
     removed.memberships = memberships.length;
 

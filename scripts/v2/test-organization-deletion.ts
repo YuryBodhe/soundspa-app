@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
   locations, organizationMembers, organizations, users,
+  monitoringLifecycleEvents,
 } from "../../db/v2/schema";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -34,7 +35,7 @@ async function counts() {
     v2Db.execute(sql`SELECT count(*)::int AS n FROM drizzle_v2.__drizzle_migrations`),
   ]);
   const values = results.map((result: any) => Array.isArray(result) ? result[0]?.n : result.rows[0]?.n);
-  assert.equal(values[15], 8, "V2 migration journal must remain at eight.");
+  assert.equal(values[15], 10, "V2 migration journal must remain at ten.");
   // Live Players can append monitoring rows between snapshots; synthetic
   // Device state/event ownership is asserted directly by identity below.
   return values.filter((_value, index) => index !== 6 && index !== 7);
@@ -147,6 +148,7 @@ async function main() {
     assert.equal((await fetch(url, { method: "DELETE", headers: { Authorization: auth, Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ confirmationName: "wrong" }) })).status, 409, "typed-name mismatch must not delete");
     assert.equal((await fetch(`${origin}/api/v2/admin/organizations/00000000-0000-4000-8000-000000000000`, { method: "DELETE", headers: { Authorization: auth, Origin: publicOrigin, "Content-Type": "application/json" }, body: payload })).status, 404);
     assert.equal((await counts()).join(","), beforeRejectedMutations.join(","), "rejected requests must be non-mutating");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationA.id))).length, 0, "rejected deletion must not emit lifecycle events");
 
     const globalBefore = fingerprint({
       channels: await v2Db.select({ id: channels.id, slug: channels.slug, kind: channels.kind, sortOrder: channels.sortOrder }).from(channels).orderBy(channels.id),
@@ -176,6 +178,13 @@ async function main() {
     assert.equal((await v2Db.select({ id: deviceActivationTokens.id }).from(deviceActivationTokens).where(inArray(deviceActivationTokens.deviceId, [pendingA1.id, activatedA1.id, deviceA2.id]))).length, 0);
     assert.equal((await v2Db.select({ id: deviceCurrentState.deviceId }).from(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, [pendingA1.id, activatedA1.id, deviceA2.id]))).length, 0);
     assert.equal((await v2Db.select({ id: deviceEvents.id }).from(deviceEvents).where(inArray(deviceEvents.deviceId, [pendingA1.id, activatedA1.id, deviceA2.id]))).length, 0);
+    const deletionTrail = await v2Db.select({ eventType: monitoringLifecycleEvents.eventType, organizationId: monitoringLifecycleEvents.organizationId, organizationName: monitoringLifecycleEvents.organizationName, locationId: monitoringLifecycleEvents.locationId, locationName: monitoringLifecycleEvents.locationName, deviceId: monitoringLifecycleEvents.deviceId, deviceLabel: monitoringLifecycleEvents.deviceLabel }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationA.id));
+    assert.equal(deletionTrail.filter((event) => event.eventType === "device_deleted").length, 3);
+    assert.equal(deletionTrail.filter((event) => event.eventType === "location_deleted").length, 2);
+    assert.equal(deletionTrail.filter((event) => event.eventType === "organization_deleted").length, 1);
+    assert(deletionTrail.every((event) => event.organizationName === `${marker} A`));
+    assert(deletionTrail.filter((event) => event.eventType === "device_deleted").every((event) => event.deviceId && event.deviceLabel && event.locationId && event.locationName));
+    assert(deletionTrail.filter((event) => event.eventType === "location_deleted").every((event) => event.locationId && event.locationName));
     assert.equal((await v2Db.select({ userId: organizationMembers.userId }).from(organizationMembers).where(eq(organizationMembers.organizationId, organizationA.id))).length, 0);
     assert.equal((await v2Db.select({ id: users.id }).from(users).where(eq(users.id, syntheticUser.id))).length, 1, "Organization deletion must not delete a potentially shared User");
     const afterInvalidation = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: credentialCookie } });
@@ -194,6 +203,7 @@ async function main() {
     const emptyDelete = await fetch(`${origin}/api/v2/admin/organizations/${emptyOrganization.id}`, { method: "DELETE", headers: { Authorization: auth, Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ confirmationName: `${marker} Empty` }) });
     assert.equal(emptyDelete.status, 200, "an Organization with zero Locations should delete safely");
     assert.equal((await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.id, emptyOrganization.id))).length, 0);
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(and(eq(monitoringLifecycleEvents.organizationId, emptyOrganization.id), eq(monitoringLifecycleEvents.eventType, "organization_deleted")))).length, 1, "empty Organization deletion must retain its lifecycle event");
     console.info("V2 Organization deletion PASS: typed operator-only deletion, exact multi-Location cleanup, Device credential invalidation, shared User preservation, unrelated Organization/global Content/Base preservation, empty Organization deletion, and scoped synthetic cleanup.");
   } finally {
     await v2Db.transaction(async (tx) => {
@@ -211,6 +221,7 @@ async function main() {
         await tx.delete(locations).where(inArray(locations.id, locationIds));
       }
       if (organizationIds.length) {
+        await tx.delete(monitoringLifecycleEvents).where(inArray(monitoringLifecycleEvents.organizationId, organizationIds));
         await tx.delete(organizationMembers).where(inArray(organizationMembers.organizationId, organizationIds));
         await tx.delete(organizations).where(inArray(organizations.id, organizationIds));
       }
@@ -224,6 +235,7 @@ async function main() {
     assert.equal(organizationIds.length ? (await v2Db.select({ n: sql<number>`count(*)::int` }).from(organizations).where(inArray(organizations.id, organizationIds)))[0].n : 0, 0);
     assert.equal(syntheticUserIds.length ? (await v2Db.select({ n: sql<number>`count(*)::int` }).from(users).where(inArray(users.id, syntheticUserIds)))[0].n : 0, 0);
     assert.deepEqual(await counts(), before, "all synthetic Organization fixtures must be removed and the DB returned to the exact baseline");
+    assert.equal(organizationIds.length ? (await v2Db.select({ n: sql<number>`count(*)::int` }).from(monitoringLifecycleEvents).where(inArray(monitoringLifecycleEvents.organizationId, organizationIds)))[0].n : 0, 0, "all synthetic lifecycle events are removed after verification");
     await v2Pool.end();
   }
 }

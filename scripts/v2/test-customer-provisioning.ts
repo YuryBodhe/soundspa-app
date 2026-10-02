@@ -14,6 +14,7 @@ import {
   locations,
   organizationMembers,
   organizations,
+  monitoringLifecycleEvents,
   users,
 } from "../../db/v2/schema";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
@@ -42,7 +43,7 @@ async function captureBaseline() {
   ]);
   assert.equal(target.rows[0]?.database, "soundspa_v2");
   assert.equal(target.rows[0]?.user, "soundspa_v2");
-  assert.equal(migrationCount.rows[0]?.count, 9);
+  assert.equal(migrationCount.rows[0]?.count, 10);
   return {
     counts: {
       organizations: organizationCount[0].count,
@@ -68,6 +69,7 @@ async function captureBaseline() {
 async function cleanupCustomerByName(name: string) {
   const matchingOrganizations = await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.name, name));
   for (const organization of matchingOrganizations) {
+    await v2Db.delete(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organization.id));
     const organizationLocations = await v2Db.select({ id: locations.id }).from(locations).where(eq(locations.organizationId, organization.id));
     for (const location of organizationLocations) {
       await v2Db.delete(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, location.id));
@@ -81,6 +83,7 @@ async function cleanupCustomerByName(name: string) {
     await v2Db.delete(organizations).where(eq(organizations.id, organization.id));
   }
   assert.equal((await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.name, name))).length, 0);
+  assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationName, name))).length, 0, "synthetic lifecycle events must be cleaned after the test");
 }
 
 async function main() {
@@ -173,6 +176,11 @@ async function main() {
     assert.equal(createdLocation.name, `First Location ${suffix}`);
     assert.equal(createdLocation.slug, input.slug);
     assert.equal(createdLocation.timezone, input.timezone);
+    const provisioningEvents = await v2Db.select({ eventType: monitoringLifecycleEvents.eventType, organizationId: monitoringLifecycleEvents.organizationId, locationId: monitoringLifecycleEvents.locationId, organizationName: monitoringLifecycleEvents.organizationName, locationName: monitoringLifecycleEvents.locationName }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, createdOrganization.id));
+    assert.deepEqual(provisioningEvents.map(({ eventType }) => eventType).sort(), ["location_created", "organization_created"]);
+    assert(provisioningEvents.every((event) => event.organizationName === organizationName));
+    assert(provisioningEvents.some((event) => event.eventType === "location_created" && event.locationId === createdLocation.id && event.locationName === createdLocation.name));
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationName, duplicateOrganizationName))).length, 0, "failed Organization+Location creation must not leave lifecycle events");
 
     for (const timezone of ["Europe/Moscow", "Asia/Bangkok"]) {
       const extraOrganizationName = `Gate 3A timezone ${timezone} ${suffix}`;

@@ -5,7 +5,7 @@ import { v2Db, v2Pool } from "../../db/v2/client";
 import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
-  locations, organizations,
+  locations, organizations, monitoringLifecycleEvents,
 } from "../../db/v2/schema";
 
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
@@ -30,7 +30,7 @@ const counts = async () => {
     v2Db.execute(sql`SELECT count(*)::int AS n FROM drizzle_v2.__drizzle_migrations`),
   ]);
   const values = results.map((result: any) => Array.isArray(result) ? result[0]?.n : result.rows[0]?.n);
-  assert.equal(values[13], 8, "Migration journal must remain at eight.");
+  assert.equal(values[13], 10, "Migration journal must remain at ten.");
   return values;
 };
 
@@ -138,6 +138,9 @@ async function main() {
     const deletedDeviceResponse = await fetch(`${origin}/api/v2/admin/devices/${deviceToDelete.id}`, { method: "DELETE", headers: authHeaders() });
     assert.equal(deletedDeviceResponse.status, 200);
     assert.equal((await deletedDeviceResponse.json() as { ok: boolean }).ok, true);
+    const directDeleteEvent = await v2Db.select({ eventType: monitoringLifecycleEvents.eventType, organizationId: monitoringLifecycleEvents.organizationId, locationId: monitoringLifecycleEvents.locationId, deviceId: monitoringLifecycleEvents.deviceId, deviceLabel: monitoringLifecycleEvents.deviceLabel }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.deviceId, deviceToDelete.id));
+    assert.equal(directDeleteEvent.length, 1);
+    assert.deepEqual(directDeleteEvent[0], { eventType: "device_deleted", organizationId, locationId: locationA.id, deviceId: deviceToDelete.id, deviceLabel: deviceToDelete.label });
     assert.equal((await v2Db.select({ id: devices.id }).from(devices).where(eq(devices.id, deviceToDelete.id))).length, 0);
     assert.equal((await v2Db.select({ id: deviceActivationTokens.id }).from(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, deviceToDelete.id))).length, 0);
     assert.equal((await v2Db.select({ deviceId: deviceCurrentState.deviceId }).from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, deviceToDelete.id))).length, 0);
@@ -165,6 +168,7 @@ async function main() {
     const wrongName = await fetch(`${origin}/api/v2/admin/locations/${locationA.id}`, { method: "DELETE", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ confirmationName: "not the location" }) });
     assert.equal(wrongName.status, 409);
     assert.deepEqual(await counts(), baselineBeforeLocationDelete, "failed Location deletion attempts must be non-mutating");
+    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId!))).length, 0, "rejected Location deletion must not emit lifecycle events");
 
     const baseBefore = (await v2Db.select({ channelId: baseChannels.channelId }).from(baseChannels)).map(({ channelId }) => channelId).sort();
     const [channelCountBefore] = await v2Db.select({ n: sql<number>`count(*)::int` }).from(channels);
@@ -182,6 +186,9 @@ async function main() {
     assert.equal(deleteResult.removed.grants, 1);
     assert.equal(deleteResult.removed.entitlements, 1);
     assert.equal(deleteResult.removed.serviceAccess, 1);
+    const locationDeleteEvents = await v2Db.select({ eventType: monitoringLifecycleEvents.eventType, organizationId: monitoringLifecycleEvents.organizationId, locationId: monitoringLifecycleEvents.locationId, locationName: monitoringLifecycleEvents.locationName, deviceId: monitoringLifecycleEvents.deviceId }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId!));
+    assert(locationDeleteEvents.some((event) => event.eventType === "device_deleted" && event.locationId === locationA!.id && event.deviceId === recoverable.id));
+    assert(locationDeleteEvents.some((event) => event.eventType === "location_deleted" && event.locationId === locationA!.id && event.locationName === locationA!.name));
     assert.equal((await v2Db.select({ id: locations.id }).from(locations).where(eq(locations.id, locationA.id))).length, 0);
     assert.equal((await v2Db.select({ id: devices.id }).from(devices).where(eq(devices.id, recoverable.id))).length, 0);
     assert.equal((await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.id, organizationId!))).length, 1, "Organization must remain after its last Location is deleted");
@@ -197,6 +204,7 @@ async function main() {
   } finally {
     const deviceIds = [...new Set(syntheticDeviceIds)];
     await v2Db.transaction(async (tx) => {
+      if (organizationId) await tx.delete(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId));
       if (deviceIds.length) {
         await tx.delete(deviceActivationTokens).where(inArray(deviceActivationTokens.deviceId, deviceIds));
         await tx.delete(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, deviceIds));
@@ -214,6 +222,7 @@ async function main() {
       if (organizationId) await tx.delete(organizations).where(eq(organizations.id, organizationId));
     });
     assert.deepEqual(await counts(), before, "All synthetic records must be removed and staging counts restored exactly.");
+    assert.equal(organizationId ? (await v2Db.select({ n: sql<number>`count(*)::int` }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId)))[0].n : 0, 0, "all synthetic lifecycle events are removed after verification");
     await v2Pool.end();
   }
 }

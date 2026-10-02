@@ -1,5 +1,6 @@
 import { v2Db } from "../client";
 import { locations, organizations } from "../schema";
+import { recordLifecycleEvent } from "./monitoringObservability";
 
 export type CustomerProvisioningInput = {
   organizationName: string;
@@ -71,6 +72,18 @@ export async function createCustomerWithFirstLocation(value: unknown) {
         name: locations.name,
         slug: locations.slug,
         timezone: locations.timezone,
+      });
+      await recordLifecycleEvent(tx, {
+        eventType: "organization_created",
+        organizationId: organization.id,
+        organizationName: organization.name,
+      });
+      await recordLifecycleEvent(tx, {
+        eventType: "location_created",
+        organizationId: organization.id,
+        organizationName: organization.name,
+        locationId: location.id,
+        locationName: location.name,
       });
       return { organization, location };
     });

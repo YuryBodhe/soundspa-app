@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v2Db } from "../client";
 import { deviceActivationTokens, deviceCurrentState, deviceEvents, devices, locations, organizations } from "../schema";
+import { recordLifecycleEvent } from "./monitoringObservability";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const tokenHash = (token: string) => createHash("sha256").update(token, "utf8").digest("hex");
@@ -49,10 +50,29 @@ export async function reissueDeviceActivation(deviceId: string) {
 export async function deleteDevice(deviceId: string) {
   if (!UUID.test(deviceId)) throw new DeviceAdministrationError("not_found");
   return v2Db.transaction(async (tx) => {
-    const [device] = await tx.select({ id: devices.id, locationId: devices.locationId, label: devices.label })
-      .from(devices).where(eq(devices.id, deviceId)).for("update").limit(1);
+    const [device] = await tx.select({
+      id: devices.id,
+      locationId: devices.locationId,
+      label: devices.label,
+      locationName: locations.name,
+      organizationId: organizations.id,
+      organizationName: organizations.name,
+    })
+      .from(devices)
+      .innerJoin(locations, eq(locations.id, devices.locationId))
+      .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+      .where(eq(devices.id, deviceId)).for("update").limit(1);
     if (!device) throw new DeviceAdministrationError("not_found");
 
+    await recordLifecycleEvent(tx, {
+      eventType: "device_deleted",
+      organizationId: device.organizationId,
+      organizationName: device.organizationName,
+      locationId: device.locationId,
+      locationName: device.locationName,
+      deviceId: device.id,
+      deviceLabel: device.label,
+    });
     const activationTokens = await tx.delete(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, deviceId)).returning({ id: deviceActivationTokens.id });
     const currentStates = await tx.delete(deviceCurrentState).where(eq(deviceCurrentState.deviceId, deviceId)).returning({ deviceId: deviceCurrentState.deviceId });
     const events = await tx.delete(deviceEvents).where(eq(deviceEvents.deviceId, deviceId)).returning({ id: deviceEvents.id });
@@ -62,9 +82,31 @@ export async function deleteDevice(deviceId: string) {
 }
 
 export async function deleteDevicesForLocation(tx: Parameters<Parameters<typeof v2Db.transaction>[0]>[0], locationId: string) {
-  const deviceRows = await tx.select({ id: devices.id }).from(devices).where(eq(devices.locationId, locationId)).for("update");
+  const deviceRows = await tx.select({
+    id: devices.id,
+    label: devices.label,
+    locationId: locations.id,
+    locationName: locations.name,
+    organizationId: organizations.id,
+    organizationName: organizations.name,
+  }).from(devices)
+    .innerJoin(locations, eq(locations.id, devices.locationId))
+    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+    .where(eq(devices.locationId, locationId)).for("update");
   const ids = deviceRows.map(({ id }) => id);
   if (!ids.length) return { devices: 0, activationTokens: 0, currentStates: 0, events: 0 };
+
+  for (const device of deviceRows) {
+    await recordLifecycleEvent(tx, {
+      eventType: "device_deleted",
+      organizationId: device.organizationId,
+      organizationName: device.organizationName,
+      locationId: device.locationId,
+      locationName: device.locationName,
+      deviceId: device.id,
+      deviceLabel: device.label,
+    });
+  }
 
   const activationTokens = await tx.delete(deviceActivationTokens).where(inArray(deviceActivationTokens.deviceId, ids)).returning({ id: deviceActivationTokens.id });
   const currentStates = await tx.delete(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, ids)).returning({ deviceId: deviceCurrentState.deviceId });

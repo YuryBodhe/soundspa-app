@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { observeLaneProgress, PlayerMonitoringSidecar, type MonitoringSignal, type MonitoringSnapshot } from "../../app/v2/playerMonitoring";
+import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSignal, type MonitoringSnapshot } from "../../app/v2/playerMonitoring";
 
 const realPlayerRoute = readFileSync("app/player/page.tsx", "utf8");
 const previewRoute = readFileSync("app/admin/ui/locations/[locationId]/player-preview/page.tsx", "utf8");
@@ -12,6 +12,11 @@ assert.doesNotMatch(technicalRoute, /monitoringEnabled/);
 assert.match(customerPlayer, /monitoringEnabled = false/);
 
 const tracker = { key: null as string | null, position: null as number | null, sampledAt: null as number | null, progressedAt: -Infinity };
+const firstFailure = advanceFailureEpisode(null, "error", "music/channel-a/track-a");
+assert.deepEqual(firstFailure, { key: "music/channel-a/track-a", shouldReport: true });
+assert.deepEqual(advanceFailureEpisode(firstFailure.key, "error", "music/channel-a/track-a"), { key: firstFailure.key, shouldReport: false }, "same continuing failure episode is deduplicated");
+assert.deepEqual(advanceFailureEpisode(firstFailure.key, "playing", "music/channel-a/track-a"), { key: null, shouldReport: false }, "recovery clears the dedup key");
+assert.equal(advanceFailureEpisode(null, "error", "ambient/channel-a/track-b").shouldReport, true, "new lane/track failure is a new occurrence");
 assert.deepEqual(observeLaneProgress({ status: "playing", channelId: "music-a", key: "music-a/track-a", currentTime: 20, paused: false, seeking: false }, tracker, 0), { state: "buffering", channelId: "music-a" }, "play() status without observed movement is not playing");
 assert.equal(observeLaneProgress({ status: "playing", channelId: "music-a", key: "music-a/track-a", currentTime: 20.2, paused: false, seeking: false }, tracker, 1_000).state, "playing");
 assert.equal(observeLaneProgress({ status: "playing", channelId: "music-a", key: "music-a/track-a", currentTime: 21, paused: true, seeking: false }, tracker, 2_000).state, "buffering", "a paused or seeking element is never reported as actually playing");
@@ -26,6 +31,14 @@ const base: MonitoringSnapshot = {
   ambient: { state: "idle", channelId: null },
 };
 async function main() {
+const originalFetch = globalThis.fetch;
+let errorBody = "";
+globalThis.fetch = async (_input, init) => { errorBody = String(init?.body ?? ""); return Response.json({ ok: true }); };
+await reportPlaybackFailure("music");
+assert.equal(errorBody, JSON.stringify({ lane: "music" }), "client reporting sends only the typed lane, never IDs or free-form details");
+globalThis.fetch = async () => { throw new Error("offline"); };
+await assert.doesNotReject(reportPlaybackFailure("ambient"), "analytics transport failure cannot escape into player behavior");
+globalThis.fetch = originalFetch;
 let releaseFirst!: (ok: boolean) => void;
 let active = 0;
 let maximumActive = 0;
