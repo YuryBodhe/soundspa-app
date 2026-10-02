@@ -159,6 +159,7 @@ async function main() {
     await v2Db.insert(deviceCurrentState).values({ deviceId: betaDevice.id, musicCurrentChannelId: channelId });
     await v2Db.insert(deviceEvents).values({ deviceId: betaDevice.id, eventType: "session_started", channelId });
     const baselineBeforeLocationDelete = await counts();
+    const lifecycleBeforeRejectedDelete = await v2Db.select({ id: monitoringLifecycleEvents.id, eventType: monitoringLifecycleEvents.eventType, deviceId: monitoringLifecycleEvents.deviceId }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId!)).orderBy(monitoringLifecycleEvents.id);
     const noAuthLocationDelete = await fetch(`${origin}/api/v2/admin/locations/${locationA.id}`, { method: "DELETE", headers: { Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ confirmationName: locationA.name }) });
     assert.equal(noAuthLocationDelete.status, 401);
     const deviceCookieLocationDelete = await fetch(`${origin}/api/v2/admin/locations/${locationA.id}`, { method: "DELETE", headers: { Origin: publicOrigin, Cookie: "soundspa_v2_device=invalid", "Content-Type": "application/json" }, body: JSON.stringify({ confirmationName: locationA.name }) });
@@ -168,7 +169,7 @@ async function main() {
     const wrongName = await fetch(`${origin}/api/v2/admin/locations/${locationA.id}`, { method: "DELETE", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ confirmationName: "not the location" }) });
     assert.equal(wrongName.status, 409);
     assert.deepEqual(await counts(), baselineBeforeLocationDelete, "failed Location deletion attempts must be non-mutating");
-    assert.equal((await v2Db.select({ id: monitoringLifecycleEvents.id }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId!))).length, 0, "rejected Location deletion must not emit lifecycle events");
+    assert.deepEqual(await v2Db.select({ id: monitoringLifecycleEvents.id, eventType: monitoringLifecycleEvents.eventType, deviceId: monitoringLifecycleEvents.deviceId }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, organizationId!)).orderBy(monitoringLifecycleEvents.id), lifecycleBeforeRejectedDelete, "rejected Location deletion must not alter existing lifecycle events or emit deletion events");
 
     const baseBefore = (await v2Db.select({ channelId: baseChannels.channelId }).from(baseChannels)).map(({ channelId }) => channelId).sort();
     const [channelCountBefore] = await v2Db.select({ n: sql<number>`count(*)::int` }).from(channels);
