@@ -165,18 +165,15 @@ export function AnalyticsReportView({ report, options }: { report: AnalyticsRepo
       <UsageTable title="Ambient Usage" rows={ambient} />
     </div>
 
-    <div className="analytics-two-column">
-      <section className="admin-card analytics-section">
-        <h2 className="admin-card-title">Reliability</h2>
-        <div className="analytics-inline-metrics"><span>Total errors <strong>{report.reliability.totalErrors}</strong></span><span>Affected Devices <strong>{report.reliability.affectedDeviceCount}</strong></span></div>
-        {report.reliability.byCode.length
-          ? <div className="analytics-table-wrap"><table className="admin-table analytics-table"><thead><tr><th>Category</th><th>Code</th><th>Count</th><th>Affected Devices</th><th>First seen</th><th>Last seen</th></tr></thead>
-            <tbody>{report.reliability.byCode.map((row) => <tr key={`${row.category}:${row.code}`}><td>{row.category}</td><td><code>{row.code}</code></td><td>{row.count}</td><td>{row.affectedDeviceCount}</td><td><RelativeTime value={row.firstSeen} asOf={report.metadata.generatedAt} /></td><td><RelativeTime value={row.lastSeen} asOf={report.metadata.generatedAt} /></td></tr>)}</tbody>
-          </table></div>
-          : <p className="analytics-empty">No reported errors during this period.</p>}
-      </section>
-
-    </div>
+    <section className="admin-card analytics-section">
+      <h2 className="admin-card-title">Reliability</h2>
+      <div className="analytics-inline-metrics"><span>Total errors <strong>{report.reliability.totalErrors}</strong></span><span>Affected Devices <strong>{report.reliability.affectedDeviceCount}</strong></span></div>
+      {report.reliability.byCode.length
+        ? <div className="analytics-table-wrap"><table className="admin-table analytics-table"><thead><tr><th>Category</th><th>Code</th><th>Count</th><th>Affected Devices</th><th>First seen</th><th>Last seen</th></tr></thead>
+          <tbody>{report.reliability.byCode.map((row) => <tr key={`${row.category}:${row.code}`}><td>{row.category}</td><td><code>{row.code}</code></td><td>{row.count}</td><td>{row.affectedDeviceCount}</td><td><RelativeTime value={row.firstSeen} asOf={report.metadata.generatedAt} /></td><td><RelativeTime value={row.lastSeen} asOf={report.metadata.generatedAt} /></td></tr>)}</tbody>
+        </table></div>
+        : <p className="analytics-empty">No reported errors during this period.</p>}
+    </section>
 
     <details className="admin-card analytics-technical-details">
       <summary>Technical details</summary>
