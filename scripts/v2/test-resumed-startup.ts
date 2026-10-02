@@ -44,6 +44,7 @@ type Internal = {
   networkRetryTimer: ReturnType<typeof setTimeout> | null;
   resumeBufferMiss: unknown;
   fastResumeRecoveryAttempts: number;
+  startupReadinessSourceVersion: number | null;
   evaluateBufferState: () => void;
   confirmDeadNetworkSource: (target: { trackIndex: number; position: number }) => void;
 };
@@ -135,9 +136,18 @@ async function main() {
     // canplay readiness has been observed for this exact source version.
     const wrongRangeResume = await create(529.914, 0);
     const wrongRangeFirstAudio = wrongRangeResume.state.audio;
+    const wrongRangeSourceVersion = wrongRangeResume.state.sourceVersion;
+    wrongRangeFirstAudio.seeking = true;
     wrongRangeFirstAudio.readyState = 4;
     wrongRangeFirstAudio.ranges = [{ start: 0, end: 1.776 }];
+    wrongRangeFirstAudio.dispatchEvent(new Event("canplay"));
     wrongRangeFirstAudio.dispatchEvent(new Event("canplaythrough"));
+    // Safari may deliver the seeking event late relative to readiness events;
+    // it must not erase evidence for this already-applied intended seek.
+    wrongRangeFirstAudio.dispatchEvent(new Event("seeking"));
+    assert.equal(wrongRangeResume.state.startupReadinessSourceVersion, wrongRangeSourceVersion,
+      "same-source readiness after seek application is retained even while seek completion is pending");
+    wrongRangeFirstAudio.seeking = false;
     wrongRangeResume.state.evaluateBufferState();
     now += 499; wrongRangeResume.state.evaluateBufferState(); await flush();
     assert.equal(wrongRangeResume.state.audio, wrongRangeFirstAudio, "wrong-range evidence must remain stable for the short window");
@@ -146,6 +156,16 @@ async function main() {
     assert.equal(wrongRangeResume.state.audio.currentTime, 529.914, "recovery preserves the authoritative resume position");
     assert.equal(wrongRangeResume.state.fastResumeRecoveryAttempts, 1);
     assert.equal(wrongRangeResume.state.audio.playCalls, 0, "Phase 3 recreates only; Phase 2 controls provisional startup");
+    assert.equal(wrongRangeResume.state.startupReadinessSourceVersion, null, "source replacement clears old readiness evidence");
+    wrongRangeFirstAudio.dispatchEvent(new Event("canplaythrough"));
+    assert.equal(wrongRangeResume.state.startupReadinessSourceVersion, null, "late old-source readiness cannot authorize the replacement source");
+    const wrongRangeSecondAudio = wrongRangeResume.state.audio;
+    wrongRangeSecondAudio.readyState = 4; wrongRangeSecondAudio.ranges = [];
+    wrongRangeSecondAudio.dispatchEvent(new Event("canplaythrough")); await flush();
+    assert.equal(wrongRangeSecondAudio.playCalls, 1, "recreated source remains eligible through the existing Phase 2 path");
+    assert.equal(wrongRangeResume.engine.getSnapshot().status, "loading", "Phase 2 still requires real progression");
+    wrongRangeSecondAudio.currentTime += 0.5; wrongRangeResume.state.evaluateBufferState();
+    assert.equal(wrongRangeResume.engine.getSnapshot().status, "playing");
 
     const transientWrongRange = await create(530, 0);
     const transientAudio = transientWrongRange.state.audio;

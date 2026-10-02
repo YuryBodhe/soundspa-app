@@ -521,7 +521,15 @@ export class Mp3Engine {
     const guarded = (callback: () => void) => () => { if (this.isSourceCurrent(audio, version)) callback(); };
     const onEnded = guarded(() => { this.emptyRangesEligibility = null; this.startupReadinessSourceVersion = null; this.resumeBufferMiss = null; this.captureDiagnostic("media-ended", {}, audio, version); void this.handleEnded(); });
     const onError = guarded(() => { this.emptyRangesEligibility = null; this.startupReadinessSourceVersion = null; this.resumeBufferMiss = null; this.captureDiagnostic("media-error", {}, audio, version); void this.handleAudioError(); });
-    const onSeeking = guarded(() => { this.emptyRangesEligibility = null; this.startupReadinessSourceVersion = null; this.resumeBufferMiss = null; });
+    const onSeeking = guarded(() => {
+      this.emptyRangesEligibility = null;
+      this.resumeBufferMiss = null;
+      const seekingToIntendedStartupPosition = this.phase === "startup-buffering"
+        && this.pendingSeekSourceVersion !== version
+        && this.startupPosition > BUFFER_RANGE_EPSILON_SECONDS
+        && Math.abs(audio.currentTime - this.startupPosition) <= BUFFER_RANGE_EPSILON_SECONDS;
+      if (!seekingToIntendedStartupPosition) this.startupReadinessSourceVersion = null;
+    });
     audio.addEventListener("seeking", onSeeking);
     const onCanPlay = guarded(() => this.noteStartupReadiness(audio, version, "canplay"));
     const onCanPlayThrough = guarded(() => this.noteStartupReadiness(audio, version, "canplaythrough"));
@@ -944,16 +952,23 @@ export class Mp3Engine {
       || this.phase !== "startup-buffering"
       || !this.wantsPlayback
       || this.pendingSeekSourceVersion === sourceVersion
-      || audio.seeking
       || this.startupPosition <= BUFFER_RANGE_EPSILON_SECONDS
       || Math.abs(audio.currentTime - this.startupPosition) > BUFFER_RANGE_EPSILON_SECONDS
     ) return;
 
     if (this.startupReadinessSourceVersion !== sourceVersion) {
       this.startupReadinessSourceVersion = sourceVersion;
-      this.captureDiagnostic("resume-recovery-readiness", { event, currentTime: audio.currentTime, readyState: audio.readyState });
+      this.captureDiagnostic("resume-recovery-readiness", {
+        event,
+        currentTime: audio.currentTime,
+        readyState: audio.readyState,
+        observedWhileSeeking: audio.seeking,
+      });
     }
-    this.tryAcceleratedResumeRecoveryStartup(audio, sourceVersion);
+    // A canplay event can arrive after the intended seek was applied but
+    // before Safari finishes that seek. Retain same-source evidence for the
+    // startup sampler; never act on it until seeking has actually completed.
+    if (!audio.seeking) this.tryAcceleratedResumeRecoveryStartup(audio, sourceVersion);
   }
 
   private tryAcceleratedResumeRecoveryStartup(audio: HTMLAudioElement, sourceVersion: number) {
