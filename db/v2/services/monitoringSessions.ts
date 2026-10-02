@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { v2Db } from "../client";
-import { deviceCurrentState } from "../schema";
+import { deviceCurrentState, hourlyChannelPlayback, hourlyDevicePlayback } from "../schema";
+import { calculatePlaybackAccountingCredit, type PlaybackAccountingBaseline } from "./playbackAccounting";
 
 export type MonitoringLane = "music" | "ambient";
 export type MonitoringPlaybackState = "idle" | "playing" | "paused" | "buffering" | "error";
@@ -13,6 +14,16 @@ export type MonitoringLaneSignal = {
   channelId: string | null;
 };
 
+type ServerClock = (tx: MonitoringTx) => Promise<Date>;
+
+async function readDatabaseClock(tx: MonitoringTx): Promise<Date> {
+  const result = await tx.execute(sql`SELECT clock_timestamp() AS accepted_at`);
+  const value = result.rows[0]?.accepted_at;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (!Number.isFinite(date.getTime())) throw new Error("Database clock returned an invalid timestamp");
+  return date;
+}
+
 /** Accept a dual-lane snapshot while serializing against session replacement and other signals. */
 export async function acceptMonitoringSnapshot(input: {
   deviceId: string;
@@ -20,16 +31,19 @@ export async function acceptMonitoringSnapshot(input: {
   sessionId: string;
   music: MonitoringLaneSignal;
   ambient: MonitoringLaneSignal;
-}) {
+}, readServerTime: ServerClock = readDatabaseClock) {
   return v2Db.transaction(async (tx) => {
     const [current] = await tx.select({
       generation: deviceCurrentState.monitoringGeneration,
+      lastSeenAt: deviceCurrentState.lastSeenAt,
       musicSessionId: deviceCurrentState.musicSessionId,
       musicSequence: deviceCurrentState.musicSequence,
       musicPlaybackState: deviceCurrentState.musicPlaybackState,
+      musicCurrentChannelId: deviceCurrentState.musicCurrentChannelId,
       ambientSessionId: deviceCurrentState.ambientSessionId,
       ambientSequence: deviceCurrentState.ambientSequence,
       ambientPlaybackState: deviceCurrentState.ambientPlaybackState,
+      ambientCurrentChannelId: deviceCurrentState.ambientCurrentChannelId,
     }).from(deviceCurrentState)
       .where(eq(deviceCurrentState.deviceId, input.deviceId))
       .for("update");
@@ -50,6 +64,53 @@ export async function acceptMonitoringSnapshot(input: {
       return { accepted: { music: false, ambient: false } };
     }
 
+    // Read the DB clock only after acquiring the per-device row lock. This keeps
+    // concurrently accepted signals ordered by the same serialized baseline.
+    const acceptedAt = await readServerTime(tx);
+    const previous: PlaybackAccountingBaseline = {
+      lastSeenAt: current.lastSeenAt,
+      music: {
+        sessionId: current.musicSessionId,
+        sequence: current.musicSequence,
+        playbackState: current.musicPlaybackState,
+        channelId: current.musicCurrentChannelId,
+      },
+      ambient: {
+        sessionId: current.ambientSessionId,
+        sequence: current.ambientSequence,
+        playbackState: current.ambientPlaybackState,
+        channelId: current.ambientCurrentChannelId,
+      },
+    };
+    const credit = calculatePlaybackAccountingCredit(previous, input.sessionId, acceptedAt);
+
+    for (const bucket of credit.active) {
+      await tx.insert(hourlyDevicePlayback).values({
+        bucketStart: bucket.bucketStart,
+        deviceId: input.deviceId,
+        activePlaybackSeconds: bucket.playedSeconds,
+      }).onConflictDoUpdate({
+        target: [hourlyDevicePlayback.bucketStart, hourlyDevicePlayback.deviceId],
+        set: {
+          activePlaybackSeconds: sql`${hourlyDevicePlayback.activePlaybackSeconds} + EXCLUDED.active_playback_seconds`,
+        },
+      });
+    }
+    for (const bucket of credit.channels) {
+      await tx.insert(hourlyChannelPlayback).values({
+        bucketStart: bucket.bucketStart,
+        deviceId: input.deviceId,
+        channelId: bucket.channelId,
+        lane: bucket.lane,
+        playedSeconds: bucket.playedSeconds,
+      }).onConflictDoUpdate({
+        target: [hourlyChannelPlayback.bucketStart, hourlyChannelPlayback.deviceId, hourlyChannelPlayback.channelId, hourlyChannelPlayback.lane],
+        set: {
+          playedSeconds: sql`${hourlyChannelPlayback.playedSeconds} + EXCLUDED.played_seconds`,
+        },
+      });
+    }
+
     const resultingMusicState = musicAccepted ? input.music.state : current.musicPlaybackState;
     const resultingAmbientState = ambientAccepted ? input.ambient.state : current.ambientPlaybackState;
     await tx.update(deviceCurrentState).set({
@@ -65,10 +126,10 @@ export async function acceptMonitoringSnapshot(input: {
         ambientPlaybackState: input.ambient.state,
         ambientCurrentChannelId: input.ambient.channelId,
       } : {}),
-      lastSeenAt: sql`now()`,
-      updatedAt: sql`now()`,
+      lastSeenAt: acceptedAt,
+      updatedAt: acceptedAt,
       ...(resultingMusicState === "playing" || resultingAmbientState === "playing"
-        ? { lastPlaybackAt: sql`now()` }
+        ? { lastPlaybackAt: acceptedAt }
         : {}),
     }).where(eq(deviceCurrentState.deviceId, input.deviceId));
 
