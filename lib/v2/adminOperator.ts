@@ -36,27 +36,112 @@ function effectivePublicOrigin(request: Request): string | null {
 // Public ingress must overwrite forwarded headers. Browser form POSTs normally
 // include Origin; Referrer-Policy may suppress Referer, so Fetch Metadata is a
 // narrow final fallback. No V1 sessions/cookies.
-export function isSameOriginMutation(request: Request): boolean {
+export type SameOriginRejectBranch =
+  | "effective-public-origin-unavailable"
+  | "origin-invalid"
+  | "origin-mismatch"
+  | "referer-invalid"
+  | "referer-mismatch"
+  | "fetch-site-not-same-origin";
+
+export type SameOriginDiagnosticFields = {
+  originPresent: boolean;
+  originValue: string | null;
+  refererPresent: boolean;
+  refererOrigin: string | null;
+  secFetchSite: string | null;
+  secFetchMode: string | null;
+  secFetchDest: string | null;
+  host: string | null;
+  xForwardedHost: string | null;
+  xForwardedProto: string | null;
+  configuredPublicOrigin: string | null;
+  effectivePublicOrigin: string | null;
+  validatorBranch: SameOriginRejectBranch;
+};
+
+function redactKnownSecret(value: string, secret?: string): string {
+  return secret && value.toLowerCase().includes(secret.toLowerCase()) ? "<redacted>" : value;
+}
+
+function originOnly(value: string | null, secret?: string): string | null {
+  if (value === null) return null;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "<invalid>";
+    return redactKnownSecret(url.origin, secret);
+  } catch {
+    return "<invalid>";
+  }
+}
+
+function hostOnly(value: string | null, secret?: string): string | null {
+  if (value === null) return null;
+  // Host fields should contain only a host (optionally a port), never a path.
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(value)) return "<invalid>";
+  try {
+    const url = new URL(`https://${value}`);
+    if (url.username || url.password || url.pathname !== "/") return "<invalid>";
+    return redactKnownSecret(url.host, secret);
+  } catch {
+    return "<invalid>";
+  }
+}
+
+function fetchMetadata(value: string | null, allowed: readonly string[]): string | null {
+  if (value === null) return null;
+  const normalized = value.toLowerCase();
+  return allowed.includes(normalized) ? normalized : "<other>";
+}
+
+export function sameOriginDiagnosticFields(
+  request: Request,
+  validatorBranch: SameOriginRejectBranch,
+  activationToken: string,
+): SameOriginDiagnosticFields {
+  const configured = process.env.V2_PUBLIC_ORIGIN?.trim() || null;
+  return {
+    originPresent: request.headers.has("origin"),
+    originValue: originOnly(request.headers.get("origin"), activationToken),
+    refererPresent: request.headers.has("referer"),
+    refererOrigin: originOnly(request.headers.get("referer"), activationToken),
+    secFetchSite: fetchMetadata(request.headers.get("sec-fetch-site"), ["same-origin", "same-site", "cross-site", "none"]),
+    secFetchMode: fetchMetadata(request.headers.get("sec-fetch-mode"), ["navigate", "same-origin", "no-cors", "cors", "websocket"]),
+    secFetchDest: fetchMetadata(request.headers.get("sec-fetch-dest"), ["", "document", "iframe", "image", "script", "style", "font", "audio", "video", "track", "embed", "object", "worker", "sharedworker", "serviceworker", "manifest", "empty"]),
+    host: hostOnly(request.headers.get("host"), activationToken),
+    xForwardedHost: hostOnly(request.headers.get("x-forwarded-host"), activationToken),
+    xForwardedProto: fetchMetadata(request.headers.get("x-forwarded-proto"), ["http", "https"]),
+    configuredPublicOrigin: configured ? originOnly(configured, activationToken) : null,
+    effectivePublicOrigin: redactKnownSecret(effectivePublicOrigin(request) ?? "", activationToken) || null,
+    validatorBranch,
+  };
+}
+
+export function isSameOriginMutation(request: Request, onReject?: (branch: SameOriginRejectBranch) => void): boolean {
+  const reject = (branch: SameOriginRejectBranch) => {
+    onReject?.(branch);
+    return false;
+  };
   const expectedOrigin = effectivePublicOrigin(request);
-  if (!expectedOrigin) return false;
+  if (!expectedOrigin) return reject("effective-public-origin-unavailable");
 
   const origin = request.headers.get("origin");
   if (origin !== null) {
     try {
-      return new URL(origin).origin === expectedOrigin;
+      return new URL(origin).origin === expectedOrigin || reject("origin-mismatch");
     } catch {
-      return false;
+      return reject("origin-invalid");
     }
   }
 
   const referer = request.headers.get("referer");
   if (referer !== null) {
     try {
-      return new URL(referer).origin === expectedOrigin;
+      return new URL(referer).origin === expectedOrigin || reject("referer-mismatch");
     } catch {
-      return false;
+      return reject("referer-invalid");
     }
   }
 
-  return request.headers.get("sec-fetch-site") === "same-origin";
+  return request.headers.get("sec-fetch-site") === "same-origin" || reject("fetch-site-not-same-origin");
 }
