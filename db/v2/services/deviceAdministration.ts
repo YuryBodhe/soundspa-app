@@ -9,10 +9,49 @@ const tokenHash = (token: string) => createHash("sha256").update(token, "utf8").
 const ACTIVATION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class DeviceAdministrationError extends Error {
-  constructor(readonly code: "not_found" | "not_pending" | "location_unavailable") {
-    super(code === "not_found" ? "Device was not found." : code === "not_pending" ? "Only a pending, non-revoked Device can receive a new activation link." : "The Location or Organization is archived; activation cannot be reissued.");
+  constructor(readonly code: "not_found" | "not_pending" | "not_activated" | "location_unavailable") {
+    super(code === "not_found" ? "Device was not found." : code === "not_pending" ? "Only a pending, non-revoked Device can receive a new activation link." : code === "not_activated" ? "Only an activated, non-revoked Device can have its access reset." : "The Location or Organization is archived; Device access cannot be changed.");
     this.name = "DeviceAdministrationError";
   }
+}
+
+export async function resetActivatedDeviceAccess(deviceId: string) {
+  if (!UUID.test(deviceId)) throw new DeviceAdministrationError("not_found");
+  const activationToken = randomBytes(32).toString("base64url");
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + ACTIVATION_TTL_MS);
+
+  const device = await v2Db.transaction(async (tx) => {
+    const [current] = await tx.select({
+      id: devices.id,
+      credentialHash: devices.credentialHash,
+      status: devices.status,
+      revokedAt: devices.revokedAt,
+      locationArchivedAt: locations.archivedAt,
+      organizationArchivedAt: organizations.archivedAt,
+    }).from(devices)
+      .innerJoin(locations, eq(locations.id, devices.locationId))
+      .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+      .where(eq(devices.id, deviceId))
+      .for("update")
+      .limit(1);
+    if (!current) throw new DeviceAdministrationError("not_found");
+    if (current.status !== "active" || current.revokedAt || !current.credentialHash) throw new DeviceAdministrationError("not_activated");
+    if (current.locationArchivedAt || current.organizationArchivedAt) throw new DeviceAdministrationError("location_unavailable");
+
+    const [invalidated] = await tx.update(devices)
+      .set({ credentialHash: null, updatedAt: createdAt })
+      .where(and(eq(devices.id, deviceId), eq(devices.credentialHash, current.credentialHash), eq(devices.status, "active"), isNull(devices.revokedAt)))
+      .returning({ id: devices.id });
+    if (!invalidated) throw new DeviceAdministrationError("not_activated");
+
+    // Keep only the fresh one-time link; the Device identity and history remain untouched.
+    await tx.delete(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, deviceId));
+    await tx.insert(deviceActivationTokens).values({ deviceId, tokenHash: tokenHash(activationToken), expiresAt, createdAt });
+    return { id: current.id };
+  });
+
+  return { device, activationToken, expiresAt };
 }
 
 export async function reissueDeviceActivation(deviceId: string) {

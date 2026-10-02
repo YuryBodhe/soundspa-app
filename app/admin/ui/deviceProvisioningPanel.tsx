@@ -47,6 +47,21 @@ export default function DeviceProvisioningPanel({ locationId, devices }: { locat
     finally { setActionPending(null); }
   }
 
+  async function resetAccess(device: ListedDevice) {
+    const deviceLabel = device.label || "Unnamed Device";
+    if (!window.confirm(`Reset access for "${deviceLabel}" and create a new activation link?\n\nThis will sign the Device out of its current browser and create a new one-time activation link. Monitoring and analytics history will be preserved.`)) return;
+    setError(null); setNotice(null); setActivation(null); setCopied(false); setActionPending(device.id);
+    try {
+      const response = await fetch(`/api/v2/admin/devices/${encodeURIComponent(device.id)}/reset-access`, { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } });
+      const result = await response.json().catch(() => null) as MutationResponse | null;
+      if (!response.ok || !result?.activationUrl || !result.expiresAt) { setError(result?.message ?? "Device access could not be reset."); return; }
+      setActivation({ url: result.activationUrl, expiresAt: result.expiresAt, deviceLabel });
+      setNotice(`Access was reset for ${deviceLabel}. A new one-time activation link is ready.`);
+      router.refresh();
+    } catch { setError("Connection failed. Check the Device state before retrying."); }
+    finally { setActionPending(null); }
+  }
+
   async function remove(device: ListedDevice) {
     const deviceLabel = device.label || "Unnamed Device";
     if (!window.confirm(`Delete device "${deviceLabel}"?\n\nThis will remove this Player Device and its activation/monitoring data. This action cannot be undone.`)) return;
@@ -84,7 +99,7 @@ export default function DeviceProvisioningPanel({ locationId, devices }: { locat
       <button type="button" className="btn btn-sm" onClick={copyLink}>{copied ? "Copied" : "Copy link"}</button>
     </section>}
     <table className="admin-table mt-4"><thead><tr><th>Device</th><th>Device state</th><th>Activation</th><th>Created</th><th>Actions</th></tr></thead><tbody>
-      {devices.map((device) => <tr key={device.id}><td>{device.label || "Unnamed Device"}</td><td>{device.status === "active" && device.activationState !== "revoked" ? <span className="badge badge-ok">ACTIVE</span> : <span className="badge badge-neutral">REVOKED</span>}</td><td>{device.activationState === "pending" ? <span className="badge badge-warn">PENDING</span> : device.activationState === "activated" ? <span className="badge badge-ok">ACTIVATED</span> : <span className="badge badge-neutral">—</span>}</td><td>{new Date(device.createdAt).toLocaleDateString()}</td><td><div className="form-actions">{device.activationState === "pending" && <button type="button" className="btn btn-sm" disabled={pending || actionPending !== null} onClick={() => void reissue(device)}>{actionPending === device.id ? "Working…" : "Reissue activation link"}</button>}<button type="button" className="btn btn-sm" disabled={pending || actionPending !== null} onClick={() => void remove(device)}>{actionPending === device.id ? "Working…" : "Delete Device"}</button></div></td></tr>)}
+      {devices.map((device) => <tr key={device.id}><td>{device.label || "Unnamed Device"}</td><td>{device.status === "active" && device.activationState !== "revoked" ? <span className="badge badge-ok">ACTIVE</span> : <span className="badge badge-neutral">REVOKED</span>}</td><td>{device.activationState === "pending" ? <span className="badge badge-warn">PENDING</span> : device.activationState === "activated" ? <span className="badge badge-ok">ACTIVATED</span> : <span className="badge badge-neutral">—</span>}</td><td>{new Date(device.createdAt).toLocaleDateString()}</td><td><div className="form-actions">{device.activationState === "pending" && <button type="button" className="btn btn-sm" disabled={pending || actionPending !== null} onClick={() => void reissue(device)}>{actionPending === device.id ? "Working…" : "Reissue activation link"}</button>}{device.activationState === "activated" && <button type="button" className="btn btn-sm" disabled={pending || actionPending !== null} onClick={() => void resetAccess(device)}>{actionPending === device.id ? "Working…" : "Reset access & new link"}</button>}<button type="button" className="btn btn-sm" disabled={pending || actionPending !== null} onClick={() => void remove(device)}>{actionPending === device.id ? "Working…" : "Delete Device"}</button></div></td></tr>)}
       {!devices.length && <tr><td colSpan={5} className="text-dim">No Devices for this Location.</td></tr>}
     </tbody></table>
   </div>;

@@ -6,7 +6,9 @@ import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
   locations, organizations, monitoringLifecycleEvents,
+  hourlyDevicePlayback, hourlyChannelPlayback, hourlyErrorAggregates,
 } from "../../db/v2/schema";
+import { authenticateDeviceCredential } from "../../db/v2/queries/devices";
 
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 const counts = async () => {
@@ -28,6 +30,9 @@ const counts = async () => {
     v2Db.select({ n: sql<number>`count(*)::int` }).from(channelTracks),
     v2Db.select({ n: sql<number>`count(*)::int` }).from(baseChannels),
     v2Db.execute(sql`SELECT count(*)::int AS n FROM drizzle_v2.__drizzle_migrations`),
+    v2Db.select({ n: sql<number>`count(*)::int` }).from(hourlyDevicePlayback),
+    v2Db.select({ n: sql<number>`count(*)::int` }).from(hourlyChannelPlayback),
+    v2Db.select({ n: sql<number>`count(*)::int` }).from(hourlyErrorAggregates),
   ]);
   const values = results.map((result: any) => Array.isArray(result) ? result[0]?.n : result.rows[0]?.n);
   assert.equal(values[13], 10, "Migration journal must remain at ten.");
@@ -77,6 +82,7 @@ async function main() {
     assert.equal(adminPage.status, 200);
     const adminHtml = await adminPage.text();
     assert(adminHtml.includes("Reissue activation link"));
+    assert.equal(adminHtml.includes("Reset access &amp; new link"), false, "pending Devices must not display the reset action");
     assert(adminHtml.includes("Delete Device"));
     assert(adminHtml.includes("Delete Location"));
 
@@ -87,6 +93,9 @@ async function main() {
     assert.equal(deviceCookieReissue.status, 401, "customer Device cookie must not authorize reissue");
     const crossOriginReissue = await fetch(`${origin}/api/v2/admin/devices/${recoverable.id}/activation`, { method: "POST", headers: { ...authHeaders({ Origin: "https://untrusted.invalid" }) } });
     assert.equal(crossOriginReissue.status, 403);
+    const pendingReset = await fetch(`${origin}/api/v2/admin/devices/${recoverable.id}/reset-access`, { method: "POST", headers: authHeaders() });
+    assert.equal(pendingReset.status, 409, "reset must not issue a link for a pending Device");
+    assert.equal((await v2Db.select({ tokenHash: deviceActivationTokens.tokenHash }).from(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, recoverable.id))).length, 1, "rejected reset must leave the pending token untouched");
     const reissuedResponse = await fetch(`${origin}/api/v2/admin/devices/${recoverable.id}/activation`, { method: "POST", headers: authHeaders() });
     assert.equal(reissuedResponse.status, 200);
     assert.equal(reissuedResponse.headers.get("cache-control"), "no-store");
@@ -118,6 +127,79 @@ async function main() {
     assert.match(cookie, /soundspa_v2_device=[A-Za-z0-9_-]{43}/);
     assert.match(cookie, /HttpOnly/i); assert.match(cookie, /Secure/i); assert.match(cookie, /SameSite=Lax/i);
     assert.equal((await fetch(`${origin}/api/v2/admin/devices/${recoverable.id}/activation`, { method: "POST", headers: authHeaders() })).status, 409, "an activated Device must not receive a reissued link");
+
+    const oldCredential = cookie.match(/soundspa_v2_device=([A-Za-z0-9_-]{43})/)?.[1];
+    assert(oldCredential, "initial activation must issue a Device credential cookie");
+    assert.equal((await authenticateDeviceCredential(oldCredential))?.deviceId, recoverable.id);
+    const [historyChannel] = await v2Db.select({ id: channels.id }).from(channels).orderBy(channels.id).limit(1);
+    const preResetUnusedToken = randomBytes(32).toString("base64url");
+    await v2Db.insert(deviceActivationTokens).values({ deviceId: recoverable.id, tokenHash: sha256(preResetUnusedToken), expiresAt: new Date(Date.now() + 86_400_000) });
+    const resetBucket = new Date();
+    resetBucket.setUTCMinutes(0, 0, 0);
+    await v2Db.insert(deviceCurrentState).values({ deviceId: recoverable.id, musicCurrentChannelId: historyChannel.id, musicPlaybackState: "paused" });
+    await v2Db.insert(deviceEvents).values({ deviceId: recoverable.id, eventType: "playback_started", channelId: historyChannel.id });
+    await v2Db.insert(hourlyDevicePlayback).values({ deviceId: recoverable.id, bucketStart: resetBucket, activePlaybackSeconds: 71 });
+    await v2Db.insert(hourlyChannelPlayback).values({ deviceId: recoverable.id, channelId: historyChannel.id, lane: "music", bucketStart: resetBucket, playedSeconds: 71 });
+    await v2Db.insert(hourlyErrorAggregates).values({ deviceId: recoverable.id, bucketStart: resetBucket, category: "PLAYBACK", errorCode: "RESET_TEST", eventCount: 1 });
+    const historyBeforeReset = {
+      currentState: await v2Db.select().from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, recoverable.id)),
+      events: await v2Db.select().from(deviceEvents).where(eq(deviceEvents.deviceId, recoverable.id)),
+      lifecycle: await v2Db.select({ id: monitoringLifecycleEvents.id, eventType: monitoringLifecycleEvents.eventType }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.deviceId, recoverable.id)).orderBy(monitoringLifecycleEvents.id),
+      hourlyDevice: await v2Db.select().from(hourlyDevicePlayback).where(eq(hourlyDevicePlayback.deviceId, recoverable.id)),
+      hourlyChannel: await v2Db.select().from(hourlyChannelPlayback).where(eq(hourlyChannelPlayback.deviceId, recoverable.id)),
+      hourlyErrors: await v2Db.select().from(hourlyErrorAggregates).where(eq(hourlyErrorAggregates.deviceId, recoverable.id)),
+    };
+    const resetAdminPage = await fetch(`${origin}/admin/ui?location=${encodeURIComponent(locationA.id)}`, { headers: { Authorization: authorization } });
+    assert.equal(resetAdminPage.status, 200);
+    assert((await resetAdminPage.text()).includes("Reset access &amp; new link"));
+    const resetPath = `${origin}/api/v2/admin/devices/${recoverable.id}/reset-access`;
+    assert.equal((await fetch(resetPath, { method: "POST", headers: { Origin: publicOrigin } })).status, 401);
+    assert.equal((await fetch(resetPath, { method: "POST", headers: authHeaders({ Origin: "https://untrusted.invalid" }) })).status, 403);
+    const resetResponse = await fetch(resetPath, { method: "POST", headers: authHeaders() });
+    assert.equal(resetResponse.status, 200);
+    assert.equal(resetResponse.headers.get("cache-control"), "no-store");
+    assert.equal(resetResponse.headers.get("referrer-policy"), "no-referrer");
+    const resetResult = await resetResponse.json() as { ok: boolean; activationUrl: string; expiresAt: string; credentialHash?: string; tokenHash?: string };
+    assert.equal(resetResult.ok, true);
+    assert.equal(new URL(resetResult.activationUrl).origin, publicOrigin);
+    assert.equal("credentialHash" in resetResult || "tokenHash" in resetResult, false);
+    assert.equal(JSON.stringify(resetResult).includes(oldCredential), false);
+    const freshToken = new URL(resetResult.activationUrl).pathname.split("/").at(-1)!;
+    assert.notEqual(freshToken, recoverable.token);
+    const freshTokenHash = sha256(freshToken);
+    const [resetDevice] = await v2Db.select({ id: devices.id, locationId: devices.locationId, credentialHash: devices.credentialHash, status: devices.status, revokedAt: devices.revokedAt }).from(devices).where(eq(devices.id, recoverable.id));
+    assert.deepEqual(resetDevice, { id: recoverable.id, locationId: locationA.id, credentialHash: null, status: "active", revokedAt: null });
+    assert.equal(await authenticateDeviceCredential(oldCredential), null, "old credential must stop authenticating after reset");
+    assert.equal((await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${oldCredential}` } })).status, 401);
+    assert.equal((await fetch(`${origin}/activate-device/${preResetUnusedToken}`, { redirect: "manual" })).status, 410, "prior unused activation link must be invalidated by reset");
+    const resetTokens = await v2Db.select({ tokenHash: deviceActivationTokens.tokenHash, usedAt: deviceActivationTokens.usedAt }).from(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, recoverable.id));
+    assert.deepEqual(resetTokens, [{ tokenHash: freshTokenHash, usedAt: null }]);
+    assert.deepEqual({
+      currentState: await v2Db.select().from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, recoverable.id)),
+      events: await v2Db.select().from(deviceEvents).where(eq(deviceEvents.deviceId, recoverable.id)),
+      lifecycle: await v2Db.select({ id: monitoringLifecycleEvents.id, eventType: monitoringLifecycleEvents.eventType }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.deviceId, recoverable.id)).orderBy(monitoringLifecycleEvents.id),
+      hourlyDevice: await v2Db.select().from(hourlyDevicePlayback).where(eq(hourlyDevicePlayback.deviceId, recoverable.id)),
+      hourlyChannel: await v2Db.select().from(hourlyChannelPlayback).where(eq(hourlyChannelPlayback.deviceId, recoverable.id)),
+      hourlyErrors: await v2Db.select().from(hourlyErrorAggregates).where(eq(hourlyErrorAggregates.deviceId, recoverable.id)),
+    }, historyBeforeReset, "reset must preserve current state and all Device/analytics history");
+    assert.equal((await v2Db.select({ id: devices.id }).from(devices).where(eq(devices.id, recoverable.id))).length, 1, "reset must not create a replacement Device");
+    assert.equal((await fetch(`${origin}/activate-device/${freshToken}`, { redirect: "manual" })).status, 200);
+    const freshActivation = await fetch(`${origin}/activate-device/${freshToken}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" });
+    assert.equal(freshActivation.status, 303);
+    const freshCookie = freshActivation.headers.get("set-cookie") ?? "";
+    const freshCredential = freshCookie.match(/soundspa_v2_device=([A-Za-z0-9_-]{43})/)?.[1];
+    assert(freshCredential, "fresh activation must issue a new Device cookie");
+    assert.notEqual(freshCredential, oldCredential);
+    const freshAuth = await authenticateDeviceCredential(freshCredential);
+    assert.equal(freshAuth?.deviceId, recoverable.id);
+    assert.equal(freshAuth?.locationId, locationA.id);
+    assert.equal((await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${freshCredential}` } })).status, 200);
+    assert.equal((await fetch(`${origin}/activate-device/${freshToken}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" })).status, 410, "fresh activation token remains single-use");
+    const historyAfterActivation = await v2Db.select({ id: monitoringLifecycleEvents.id, eventType: monitoringLifecycleEvents.eventType }).from(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.deviceId, recoverable.id)).orderBy(monitoringLifecycleEvents.id);
+    assert(historyAfterActivation.length > historyBeforeReset.lifecycle.length, "fresh activation adds its normal truthful lifecycle event");
+    for (const priorEvent of historyBeforeReset.lifecycle) {
+      assert(historyAfterActivation.some((event) => event.id === priorEvent.id && event.eventType === priorEvent.eventType), "pre-reset lifecycle history remains attributed to the same Device");
+    }
 
     const deviceToDelete = await createPending(locationA.id, `${marker} Delete Device`);
     const [{ id: channelId }] = await v2Db.select({ id: channels.id }).from(channels).orderBy(channels.id).limit(1);
@@ -154,8 +236,6 @@ async function main() {
     }, locationAccessBefore, "deleting one Device must not alter Location access configuration");
 
     const betaDevice = await createPending(locationB.id, `${marker} Beta Device`);
-    await v2Db.insert(deviceCurrentState).values({ deviceId: recoverable.id, musicCurrentChannelId: channelId });
-    await v2Db.insert(deviceEvents).values({ deviceId: recoverable.id, eventType: "session_started", channelId });
     await v2Db.insert(deviceCurrentState).values({ deviceId: betaDevice.id, musicCurrentChannelId: channelId });
     await v2Db.insert(deviceEvents).values({ deviceId: betaDevice.id, eventType: "session_started", channelId });
     const baselineBeforeLocationDelete = await counts();
@@ -201,7 +281,7 @@ async function main() {
     assert.equal((await v2Db.select({ n: sql<number>`count(*)::int` }).from(channels))[0].n, channelCountBefore.n);
     assert.equal((await v2Db.select({ n: sql<number>`count(*)::int` }).from(channelTracks))[0].n, trackCountBefore.n);
 
-    console.info("V2 Device recovery/deletion PASS: pending-only activation reissue, old-token invalidation, hash-only persistence, single-use activation, Device-owned cleanup, Location-owned cleanup, sibling/Organization/global-content preservation, auth/same-origin and typed-name confirmation.");
+    console.info("V2 Device recovery/deletion PASS: pending-only activation reissue, activated Device access reset, old credential/token invalidation, same-Device reactivation, history preservation, hash-only persistence, single-use activation, cleanup, auth/same-origin and Location/Organization preservation.");
   } finally {
     const deviceIds = [...new Set(syntheticDeviceIds)];
     await v2Db.transaction(async (tx) => {
@@ -210,6 +290,9 @@ async function main() {
         await tx.delete(deviceActivationTokens).where(inArray(deviceActivationTokens.deviceId, deviceIds));
         await tx.delete(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, deviceIds));
         await tx.delete(deviceEvents).where(inArray(deviceEvents.deviceId, deviceIds));
+        await tx.delete(hourlyDevicePlayback).where(inArray(hourlyDevicePlayback.deviceId, deviceIds));
+        await tx.delete(hourlyChannelPlayback).where(inArray(hourlyChannelPlayback.deviceId, deviceIds));
+        await tx.delete(hourlyErrorAggregates).where(inArray(hourlyErrorAggregates.deviceId, deviceIds));
         await tx.delete(devices).where(inArray(devices.id, deviceIds));
       }
       const locationIds = [locationA?.id, locationB?.id].filter((id): id is string => !!id);
