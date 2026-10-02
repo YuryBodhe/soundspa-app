@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import Link from "next/link";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
 import CustomerProvisioningForm from "./customerProvisioningForm";
@@ -26,7 +27,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const grantByChannel = new Map(grants.map(({ grant }) => [grant.channelId, grant]));
 
   return <>
-    <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1></div>
+    <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link></div></div>
     {params.message && <p role="status">{params.message.slice(0, 200)}</p>}
     <section className="admin-card">
       <h2 className="admin-card-title">Base</h2><p className="text-dim">Global package membership uses the effective access resolver.</p>

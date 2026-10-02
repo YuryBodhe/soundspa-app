@@ -178,3 +178,71 @@
 .mt-4 {
   margin-top: 16px;
 }
+
+.monitoring-eyebrow {
+  display: block;
+  color: rgba(195, 168, 108, 0.78);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.monitoring-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 26px;
+}
+.monitoring-summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(12, 12, 20, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 12px;
+}
+.monitoring-summary-item strong { color: #f5f5f7; font-size: 20px; font-weight: 500; }
+.monitoring-summary-online strong { color: #34c759; }
+.monitoring-summary-playing strong { color: #c3a86c; }
+.monitoring-organization { margin-bottom: 28px; }
+.monitoring-group-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.monitoring-group-heading h2, .monitoring-group-heading h3 { margin: 4px 0 0; font-size: 18px; font-weight: 500; }
+.monitoring-group-heading h2 { font-size: 20px; }
+.monitoring-location { padding: 16px; }
+.monitoring-device-list { display: grid; gap: 10px; }
+.monitoring-device {
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.monitoring-device-offline { border-color: rgba(255, 159, 10, 0.22); }
+.monitoring-device-header, .monitoring-badges, .monitoring-times {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.monitoring-device-header h4 { margin: 0 0 3px; font-size: 15px; font-weight: 500; }
+.monitoring-device-header .text-dim { font-size: 10px; }
+.monitoring-badges { justify-content: flex-end; }
+.monitoring-stale-note { color: #ffbd66; font-size: 12px; margin: 12px 0 0; }
+.monitoring-lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.monitoring-lanes p { margin: 5px 0 0; text-transform: capitalize; font-size: 13px; }
+.monitoring-times { justify-content: flex-start; margin-top: 14px; color: rgba(255,255,255,.56); font-size: 11px; }
+@media (max-width: 720px) {
+  .monitoring-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-device-header { align-items: flex-start; }
+  .monitoring-badges { justify-content: flex-start; }
+  .monitoring-lanes { grid-template-columns: 1fr; gap: 10px; }
+}
