@@ -89,6 +89,7 @@ async function main() {
   const password = process.env.V2_ADMIN_PASSWORD;
   assert(username && password, "Staging operator authorization must be configured.");
   const origin = process.env.V2_VERIFY_ORIGIN ?? "http://127.0.0.1:3000";
+  const publicOrigin = new URL(process.env.V2_PUBLIC_ORIGIN || origin).origin;
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
   const baseline = await captureBaseline();
   const suffix = randomUUID();
@@ -128,9 +129,9 @@ async function main() {
     assert.equal(adminRedirect.status, 307);
     assert.equal(adminRedirect.headers.get("location"), "/admin/ui");
     assert.equal((await fetch(`${origin}/admin/ui`, { headers: { authorization } })).status, 200);
-    const noAuth = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(input) });
+    const noAuth = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { origin: publicOrigin, "content-type": "application/json" }, body: JSON.stringify(input) });
     assert.equal(noAuth.status, 401);
-    const cookieOnly = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { origin, cookie: "soundspa_v2_device=not-an-operator-credential", "content-type": "application/json" }, body: JSON.stringify(input) });
+    const cookieOnly = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { origin: publicOrigin, cookie: "soundspa_v2_device=not-an-operator-credential", "content-type": "application/json" }, body: JSON.stringify(input) });
     assert.equal(cookieOnly.status, 401);
     const crossOrigin = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin: "https://untrusted.invalid", "content-type": "application/json" }, body: JSON.stringify(input) });
     assert.equal(crossOrigin.status, 403);
@@ -142,26 +143,26 @@ async function main() {
       { ...input, timezone: "Not/A_Time_Zone" },
     ];
     for (const body of invalidRequests) {
-      const response = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin, "content-type": "application/json" }, body: JSON.stringify(body) });
+      const response = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin: publicOrigin, "content-type": "application/json" }, body: JSON.stringify(body) });
       assert.equal(response.status, 400);
     }
     assert.equal((await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.name, organizationName))).length, 0);
 
     const [existingLocation] = await v2Db.select({ slug: locations.slug }).from(locations).limit(1);
     assert(existingLocation);
-    const duplicate = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin, "content-type": "application/json" }, body: JSON.stringify({ ...input, organizationName: duplicateOrganizationName, slug: existingLocation.slug }) });
+    const duplicate = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin: publicOrigin, "content-type": "application/json" }, body: JSON.stringify({ ...input, organizationName: duplicateOrganizationName, slug: existingLocation.slug }) });
     assert.equal(duplicate.status, 409);
     const duplicateBody = await duplicate.json() as { message?: string };
     assert(duplicateBody.message?.includes("already in use"));
     assert(!JSON.stringify(duplicateBody).includes("locations_slug_unique"));
     assert.equal((await v2Db.select({ id: organizations.id }).from(organizations).where(eq(organizations.name, duplicateOrganizationName))).length, 0, "Failed Location insert must roll back its new Organization.");
 
-    const unauthorizedAccess = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" }, body: "operation=show-channel" });
+    const unauthorizedAccess = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { origin: publicOrigin, "content-type": "application/x-www-form-urlencoded" }, body: "operation=show-channel" });
     assert.equal(unauthorizedAccess.status, 401);
     const crossOriginAccess = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin: "https://untrusted.invalid", "content-type": "application/x-www-form-urlencoded" }, body: "operation=show-channel" });
     assert.equal(crossOriginAccess.status, 403);
 
-    const created = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(input) });
+    const created = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin: publicOrigin, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(input) });
     assert.equal(created.status, 201);
     const result = await created.json() as { ok: boolean; organizationId: string; locationId: string };
     assert.equal(result.ok, true);
@@ -176,7 +177,7 @@ async function main() {
     for (const timezone of ["Europe/Moscow", "Asia/Bangkok"]) {
       const extraOrganizationName = `Gate 3A timezone ${timezone} ${suffix}`;
       extraTimezoneOrganizations.push(extraOrganizationName);
-      const timezoneResponse = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ ...input, organizationName: extraOrganizationName, locationName: `Timezone test ${timezone}`, slug: `${input.slug}-${timezone.toLowerCase().replaceAll("_", "-").replaceAll("/", "-")}`, timezone }) });
+      const timezoneResponse = await fetch(`${origin}/api/v2/admin/customers`, { method: "POST", headers: { authorization, origin: publicOrigin, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ ...input, organizationName: extraOrganizationName, locationName: `Timezone test ${timezone}`, slug: `${input.slug}-${timezone.toLowerCase().replaceAll("_", "-").replaceAll("/", "-")}`, timezone }) });
       assert.equal(timezoneResponse.status, 201);
       const timezoneResult = await timezoneResponse.json() as { locationId: string };
       const [timezoneLocation] = await v2Db.select({ timezone: locations.timezone }).from(locations).where(eq(locations.id, timezoneResult.locationId));
@@ -223,7 +224,7 @@ async function main() {
 
     const otherBefore = (await resolveEffectiveChannelAccess(otherLocation.id, new Date())).find(({ id }) => id === nonBaseChannel.id);
     async function visibilityMutation(operation: "hide-channel" | "show-channel") {
-      return fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin, accept: "application/json" }, body: new URLSearchParams({ operation, locationId: createdLocation.id, channelId: nonBaseChannel!.id }) });
+      return fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin: publicOrigin, accept: "application/json" }, body: new URLSearchParams({ operation, locationId: createdLocation.id, channelId: nonBaseChannel!.id }) });
     }
     assert.equal((await visibilityMutation("hide-channel")).status, 200);
     assert((await v2Db.select({ channelId: locationChannelVisibility.channelId }).from(locationChannelVisibility).where(and(eq(locationChannelVisibility.locationId, createdLocation.id), eq(locationChannelVisibility.channelId, nonBaseChannel.id)))).length === 1);
@@ -231,12 +232,12 @@ async function main() {
     assert.equal((await visibilityMutation("show-channel")).status, 200);
     assert.equal((await v2Db.select({ channelId: locationChannelVisibility.channelId }).from(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, createdLocation.id))).length, 0);
 
-    const enableAdmin = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin, accept: "application/json" }, body: new URLSearchParams({ operation: "enable-admin", locationId: createdLocation.id, channelId: nonBaseChannel.id }) });
+    const enableAdmin = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin: publicOrigin, accept: "application/json" }, body: new URLSearchParams({ operation: "enable-admin", locationId: createdLocation.id, channelId: nonBaseChannel.id }) });
     assert.equal(enableAdmin.status, 200);
     const adminAccess = (await resolveEffectiveChannelAccess(createdLocation.id, new Date())).find(({ id }) => id === nonBaseChannel.id);
     assert(adminAccess?.playable && adminAccess.accessSources.includes("admin"));
     assert.deepEqual((await resolveEffectiveChannelAccess(otherLocation.id, new Date())).find(({ id }) => id === nonBaseChannel.id), otherBefore);
-    const disableAdmin = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin, accept: "application/json" }, body: new URLSearchParams({ operation: "disable-admin", locationId: createdLocation.id, channelId: nonBaseChannel.id }) });
+    const disableAdmin = await fetch(`${origin}/api/v2/admin/access`, { method: "POST", headers: { authorization, origin: publicOrigin, accept: "application/json" }, body: new URLSearchParams({ operation: "disable-admin", locationId: createdLocation.id, channelId: nonBaseChannel.id }) });
     assert.equal(disableAdmin.status, 200);
     const disabledAccess = (await resolveEffectiveChannelAccess(createdLocation.id, new Date())).find(({ id }) => id === nonBaseChannel.id);
     assert(disabledAccess && !disabledAccess.playable);

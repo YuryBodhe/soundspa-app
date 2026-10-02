@@ -53,6 +53,7 @@ async function main() {
       env:{...process.env, DATABASE_URL:"postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL:database.toString(), V2_PUBLIC_ORIGIN:"https://test.soundspa.bodhemusic.com",...(uploadRoot?{V2_MEDIA_ROOT:uploadRoot}:{})}, stdio:"ignore",
     });
     const origin = `http://127.0.0.1:${appPort}`;
+    const publicOrigin = "https://test.soundspa.bodhemusic.com";
     for (let attempt = 0; attempt < 60; attempt++) {
       try { if ((await fetch(`${origin}/app/admin/channels/v2`)).status === 401) break; } catch {}
       assert.equal(app.exitCode, null, "Local test app exited"); await delay(250);
@@ -128,14 +129,14 @@ async function main() {
     assert(!isSameOriginMutation(new Request(`${origin}/api/v2/admin/content`, {method:"POST"})));
     // Unknown operation is rejected within a transaction; never changes seeded data.
     phase = "authorized validation feedback";
-    const rejected = await fetch(`${origin}/api/v2/admin/content`, {method:"POST", redirect:"manual", headers:{Authorization:authorization, Origin:origin, "Content-Type":"application/x-www-form-urlencoded"}, body:"operation=unknown"});
+    const rejected = await fetch(`${origin}/api/v2/admin/content`, {method:"POST", redirect:"manual", headers:{Authorization:authorization, Origin:publicOrigin, "Content-Type":"application/x-www-form-urlencoded"}, body:"operation=unknown"});
     assert.equal(rejected.status, 303); assert(rejected.headers.get("location")?.includes("Unknown+operation"));
     phase = "public DB catalog";
     const publicPage = await fetch(`${origin}/v2`); assert.equal(publicPage.status, 200);
     const publicHtml = await publicPage.text(); assert(publicHtml.includes('data-catalog-source="v2-db"'));
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(publicHtml.includes(title));
     phase = "existing staging regressions";
-    const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin, V2_PUBLIC_ORIGIN: "https://test.soundspa.bodhemusic.com" };
+    const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin, V2_PUBLIC_ORIGIN: publicOrigin };
     for (const script of ["test-customer-provisioning", "test-device-activation", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
       execFileSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", `scripts/v2/${script}.ts`, "--staging"], { env: testEnv, stdio: "inherit" });
     }

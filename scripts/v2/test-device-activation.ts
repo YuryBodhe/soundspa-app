@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
+import { isSameOriginMutation } from "../../lib/v2/adminOperator";
 import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
@@ -61,24 +62,35 @@ async function main() {
   const username = process.env.V2_ADMIN_USERNAME; const password = process.env.V2_ADMIN_PASSWORD;
   assert(username && password, "Operator authorization must be configured in memory for the test app.");
   const origin = process.env.V2_VERIFY_ORIGIN ?? "http://127.0.0.1:3000";
+  const publicOrigin = new URL(process.env.V2_PUBLIC_ORIGIN || origin).origin;
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  const proxiedRequest = (headers: Record<string, string> = {}) => new Request(`${origin}/activate-device/test`, {
+    method: "POST",
+    headers: { Host: new URL(publicOrigin).host, "X-Forwarded-Proto": new URL(publicOrigin).protocol.slice(0, -1), ...headers },
+  });
+  assert(isSameOriginMutation(proxiedRequest({ Origin: publicOrigin })), "public Origin must pass the reverse-proxy request shape");
+  assert(isSameOriginMutation(proxiedRequest({ Referer: `${publicOrigin}/activate-device/confirmation` })), "same-origin Referer fallback must pass");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "https://untrusted.invalid", Referer: `${publicOrigin}/` })), "cross-origin Origin must not be overridden by Referer");
+  assert(!isSameOriginMutation(proxiedRequest({ Referer: "https://untrusted.invalid/" })), "cross-origin Referer must be rejected");
+  assert(isSameOriginMutation(proxiedRequest({ "Sec-Fetch-Site": "same-origin" })), "same-origin Fetch Metadata is the narrow no-Origin/no-Referer fallback");
+  assert(!isSameOriginMutation(proxiedRequest()), "requests with no origin metadata must fail closed");
   const before = await baseline();
   const syntheticIds: string[] = [];
   const marker = `Gate 3B ${randomUUID()}`;
   const syntheticNames: string[] = [];
   try {
-    const unauthorized = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name: "Gate 3B test" }) });
+    const unauthorized = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name: "Gate 3B test" }) });
     assert.equal(unauthorized.status, 401);
     const crossOrigin = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Authorization: authorization, Origin: "https://untrusted.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name: "Gate 3B test" }) });
     assert.equal(crossOrigin.status, 403);
-    const invalidInput = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Authorization: authorization, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name: "  " }) });
+    const invalidInput = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Authorization: authorization, Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name: "  " }) });
     assert.equal(invalidInput.status, 400);
     assert.deepEqual(await baseline(), before, "Rejected mutations must not change staging state.");
 
     const create = async (name: string) => {
       assert.equal((await v2Db.select({ id: devices.id }).from(devices).where(and(eq(devices.locationId, LOCATION_ID), eq(devices.label, name)))).length, 0, "Synthetic Device label must be unique before creation.");
       syntheticNames.push(name);
-      const response = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Authorization: authorization, Origin: origin, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name }) });
+      const response = await fetch(`${origin}/api/v2/admin/devices`, { method: "POST", headers: { Authorization: authorization, Origin: publicOrigin, "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ locationId: LOCATION_ID, name }) });
       assert.equal(response.status, 201);
       const result = await response.json() as { ok: boolean; device: { id: string; label: string | null; status: string }; activationUrl: string; expiresAt: string };
       assert(!JSON.stringify(result).includes("credentialHash")); assert(!JSON.stringify(result).includes("credential_hash"));
@@ -124,9 +136,11 @@ async function main() {
     }
     const crossOriginPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: "https://untrusted.invalid" }, redirect: "manual" });
     assert.equal(crossOriginPost.status, 403, "activation POST must reject cross-origin requests");
+    const crossOriginRefererPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Referer: "https://untrusted.invalid/activate" }, redirect: "manual" });
+    assert.equal(crossOriginRefererPost.status, 403, "activation POST must reject cross-origin Referer fallback");
     const concurrent = await Promise.all([
-      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" }),
-      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" }),
+      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
+      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
     ]);
     assert.equal(concurrent.filter((response) => response.status === 303).length, 1, "exactly one parallel activation may consume a token");
     assert.equal(concurrent.filter((response) => response.status === 410).length, 1, "the racing reuse must be rejected");
@@ -141,7 +155,7 @@ async function main() {
     const [{ usedCount }] = await v2Db.select({ usedCount: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(and(eq(deviceActivationTokens.deviceId, first.id), sql`${deviceActivationTokens.usedAt} IS NOT NULL`));
     assert.equal(usedCount, 1);
     assert.equal((await fetch(`${origin}${activationPath}`, { redirect: "manual" })).status, 410, "activation GET after success must show unavailable state");
-    assert.equal((await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
+    assert.equal((await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
 
     const customerCatalog = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${credential}` } });
     assert.equal(customerCatalog.status, 200, "issued cookie must authenticate the Location-bound customer catalog");
@@ -170,7 +184,7 @@ async function main() {
 
     assert.equal((await v2Db.select({ id: deviceCurrentState.deviceId }).from(deviceCurrentState).where(inArray(deviceCurrentState.deviceId, syntheticIds))).length, 0, "activation must not create fake monitoring state");
     assert.equal((await v2Db.select({ id: deviceEvents.id }).from(deviceEvents).where(inArray(deviceEvents.deviceId, syntheticIds))).length, 0, "activation must not create monitoring events");
-    console.info("V2 Device Activation PASS: Basic Auth/same-origin, pending Device with hash-only expiring token, atomic single-use under concurrent requests, secure HttpOnly cookie, Location catalog auth, expiry/invalid/reuse rejection, Admin listing, and no automatic monitoring rows.");
+    console.info("V2 Device Activation PASS: proxied public-origin validation, same-origin Referer/Fetch Metadata fallback, cross-origin rejection, pending Device with hash-only expiring token, atomic single-use under concurrent requests, secure HttpOnly cookie, Location catalog auth, expiry/invalid/reuse rejection, Admin listing, and no automatic monitoring rows.");
   } finally {
     const foundSynthetic = syntheticNames.length ? await v2Db.select({ id: devices.id }).from(devices).where(and(eq(devices.locationId, LOCATION_ID), inArray(devices.label, syntheticNames))) : [];
     const cleanupIds = [...new Set([...syntheticIds, ...foundSynthetic.map(({ id }) => id)])];
