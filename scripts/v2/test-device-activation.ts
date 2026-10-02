@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
-import { isSameOriginMutation, sameOriginDiagnosticFields } from "../../lib/v2/adminOperator";
+import { isSameOriginMutation } from "../../lib/v2/adminOperator";
 import {
   baseChannels, channelTracks, channels, deviceActivationTokens, deviceCurrentState, deviceEvents, devices,
   locationChannelEntitlements, locationChannelGrants, locationChannelVisibility, locationServiceAccess,
@@ -12,7 +12,6 @@ import {
 const LOCATION_ID = "15452bf7-c196-41fc-a1a4-9a0ed9e1a044";
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 const getCookieValue = (header: string, name: string) => header.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
-let phase = "same-origin diagnostics";
 
 async function baseline() {
   const [target, counts, deviceStates, base, grants, visibility, fixture] = await Promise.all([
@@ -75,36 +74,13 @@ async function main() {
   assert(!isSameOriginMutation(proxiedRequest({ Referer: "https://untrusted.invalid/" })), "cross-origin Referer must be rejected");
   assert(isSameOriginMutation(proxiedRequest({ "Sec-Fetch-Site": "same-origin" })), "same-origin Fetch Metadata is the narrow no-Origin/no-Referer fallback");
   assert(!isSameOriginMutation(proxiedRequest()), "requests with no origin metadata must fail closed");
-  const diagnosticSecret = "diagnostic-activation-token-never-log-this";
-  const diagnosticCookie = "diagnostic-cookie-never-log-this";
-  const diagnosticAuthorization = "diagnostic-auth-never-log-this";
-  const diagnosticRequest = new Request(`${origin}/activate-device/${diagnosticSecret}?q=${diagnosticSecret}`, {
-    method: "POST",
-    headers: {
-      Host: new URL(publicOrigin).host,
-      Origin: "https://untrusted.invalid",
-      Referer: `${publicOrigin}/activate-device/${diagnosticSecret}?q=${diagnosticSecret}`,
-      Cookie: diagnosticCookie,
-      Authorization: diagnosticAuthorization,
-      "Sec-Fetch-Site": "cross-site",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Dest": "document",
-    },
-  });
-  let diagnosticBranch: Parameters<typeof sameOriginDiagnosticFields>[1] | undefined;
-  assert(!isSameOriginMutation(diagnosticRequest, (branch) => { diagnosticBranch = branch; }));
-  assert.equal(diagnosticBranch, "origin-mismatch");
-  const diagnosticFields = sameOriginDiagnosticFields(diagnosticRequest, diagnosticBranch!, diagnosticSecret);
-  assert.deepEqual(Object.keys(diagnosticFields).sort(), [
-    "configuredPublicOrigin", "effectivePublicOrigin", "host", "originPresent", "originValue", "refererOrigin", "refererPresent",
-    "secFetchDest", "secFetchMode", "secFetchSite", "validatorBranch", "xForwardedHost", "xForwardedProto",
-  ].sort());
-  const safeDiagnostic = JSON.stringify(diagnosticFields);
-  for (const forbidden of [diagnosticSecret, diagnosticCookie, diagnosticAuthorization, `${publicOrigin}/activate-device/`, "request.url", "nextUrl.pathname"]) {
-    assert(!safeDiagnostic.includes(forbidden), `origin rejection diagnostics must not include ${forbidden === diagnosticSecret ? "activation token" : "request-sensitive data"}`);
-  }
-  assert(!safeDiagnostic.includes("Cookie") && !safeDiagnostic.includes("Authorization") && !safeDiagnostic.includes("Referer"), "diagnostics must not include raw sensitive header values");
-  phase = "baseline snapshot";
+  assert(isSameOriginMutation(proxiedRequest({ Origin: "null", "Sec-Fetch-Site": "same-origin" })), "literal Origin:null must pass the existing same-origin Fetch Metadata fallback");
+  assert(isSameOriginMutation(proxiedRequest({ Origin: "null", Referer: `${publicOrigin}/activate-device/confirmation` })), "literal Origin:null must use a valid Referer fallback when present");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "null", Referer: "https://untrusted.invalid/", "Sec-Fetch-Site": "same-origin" })), "foreign Referer must still reject literal Origin:null");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "null", "Sec-Fetch-Site": "cross-site" })), "literal Origin:null with cross-site metadata must reject");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "null" })), "literal Origin:null without Referer or Fetch Metadata must reject");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "definitely-invalid-origin", "Sec-Fetch-Site": "same-origin" })), "non-null malformed Origin must not fall back to Fetch Metadata");
+  assert(!isSameOriginMutation(proxiedRequest({ Origin: "https://untrusted.invalid", "Sec-Fetch-Site": "same-origin" })), "foreign valid Origin must reject regardless of same-origin Fetch Metadata");
   const before = await baseline();
   const syntheticIds: string[] = [];
   const marker = `Gate 3B ${randomUUID()}`;
@@ -146,12 +122,10 @@ async function main() {
     };
 
     const firstDeviceName = `${marker} activation concurrency fixture`;
-    phase = "synthetic Device creation";
     const first = await create(firstDeviceName);
     const activationPath = new URL(first.activationUrl).pathname;
     assert.equal((await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${first.token}` } })).status, 401, "one-time token must not be accepted as a permanent device credential");
     for (let attempt = 0; attempt < 2; attempt++) {
-      phase = "confirmation GET";
       const confirmation = await fetch(`${origin}${activationPath}`, { redirect: "manual" });
       assert.equal(confirmation.status, 200, "valid activation GET must only show confirmation");
       assert.equal(confirmation.headers.get("location"), null, "activation GET must not redirect");
@@ -171,10 +145,21 @@ async function main() {
     assert.equal(crossOriginPost.status, 403, "activation POST must reject cross-origin requests");
     const crossOriginRefererPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Referer: "https://untrusted.invalid/activate" }, redirect: "manual" });
     assert.equal(crossOriginRefererPost.status, 403, "activation POST must reject cross-origin Referer fallback");
-    phase = "activation POST";
+    const nullOriginActivation = await fetch(`${origin}${activationPath}`, {
+      method: "POST",
+      headers: { Origin: "null", "Sec-Fetch-Site": "same-origin" },
+      redirect: "manual",
+    });
+    assert.equal(nullOriginActivation.status, 303, "Origin:null plus same-origin Fetch Metadata must reach synthetic token validation and activate once");
+    assert.equal(new URL(nullOriginActivation.headers.get("location")!).pathname, "/player");
+    const nullOriginCookie = nullOriginActivation.headers.get("set-cookie") ?? "";
+    assert.match(nullOriginCookie, /soundspa_v2_device=[A-Za-z0-9_-]{43}/);
+    assert.match(nullOriginCookie, /HttpOnly/i); assert.match(nullOriginCookie, /Secure/i); assert.match(nullOriginCookie, /SameSite=Lax/i);
+    const concurrentDevice = await create(`${marker} concurrent activation fixture`);
+    const concurrentPath = new URL(concurrentDevice.activationUrl).pathname;
     const concurrent = await Promise.all([
-      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
-      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
+      fetch(`${origin}${concurrentPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
+      fetch(`${origin}${concurrentPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" }),
     ]);
     assert.equal(concurrent.filter((response) => response.status === 303).length, 1, "exactly one parallel activation may consume a token");
     assert.equal(concurrent.filter((response) => response.status === 410).length, 1, "the racing reuse must be rejected");
@@ -184,25 +169,25 @@ async function main() {
     assert.match(setCookie, /soundspa_v2_device=[A-Za-z0-9_-]{43}/);
     assert.match(setCookie, /HttpOnly/i); assert.match(setCookie, /Secure/i); assert.match(setCookie, /SameSite=Lax/i); assert.match(setCookie, /Path=\//i); assert.match(setCookie, /Max-Age=31536000/i);
     const credential = getCookieValue(setCookie, "soundspa_v2_device"); assert(credential);
-    const [activated] = await v2Db.select({ credentialHash: devices.credentialHash, locationId: devices.locationId }).from(devices).where(eq(devices.id, first.id));
+    const [activated] = await v2Db.select({ credentialHash: devices.credentialHash, locationId: devices.locationId }).from(devices).where(eq(devices.id, concurrentDevice.id));
     assert.equal(activated.locationId, LOCATION_ID); assert.equal(activated.credentialHash, sha256(credential));
-    const [{ usedCount }] = await v2Db.select({ usedCount: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(and(eq(deviceActivationTokens.deviceId, first.id), sql`${deviceActivationTokens.usedAt} IS NOT NULL`));
+    const [{ usedCount }] = await v2Db.select({ usedCount: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(and(eq(deviceActivationTokens.deviceId, concurrentDevice.id), sql`${deviceActivationTokens.usedAt} IS NOT NULL`));
     assert.equal(usedCount, 1);
-    assert.equal((await fetch(`${origin}${activationPath}`, { redirect: "manual" })).status, 410, "activation GET after success must show unavailable state");
-    assert.equal((await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
+    assert.equal((await fetch(`${origin}${concurrentPath}`, { redirect: "manual" })).status, 410, "activation GET after success must show unavailable state");
+    assert.equal((await fetch(`${origin}${concurrentPath}`, { method: "POST", headers: { Origin: publicOrigin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
 
-    phase = "customer catalog";
-    const customerCatalog = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${credential}` } });
+    const activatedCredential = getCookieValue(nullOriginCookie, "soundspa_v2_device"); assert(activatedCredential);
+    const customerCatalog = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${activatedCredential}` } });
     assert.equal(customerCatalog.status, 200, "issued cookie must authenticate the Location-bound customer catalog");
     const catalogBody = await customerCatalog.json() as { organizationName: string; locationName: string; channels: unknown[] };
     assert.equal(catalogBody.organizationName, before.fixture.organizationName, "activated Player must receive Organization branding");
     assert.equal(catalogBody.locationName, before.fixture.name, "activated Player must receive Location branding");
     assert(Array.isArray(catalogBody.channels));
-    const playerPage = await fetch(`${origin}/player`, { headers: { Cookie: `soundspa_v2_device=${credential}` } });
+    const playerPage = await fetch(`${origin}/player`, { headers: { Cookie: `soundspa_v2_device=${activatedCredential}` } });
     assert.equal(playerPage.status, 200, "the activated cookie should reach the normal /player route");
     const listedAdmin = await fetch(`${origin}/admin/ui?location=${LOCATION_ID}`, { headers: { Authorization: authorization } });
     assert.equal(listedAdmin.status, 200);
-    const adminHtml = await listedAdmin.text(); assert(adminHtml.includes(`${marker} activation concurrency fixture`)); assert(adminHtml.includes("ACTIVATED"));
+    const adminHtml = await listedAdmin.text(); assert(adminHtml.includes(firstDeviceName)); assert(adminHtml.includes("ACTIVATED"));
     assert(!adminHtml.includes(first.token), "Admin refresh must not recover a consumed plaintext activation token");
     assert(!adminHtml.includes("credentialHash"), "Admin listing must not expose permanent credential hashes");
 
@@ -236,6 +221,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`V2 Device Activation verification failed during ${phase}: ${error instanceof Error && error.name === "AssertionError" ? error.message.slice(0, 260) : "details suppressed"}`);
+  console.error(`V2 Device Activation verification failed: ${error instanceof Error && error.name === "AssertionError" ? error.message.slice(0, 260) : "details suppressed"}`);
   process.exitCode = 1;
 });

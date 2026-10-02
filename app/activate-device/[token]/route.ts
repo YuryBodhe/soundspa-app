@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isSameOriginMutation, sameOriginDiagnosticFields } from "../../../lib/v2/adminOperator";
+import { isSameOriginMutation } from "../../../lib/v2/adminOperator";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +43,7 @@ export async function GET(_request: Request, context: { params: Promise<{ token:
 
 export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   const { token } = await context.params;
-  if (!isSameOriginMutation(request, (validatorBranch) => {
-    console.warn("DEVICE_ACTIVATION_ORIGIN_REJECT", sameOriginDiagnosticFields(request, validatorBranch, token));
-  })) {
+  if (!isSameOriginMutation(request)) {
     return new Response("Same-origin confirmation required.", { status: 403, headers: { ...PAGE_HEADERS, "Content-Type": "text/plain; charset=utf-8" } });
   }
 
