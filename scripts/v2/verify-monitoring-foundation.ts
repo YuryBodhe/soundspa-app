@@ -4,8 +4,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import {
-  channels, deviceCurrentState, deviceEvents, devices, hourlyChannelPlayback,
-  hourlyDevicePlayback, hourlyErrorAggregates, locations, monitoringLifecycleEvents, organizations,
+  channels, deviceCurrentState, deviceEvents, devices, locations, monitoringLifecycleEvents, organizations,
 } from "../../db/v2/schema";
 
 class VerificationRollback extends Error {}
@@ -45,26 +44,19 @@ async function main() {
         }).from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, device.id));
         assert.deepEqual(bothLanes, { music: "playing", ambient: "playing", musicChannel: channel.id, ambientChannel: channel.id });
 
-        const bucket = new Date();
-        bucket.setUTCMinutes(0, 0, 0);
-        await tx.insert(hourlyChannelPlayback).values([
-          { bucketStart: bucket, deviceId: device.id, channelId: channel.id, lane: "music", playedSeconds: 1 },
-          { bucketStart: bucket, deviceId: device.id, channelId: channel.id, lane: "ambient", playedSeconds: 1 },
-        ]);
-        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_channel_playback(bucket_start,device_id,channel_id,lane,played_seconds) VALUES (${bucket},${device.id},${channel.id},'music',1)`);
-        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_channel_playback(bucket_start,device_id,channel_id,lane,played_seconds) VALUES (${bucket},${device.id},${channel.id},'ambient',-1)`);
+        const utcHour = sql`date_trunc('hour', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`;
+        await tx.execute(sql`INSERT INTO hourly_channel_playback(bucket_start,device_id,channel_id,lane,played_seconds) VALUES (${utcHour},${device.id},${channel.id},'music',1),(${utcHour},${device.id},${channel.id},'ambient',1)`);
+        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_channel_playback(bucket_start,device_id,channel_id,lane,played_seconds) VALUES (${utcHour},${device.id},${channel.id},'music',1)`);
+        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_channel_playback(bucket_start,device_id,channel_id,lane,played_seconds) VALUES (${utcHour},${device.id},${channel.id},'ambient',-1)`);
 
-        await tx.insert(hourlyDevicePlayback).values({ bucketStart: bucket, deviceId: device.id, activePlaybackSeconds: 1 });
-        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_device_playback(bucket_start,device_id,active_playback_seconds) VALUES (${bucket},${device.id},1)`);
-        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_device_playback(bucket_start,device_id,active_playback_seconds) VALUES (${bucket} + interval '1 hour',${device.id},3601)`);
+        await tx.execute(sql`INSERT INTO hourly_device_playback(bucket_start,device_id,active_playback_seconds) VALUES (${utcHour},${device.id},1)`);
+        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_device_playback(bucket_start,device_id,active_playback_seconds) VALUES (${utcHour},${device.id},1)`);
+        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_device_playback(bucket_start,device_id,active_playback_seconds) VALUES (${utcHour} + interval '1 hour',${device.id},3601)`);
 
-        await tx.insert(hourlyErrorAggregates).values([
-          { bucketStart: bucket, category: "PLAYBACK", errorCode: "MEDIA_UNAVAILABLE", deviceId: device.id },
-          { bucketStart: bucket, category: "PLAYBACK", errorCode: "MEDIA_UNAVAILABLE", deviceId: null },
-        ]);
-        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${bucket},'PLAYBACK','MEDIA_UNAVAILABLE',NULL)`);
-        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${bucket},'PLAYBACK','MEDIA_UNAVAILABLE',${device.id})`);
-        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${bucket},'PLAYBACK','unsafe message',${device.id})`);
+        await tx.execute(sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${utcHour},'PLAYBACK','MEDIA_UNAVAILABLE',${device.id}),(${utcHour},'PLAYBACK','MEDIA_UNAVAILABLE',NULL)`);
+        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${utcHour},'PLAYBACK','MEDIA_UNAVAILABLE',NULL)`);
+        await expectConstraint(tx, "23505", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${utcHour},'PLAYBACK','MEDIA_UNAVAILABLE',${device.id})`);
+        await expectConstraint(tx, "23514", sql`INSERT INTO hourly_error_aggregates(bucket_start,category,error_code,device_id) VALUES (${utcHour},'PLAYBACK','unsafe message',${device.id})`);
 
         const [event] = await tx.insert(monitoringLifecycleEvents).values({
           eventType: "device_created", organizationId: organization.id, organizationName: `monitoring-${suffix}`,
