@@ -9,6 +9,7 @@ import { useWaveCanvas } from "./useWaveCanvas";
 import type { PlayerChannel } from "./catalog";
 import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
+import { observeLaneProgress, PlayerMonitoringSidecar, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   const [enabled, setEnabled] = useState(false);
@@ -70,7 +71,7 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
   </header>;
 }
 
-export default function V2Player({ catalog, organizationName, locationName }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string }) {
+export default function V2Player({ catalog, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
   const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
@@ -81,6 +82,9 @@ export default function V2Player({ catalog, organizationName, locationName }: { 
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
   const playbackModeRef = useRef<PlaybackMode>("normal");
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
+  const activeAmbientChannelRef = useRef<string | null>(null);
+  const musicProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
+  const ambientProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
@@ -88,6 +92,53 @@ export default function V2Player({ catalog, organizationName, locationName }: { 
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
+
+  const monitoringContextRef = useRef({ playback, ambientPlayback, activeChannelId, activeAmbientChannelId: null as string | null, musicChannelId: null as string | null, musicTrackId: null as string | null });
+  monitoringContextRef.current = {
+    playback,
+    ambientPlayback,
+    activeChannelId,
+    activeAmbientChannelId: activeAmbientChannelRef.current,
+    musicChannelId: activeChannel?.id ?? null,
+    musicTrackId: activeChannel?.tracks[playback.currentTrackIndex]?.id ?? null,
+  };
+
+  const readMonitoringSnapshot = useCallback((): MonitoringSnapshot => {
+    const context = monitoringContextRef.current;
+    const musicChannelId = engineChannelIdRef.current === context.activeChannelId ? context.musicChannelId : null;
+    const musicPosition = engineRef.current?.getMonitoringPosition() ?? { currentTime: context.playback.currentTime, paused: true, seeking: false };
+    const musicStatus = engineChannelIdRef.current === context.activeChannelId ? context.playback.status : "loading";
+    const music = observeLaneProgress({
+      status: musicStatus,
+      channelId: musicChannelId,
+      key: musicChannelId ? `${musicChannelId}/${context.musicTrackId ?? "unknown"}` : null,
+      ...musicPosition,
+    }, musicProgressRef.current, performance.now());
+
+    const ambientPosition = ambientEngineRef.current?.getMonitoringPosition() ?? { currentTime: context.ambientPlayback.currentTime, paused: true, seeking: false };
+    const ambient = observeLaneProgress({
+      status: context.ambientPlayback.status,
+      channelId: context.activeAmbientChannelId,
+      key: context.activeAmbientChannelId ? `${context.activeAmbientChannelId}/${context.ambientPlayback.activeTrackId ?? "unknown"}` : null,
+      ...ambientPosition,
+    }, ambientProgressRef.current, performance.now());
+    return { music, ambient };
+  }, []);
+
+  useEffect(() => {
+    if (!monitoringEnabled) return;
+    const sidecar = new PlayerMonitoringSidecar(readMonitoringSnapshot);
+    let mounted = true;
+    let sampler: number | null = null;
+    void sidecar.start().then((started) => {
+      if (mounted && started) sampler = window.setInterval(() => sidecar.update(readMonitoringSnapshot()), 1_000);
+    });
+    return () => {
+      mounted = false;
+      if (sampler !== null) window.clearInterval(sampler);
+      sidecar.dispose();
+    };
+  }, [monitoringEnabled, readMonitoringSnapshot]);
 
   const replaceMusicEngine = useCallback((channelId: string, playlist: ConstructorParameters<typeof Mp3Engine>[0]) => {
     engineUnsubscribeRef.current?.();
@@ -193,7 +244,9 @@ export default function V2Player({ catalog, organizationName, locationName }: { 
             : currentTrackName ? `Ready: ${currentTrackName}` : "Ready to play";
 
   const toggleAmbient = (channel: PlayerChannel) => {
-    if (channel.playable !== false && channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
+    if (channel.playable === false || !channel.tracks.length) return;
+    activeAmbientChannelRef.current = activeAmbientChannelRef.current === channel.id ? null : channel.id;
+    void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
   if (!activeChannel) return <div className={s.shell}><PlayerHeader organizationName={organizationName} locationName={locationName} /><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;

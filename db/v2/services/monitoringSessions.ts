@@ -4,7 +4,77 @@ import { v2Db } from "../client";
 import { deviceCurrentState } from "../schema";
 
 export type MonitoringLane = "music" | "ambient";
+export type MonitoringPlaybackState = "idle" | "playing" | "paused" | "buffering" | "error";
 type MonitoringTx = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
+
+export type MonitoringLaneSignal = {
+  sequence: number;
+  state: MonitoringPlaybackState;
+  channelId: string | null;
+};
+
+/** Accept a dual-lane snapshot while serializing against session replacement and other signals. */
+export async function acceptMonitoringSnapshot(input: {
+  deviceId: string;
+  generation: number;
+  sessionId: string;
+  music: MonitoringLaneSignal;
+  ambient: MonitoringLaneSignal;
+}) {
+  return v2Db.transaction(async (tx) => {
+    const [current] = await tx.select({
+      generation: deviceCurrentState.monitoringGeneration,
+      musicSessionId: deviceCurrentState.musicSessionId,
+      musicSequence: deviceCurrentState.musicSequence,
+      musicPlaybackState: deviceCurrentState.musicPlaybackState,
+      ambientSessionId: deviceCurrentState.ambientSessionId,
+      ambientSequence: deviceCurrentState.ambientSequence,
+      ambientPlaybackState: deviceCurrentState.ambientPlaybackState,
+    }).from(deviceCurrentState)
+      .where(eq(deviceCurrentState.deviceId, input.deviceId))
+      .for("update");
+
+    if (!current || current.generation !== input.generation) {
+      return { accepted: { music: false, ambient: false } };
+    }
+    const musicAccepted = current.musicSessionId === input.sessionId
+      && current.musicSequence !== null
+      && Number.isSafeInteger(input.music.sequence)
+      && input.music.sequence > current.musicSequence;
+    const ambientAccepted = current.ambientSessionId === input.sessionId
+      && current.ambientSequence !== null
+      && Number.isSafeInteger(input.ambient.sequence)
+      && input.ambient.sequence > current.ambientSequence;
+
+    if (!musicAccepted && !ambientAccepted) {
+      return { accepted: { music: false, ambient: false } };
+    }
+
+    const resultingMusicState = musicAccepted ? input.music.state : current.musicPlaybackState;
+    const resultingAmbientState = ambientAccepted ? input.ambient.state : current.ambientPlaybackState;
+    await tx.update(deviceCurrentState).set({
+      ...(musicAccepted ? {
+        musicSessionId: input.sessionId,
+        musicSequence: input.music.sequence,
+        musicPlaybackState: input.music.state,
+        musicCurrentChannelId: input.music.channelId,
+      } : {}),
+      ...(ambientAccepted ? {
+        ambientSessionId: input.sessionId,
+        ambientSequence: input.ambient.sequence,
+        ambientPlaybackState: input.ambient.state,
+        ambientCurrentChannelId: input.ambient.channelId,
+      } : {}),
+      lastSeenAt: sql`now()`,
+      updatedAt: sql`now()`,
+      ...(resultingMusicState === "playing" || resultingAmbientState === "playing"
+        ? { lastPlaybackAt: sql`now()` }
+        : {}),
+    }).where(eq(deviceCurrentState.deviceId, input.deviceId));
+
+    return { accepted: { music: musicAccepted, ambient: ambientAccepted } };
+  });
+}
 
 /** Atomically supersede the device's prior Player session and both lane sequence baselines. */
 export async function beginMonitoringSession(deviceId: string) {

@@ -74,6 +74,12 @@ export class PersistentAmbientDecks {
 
   setVolume(volume: number) { if (!this.disposed) this.volumeGain.gain.value = volume; }
 
+  getMonitoringPosition() {
+    return this.disposed
+      ? { currentTime: 0, paused: true, seeking: false }
+      : { currentTime: this.current.audio.currentTime, paused: this.current.audio.paused, seeking: this.current.audio.seeking };
+  }
+
   setBlobUrl(url: string) {
     if (this.disposed || this.blobUrl === url) return;
     this.blobUrl = url;

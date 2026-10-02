@@ -54,6 +54,10 @@ export class AmbientEngine {
 
   constructor(overlapEnabled = ambientOverlapEnabled()) { this.overlapEnabled = overlapEnabled; }
   getSnapshot = () => this.state;
+  /** Read-only media position for the Player monitoring sidecar. */
+  getMonitoringPosition = () => this.audio
+    ? { currentTime: this.audio.currentTime, paused: this.audio.paused, seeking: this.audio.seeking }
+    : this.persistentDecks?.getMonitoringPosition() ?? { currentTime: this.state.currentTime, paused: true, seeking: false };
   subscribe = (listener: Listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   toggle = async (track: AmbientTrack) => {
     if (this.disposed || typeof window === "undefined") return;

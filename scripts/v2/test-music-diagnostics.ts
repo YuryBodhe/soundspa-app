@@ -58,6 +58,7 @@ async function main() {
   const diagnosticCache = new MusicSessionCache(10);
   diagnosticCache.put("a", new Blob(["12345"]));
   diagnosticCache.put("b", new Blob(["67890"]));
+  diagnosticCache.put("c", new Blob(["abcde"]));
   assert(trace().entries.some(entry => entry.event === "cache-put"));
   assert(trace().entries.some(entry => entry.event === "cache-evict"));
   clearMusicDiagnostics();

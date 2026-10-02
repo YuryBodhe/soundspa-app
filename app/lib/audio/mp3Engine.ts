@@ -134,6 +134,12 @@ export class Mp3Engine {
   }
 
   getSnapshot = () => this.state;
+  /** Read-only media position for the Player monitoring sidecar. */
+  getMonitoringPosition = () => ({
+    currentTime: this.audio?.currentTime ?? this.state.currentTime,
+    paused: this.audio?.paused ?? true,
+    seeking: this.audio?.seeking ?? false,
+  });
   subscribe = (listener: Listener) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
