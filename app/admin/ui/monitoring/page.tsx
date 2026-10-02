@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import { operatorAuthStatus } from "../../../../lib/v2/adminOperator";
-import { getMonitoringSnapshot } from "../../../../db/v2/queries/monitoringSnapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +17,7 @@ export default async function MonitoringPage() {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) {
     throw new Error("V2 operator authorization required.");
   }
+  const { getMonitoringSnapshot } = await import("../../../../db/v2/queries/monitoringSnapshot");
   const snapshot = await getMonitoringSnapshot();
 
   return <>
