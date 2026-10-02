@@ -7,6 +7,26 @@ const ACTIVATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const tokenHash = (token: string) => createHash("sha256").update(token, "utf8").digest("hex");
 
+export async function getDeviceActivationPreview(token: string) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const now = new Date();
+  const [preview] = await v2Db.select({
+    organizationName: organizations.name,
+    locationName: locations.name,
+    deviceName: devices.label,
+  }).from(deviceActivationTokens)
+    .innerJoin(devices, eq(devices.id, deviceActivationTokens.deviceId))
+    .innerJoin(locations, eq(locations.id, devices.locationId))
+    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+    .where(and(
+      eq(deviceActivationTokens.tokenHash, tokenHash(token)), isNull(deviceActivationTokens.usedAt), gt(deviceActivationTokens.expiresAt, now),
+      eq(devices.status, "active"), isNull(devices.revokedAt), isNull(devices.credentialHash),
+      isNull(locations.archivedAt), isNull(organizations.archivedAt),
+    ))
+    .limit(1);
+  return preview ?? null;
+}
+
 export class DeviceProvisioningError extends Error {
   constructor(readonly code: "validation" | "location_unavailable" | "activation_invalid") {
     super(code === "validation" ? "Enter a valid Device name and Location." : code === "location_unavailable" ? "This Location is unavailable for Device provisioning." : "This activation link is invalid, expired, already used, or unavailable.");

@@ -37,7 +37,7 @@ async function baseline() {
     v2Db.select({ channelId: baseChannels.channelId }).from(baseChannels),
     v2Db.select({ locationId: locationChannelGrants.locationId, channelId: locationChannelGrants.channelId, source: locationChannelGrants.source, enabled: locationChannelGrants.enabled, startsAt: locationChannelGrants.startsAt, endsAt: locationChannelGrants.endsAt }).from(locationChannelGrants),
     v2Db.select({ locationId: locationChannelVisibility.locationId, channelId: locationChannelVisibility.channelId, hidden: locationChannelVisibility.hidden }).from(locationChannelVisibility),
-    v2Db.select({ name: locations.name, archivedAt: locations.archivedAt, organizationArchivedAt: organizations.archivedAt }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(eq(locations.id, LOCATION_ID)).limit(1),
+    v2Db.select({ name: locations.name, organizationName: organizations.name, archivedAt: locations.archivedAt, organizationArchivedAt: organizations.archivedAt }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(eq(locations.id, LOCATION_ID)).limit(1),
   ]);
   assert.equal(target.rows[0]?.database, "soundspa_v2");
   assert.equal(target.rows[0]?.user, "soundspa_v2");
@@ -49,6 +49,7 @@ async function baseline() {
   return {
     counts: countValues,
     deviceStates,
+    fixture: fixture[0],
     base: base.map(({ channelId }) => channelId).sort(),
     grants: grants.map((row) => ({ ...row })).sort((a, b) => `${a.locationId}:${a.channelId}:${a.source}`.localeCompare(`${b.locationId}:${b.channelId}:${b.source}`)),
     visibility: visibility.map((row) => ({ ...row })).sort((a, b) => `${a.locationId}:${a.channelId}`.localeCompare(`${b.locationId}:${b.channelId}`)),
@@ -101,12 +102,31 @@ async function main() {
       return { id: result.device.id, token: plainToken, activationUrl: result.activationUrl };
     };
 
-    const first = await create(`${marker} activation concurrency fixture`);
+    const firstDeviceName = `${marker} activation concurrency fixture`;
+    const first = await create(firstDeviceName);
     const activationPath = new URL(first.activationUrl).pathname;
     assert.equal((await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${first.token}` } })).status, 401, "one-time token must not be accepted as a permanent device credential");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const confirmation = await fetch(`${origin}${activationPath}`, { redirect: "manual" });
+      assert.equal(confirmation.status, 200, "valid activation GET must only show confirmation");
+      assert.equal(confirmation.headers.get("location"), null, "activation GET must not redirect");
+      assert.equal(confirmation.headers.get("set-cookie"), null, "activation GET must not set the Device cookie");
+      const confirmationHtml = await confirmation.text();
+      assert(confirmationHtml.includes("Activate this device?"));
+      assert(confirmationHtml.includes(before.fixture.organizationName));
+      assert(confirmationHtml.includes(before.fixture.name));
+      assert(confirmationHtml.includes(firstDeviceName));
+      assert(!confirmationHtml.includes(first.token), "confirmation HTML must not echo the activation token");
+      const [stillPending] = await v2Db.select({ credentialHash: devices.credentialHash }).from(devices).where(eq(devices.id, first.id));
+      const [stillUnused] = await v2Db.select({ usedAt: deviceActivationTokens.usedAt }).from(deviceActivationTokens).where(eq(deviceActivationTokens.deviceId, first.id));
+      assert.equal(stillPending.credentialHash, null, "confirmation GET must not issue a permanent credential");
+      assert.equal(stillUnused.usedAt, null, "confirmation GET must not consume the activation token");
+    }
+    const crossOriginPost = await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: "https://untrusted.invalid" }, redirect: "manual" });
+    assert.equal(crossOriginPost.status, 403, "activation POST must reject cross-origin requests");
     const concurrent = await Promise.all([
-      fetch(`${origin}${activationPath}`, { redirect: "manual" }),
-      fetch(`${origin}${activationPath}`, { redirect: "manual" }),
+      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" }),
+      fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" }),
     ]);
     assert.equal(concurrent.filter((response) => response.status === 303).length, 1, "exactly one parallel activation may consume a token");
     assert.equal(concurrent.filter((response) => response.status === 410).length, 1, "the racing reuse must be rejected");
@@ -120,12 +140,17 @@ async function main() {
     assert.equal(activated.locationId, LOCATION_ID); assert.equal(activated.credentialHash, sha256(credential));
     const [{ usedCount }] = await v2Db.select({ usedCount: sql<number>`count(*)::int` }).from(deviceActivationTokens).where(and(eq(deviceActivationTokens.deviceId, first.id), sql`${deviceActivationTokens.usedAt} IS NOT NULL`));
     assert.equal(usedCount, 1);
-    assert.equal((await fetch(`${origin}${activationPath}`, { redirect: "manual" })).status, 410, "activation token is single-use");
+    assert.equal((await fetch(`${origin}${activationPath}`, { redirect: "manual" })).status, 410, "activation GET after success must show unavailable state");
+    assert.equal((await fetch(`${origin}${activationPath}`, { method: "POST", headers: { Origin: origin }, redirect: "manual" })).status, 410, "a second explicit activation POST must be rejected");
 
     const customerCatalog = await fetch(`${origin}/api/v2/catalog`, { headers: { Cookie: `soundspa_v2_device=${credential}` } });
     assert.equal(customerCatalog.status, 200, "issued cookie must authenticate the Location-bound customer catalog");
-    const catalogBody = await customerCatalog.json() as { channels: unknown[] };
+    const catalogBody = await customerCatalog.json() as { organizationName: string; locationName: string; channels: unknown[] };
+    assert.equal(catalogBody.organizationName, before.fixture.organizationName, "activated Player must receive Organization branding");
+    assert.equal(catalogBody.locationName, before.fixture.name, "activated Player must receive Location branding");
     assert(Array.isArray(catalogBody.channels));
+    const playerPage = await fetch(`${origin}/player`, { headers: { Cookie: `soundspa_v2_device=${credential}` } });
+    assert.equal(playerPage.status, 200, "the activated cookie should reach the normal /player route");
     const listedAdmin = await fetch(`${origin}/admin/ui?location=${LOCATION_ID}`, { headers: { Authorization: authorization } });
     assert.equal(listedAdmin.status, 200);
     const adminHtml = await listedAdmin.text(); assert(adminHtml.includes(`${marker} activation concurrency fixture`)); assert(adminHtml.includes("ACTIVATED"));
