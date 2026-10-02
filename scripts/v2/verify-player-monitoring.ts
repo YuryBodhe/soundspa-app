@@ -147,9 +147,11 @@ async function main() {
     assert.deepEqual(result.accepted, { music: false, ambient: false }, "duplicate sequences are ignored");
     [state] = await v2Db.select().from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, activeId));
     assert.equal(state.lastSeenAt.toISOString(), beforeDuplicate, "stale/duplicate signal has zero timestamp effect");
-    result = await send(signal(Number.MAX_SAFE_INTEGER, "playing", musicA, Number.MAX_SAFE_INTEGER, "playing", ambientA, session.sessionId, session.generation - 1));
+    const replacement = await beginMonitoringSession(activeId);
+    assert.equal(replacement.generation, session.generation + 1);
+    result = await send(signal(Number.MAX_SAFE_INTEGER, "playing", musicA, Number.MAX_SAFE_INTEGER, "playing", ambientA, session.sessionId, session.generation));
     assert.deepEqual(result.accepted, { music: false, ambient: false }, "old generation rejected despite arbitrarily high sequence");
-    result = await send(signal(99, "playing", musicA, 99, "playing", ambientA, randomUUID(), session.generation));
+    result = await send(signal(99, "playing", musicA, 99, "playing", ambientA, randomUUID(), replacement.generation));
     assert.deepEqual(result.accepted, { music: false, ambient: false }, "wrong session rejected");
 
     const newer = await beginMonitoringSession(activeId);
