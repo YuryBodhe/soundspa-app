@@ -137,7 +137,7 @@ async function main() {
     for (const title of ["Divnitsa","Relax","432 Hz","Forest","Night","Sea"]) assert(publicHtml.includes(title));
     phase = "existing staging regressions";
     const testEnv = { ...process.env, DATABASE_URL: "postgresql://dummy:dummy@127.0.0.1:1/dummy", V2_DATABASE_URL: database.toString(), V2_VERIFY_ORIGIN: origin, V2_PUBLIC_ORIGIN: publicOrigin };
-    for (const script of ["test-customer-provisioning", "test-device-activation", "test-device-recovery-deletion", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
+    for (const script of ["test-organization-deletion", "test-customer-provisioning", "test-device-activation", "test-device-recovery-deletion", "verify-effective-access", "verify-base", "verify-admin-grants", "verify-location-channel-visibility"]) {
       execFileSync(process.execPath, ["node_modules/tsx/dist/cli.mjs", `scripts/v2/${script}.ts`, "--staging"], { env: testEnv, stdio: "inherit" });
     }
     if(uploadRoot){

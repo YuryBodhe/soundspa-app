@@ -48,8 +48,11 @@ async function baseline() {
   const countValues = counts.map((rows: any) => Array.isArray(rows) ? rows[0]?.count : rows.rows[0]?.count);
   assert.equal(countValues[15], 8, "V2 migration journal must contain the new Gate 3B migration");
   return {
-    counts: countValues,
-    deviceStates,
+    // A real customer Player can update these heartbeat rows while the
+    // synthetic activation test runs. Compare stable identities only, not
+    // volatile last-seen/playback fields or the global event count.
+    counts: countValues.filter((_value, index) => index !== 6 && index !== 7),
+    deviceStates: deviceStates.map(({ deviceId }) => deviceId),
     fixture: fixture[0],
     base: base.map(({ channelId }) => channelId).sort(),
     grants: grants.map((row) => ({ ...row })).sort((a, b) => `${a.locationId}:${a.channelId}:${a.source}`.localeCompare(`${b.locationId}:${b.channelId}:${b.source}`)),

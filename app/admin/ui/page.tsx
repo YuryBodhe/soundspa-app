@@ -4,6 +4,7 @@ import AccessMutationForm from "./accessMutationForm";
 import CustomerProvisioningForm from "./customerProvisioningForm";
 import DeviceProvisioningPanel from "./deviceProvisioningPanel";
 import DeleteLocationPanel from "./deleteLocationPanel";
+import DeleteOrganizationPanel from "./deleteOrganizationPanel";
 import { getTimeZoneOptions } from "../../../lib/v2/timeZones";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +36,17 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
     </section>
     <section className="admin-card">
       <CustomerProvisioningForm timeZones={getTimeZoneOptions()} />
-      <table className="admin-table"><thead><tr><th>Organization</th><th>Location</th><th>Slug</th><th>State</th><th /></tr></thead><tbody>
-        {customers.flatMap(({ organization, locations: customerLocations }) => customerLocations.length
-          ? customerLocations.map((location) => <tr key={`${organization.id}-${location.id}`}>
-            <td>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td>
+      <table className="admin-table"><thead><tr><th>Organization</th><th>Location</th><th>Slug</th><th>State</th><th>Location controls</th><th>Danger zone</th></tr></thead><tbody>
+        {customers.flatMap(({ organization, locations: customerLocations, deviceCount }) => customerLocations.length
+          ? customerLocations.map((location, index) => <tr key={`${organization.id}-${location.id}`}>
+            {index === 0 && <td rowSpan={customerLocations.length}>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td>}
             <td>{location.name}</td><td>{location.slug}</td>
             <td>{location.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : <span className="badge badge-ok">ACTIVE</span>}</td>
             <td>{!organization.archivedAt && !location.archivedAt ? <a className="btn btn-sm" href={`/admin/ui?location=${encodeURIComponent(location.id)}`}>Open Location</a> : null}</td>
+            {index === 0 && <td rowSpan={customerLocations.length}><DeleteOrganizationPanel organizationId={organization.id} organizationName={organization.name} locationCount={customerLocations.length} deviceCount={deviceCount} /></td>}
           </tr>)
-          : [<tr key={organization.id}><td>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td><td colSpan={4} className="text-dim">No Locations yet</td></tr>])}
-        {!customers.length && <tr><td colSpan={5} className="text-dim">No Customers yet.</td></tr>}
+          : [<tr key={organization.id}><td>{organization.name}{organization.archivedAt ? <span className="badge badge-neutral">ARCHIVED</span> : null}</td><td colSpan={3} className="text-dim">No Locations yet</td><td /><td><DeleteOrganizationPanel organizationId={organization.id} organizationName={organization.name} locationCount={0} deviceCount={deviceCount} /></td></tr>])}
+        {!customers.length && <tr><td colSpan={6} className="text-dim">No Customers yet.</td></tr>}
       </tbody></table>
     </section>
     {selected && <section className="admin-card">
