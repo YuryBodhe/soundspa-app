@@ -71,8 +71,8 @@ async function main() {
     assert.equal(catalogRows[0].category, "CATALOG_CONFIG");
 
     const bucketRows = await v2Db.execute(sql`SELECT bucket_start FROM hourly_error_aggregates WHERE device_id = ${deviceIds[0]}::uuid AND category = 'PLAYBACK' AND error_code = 'MUSIC_PLAYBACK_FAILED'`);
-    const currentBucket = bucketRows.rows[0]?.bucket_start;
-    assert(currentBucket instanceof Date);
+    const currentBucket = new Date(String(bucketRows.rows[0]?.bucket_start));
+    assert(Number.isFinite(currentBucket.getTime()), "server UTC bucket must be parseable");
     const nextUtcHour = new Date(currentBucket.getTime() + 60 * 60 * 1_000);
     await v2Db.insert(hourlyErrorAggregates).values({ bucketStart: nextUtcHour, category: "PLAYBACK", errorCode: "MUSIC_PLAYBACK_FAILED", deviceId: deviceIds[0], eventCount: 1 });
     const distinctBuckets = await v2Db.select({ bucketStart: hourlyErrorAggregates.bucketStart }).from(hourlyErrorAggregates).where(and(eq(hourlyErrorAggregates.deviceId, deviceIds[0]), eq(hourlyErrorAggregates.category, "PLAYBACK"), eq(hourlyErrorAggregates.errorCode, "MUSIC_PLAYBACK_FAILED")));
