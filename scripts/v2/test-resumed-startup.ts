@@ -18,7 +18,17 @@ class TestAudio extends EventTarget {
   src = ""; preload = ""; muted = false; paused = true; seeking = false;
   currentTime = 0; duration = 1800; readyState = 3; networkState = 1;
   error = null; ended = false; playCalls = 0; ahead = 2;
-  buffered = { length: 1, start: () => Math.max(0, this.currentTime - 0.1), end: () => this.currentTime + this.ahead };
+  ranges: Array<{ start: number; end: number }> | null = null;
+  buffered: { readonly length: number; start: (index: number) => number; end: (index: number) => number };
+  constructor() {
+    super();
+    const thisAudio = this;
+    this.buffered = {
+      get length() { return thisAudio.ranges?.length ?? 1; },
+      start: (index) => thisAudio.ranges?.[index]?.start ?? Math.max(0, thisAudio.currentTime - 0.1),
+      end: (index) => thisAudio.ranges?.[index]?.end ?? thisAudio.currentTime + thisAudio.ahead,
+    };
+  }
   load() { this.currentTime = 0; this.paused = true; }
   pause() { this.paused = true; }
   removeAttribute() { this.src = ""; }
@@ -32,6 +42,8 @@ type Internal = {
   audio: TestAudio; phase: string; sourceHasProgressed: boolean; sourceVersion: number;
   networkRecoveryTarget: { trackIndex: number; position: number } | null;
   networkRetryTimer: ReturnType<typeof setTimeout> | null;
+  resumeBufferMiss: unknown;
+  fastResumeRecoveryAttempts: number;
   evaluateBufferState: () => void;
   confirmDeadNetworkSource: (target: { trackIndex: number; position: number }) => void;
 };
@@ -90,6 +102,46 @@ async function main() {
     assert.equal(normal.state.sourceHasProgressed, true);
     assert.equal(normal.state.networkRetryTimer, null);
 
+    // Safari can report only the initial [0, ~1.8s] range after seeking to a
+    // restored position. One bounded fast recovery must replace that source
+    // well before the ordinary first 15s network-retry tier, preserving intent.
+    const safariResume = await create(506.378, 0);
+    const firstSafariAudio = safariResume.state.audio;
+    firstSafariAudio.ranges = [{ start: 0, end: 1.776 }];
+    safariResume.state.evaluateBufferState();
+    assert.equal(firstSafariAudio.playCalls, 0);
+    now += 2999; safariResume.state.evaluateBufferState();
+    assert.equal(safariResume.state.audio, firstSafariAudio);
+    now += 1; safariResume.state.evaluateBufferState(); await flush();
+    assert.notEqual(safariResume.state.audio, firstSafariAudio);
+    assert.equal(safariResume.state.audio.currentTime, 506.378);
+    assert.equal(safariResume.state.fastResumeRecoveryAttempts, 1);
+    assert.equal(safariResume.state.audio.playCalls, 0);
+    // A second unusable range cannot cause another fast recreation; ordinary
+    // stalled recovery remains available as the bounded fallback.
+    safariResume.state.audio.ranges = [{ start: 0, end: 1.776 }];
+    now += 4000; safariResume.state.evaluateBufferState(); await flush();
+    assert.equal(safariResume.state.fastResumeRecoveryAttempts, 1);
+    safariResume.state.audio.dispatchEvent(new Event("stalled"));
+    assert(safariResume.state.networkRetryTimer);
+
+    const promptResume = await create(540, 8);
+    const promptAudio = promptResume.state.audio;
+    promptAudio.ranges = [{ start: 540, end: 548 }];
+    promptResume.state.evaluateBufferState();
+    assert.equal(promptAudio.playCalls, 1);
+    now += 3500; promptResume.state.evaluateBufferState();
+    assert.equal(promptResume.state.audio, promptAudio);
+
+    const pausedMiss = await create(600, 0);
+    const pausedMissAudio = pausedMiss.state.audio;
+    pausedMissAudio.ranges = [{ start: 0, end: 1.776 }];
+    pausedMiss.state.evaluateBufferState(); now += 2000;
+    pausedMiss.state.evaluateBufferState(); pausedMiss.engine.pause(); now += 5000;
+    pausedMiss.state.evaluateBufferState();
+    assert.equal(pausedMiss.state.audio, pausedMissAudio);
+    assert.equal(pausedMiss.state.audio.playCalls, 0);
+
     const seeking = await create(600);
     seeking.state.audio.currentTime = 601; seeking.state.audio.seeking = true;
     seeking.state.evaluateBufferState(); assert.equal(seeking.state.sourceHasProgressed, false);
@@ -104,7 +156,7 @@ async function main() {
     await flush();
     assert.equal(next.state.sourceVersion, version); assert.equal(next.state.audio.playCalls, 0);
     assert.equal(next.state.networkRecoveryTarget, null); assert.equal(oldAudio.playCalls, 0);
-    console.info("PASS: zero/resumed plateau; provisional resumed recovery; dead-source protection/recreation; normal >=5s path; real progression excludes pre-start; seeking is not progression; stale retry/events after dispose cannot affect replacement engine.");
+    console.info("PASS: zero/resumed plateau; bounded Safari stale-range recovery before generic retry; prompt resumed buffer avoids reload; second fast reload prevented while generic recovery remains; Pause cancels eligibility; provisional recovery; dead-source protection; normal >=5s path; real progression excludes pre-start; seeking is not progression; stale retry/events after dispose cannot affect replacement engine.");
   } finally { engines.forEach(engine => engine.dispose()); callbacks.clear(); globalThis.setTimeout = nativeTimeout; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
