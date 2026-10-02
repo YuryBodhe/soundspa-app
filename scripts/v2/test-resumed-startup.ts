@@ -17,7 +17,7 @@ globalThis.setTimeout = ((callback: () => void, delay?: number) => {
 class TestAudio extends EventTarget {
   src = ""; preload = ""; muted = false; paused = true; seeking = false;
   currentTime = 0; duration = 1800; readyState = 3; networkState = 1;
-  error = null; ended = false; playCalls = 0; ahead = 2;
+  error: unknown = null; ended = false; playCalls = 0; ahead = 2;
   ranges: Array<{ start: number; end: number }> | null = null;
   buffered: { readonly length: number; start: (index: number) => number; end: (index: number) => number };
   constructor() {
@@ -36,7 +36,7 @@ class TestAudio extends EventTarget {
 }
 const browser = new EventTarget();
 const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
-Object.assign(globalThis, { window: browser, document: doc, Audio: TestAudio, HTMLMediaElement: { HAVE_METADATA: 1, HAVE_FUTURE_DATA: 3, NETWORK_LOADING: 2 } });
+Object.assign(globalThis, { window: browser, document: doc, Audio: TestAudio, HTMLMediaElement: { HAVE_METADATA: 1, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4, NETWORK_LOADING: 2 } });
 setMaxListeners(0, browser, doc);
 type Internal = {
   audio: TestAudio; phase: string; sourceHasProgressed: boolean; sourceVersion: number;
@@ -59,6 +59,12 @@ async function create(position: number, ahead = 2) {
   state.audio.ahead = ahead;
   state.evaluateBufferState();
   return { engine, state };
+}
+async function fastRecover(position = 506.378) {
+  const result = await create(position, 0);
+  result.state.audio.ranges = [{ start: 0, end: 1.776 }];
+  result.state.evaluateBufferState(); now += 3000; result.state.evaluateBufferState(); await flush();
+  return result;
 }
 async function main() {
   try {
@@ -142,6 +148,64 @@ async function main() {
     assert.equal(pausedMiss.state.audio, pausedMissAudio);
     assert.equal(pausedMiss.state.audio.playCalls, 0);
 
+    // Phase 2: only the recreated source from the one bounded Phase 1
+    // recovery may skip the generic empty-TimeRanges grace after a fresh,
+    // post-seek readiness event.
+    const phase2 = await fastRecover();
+    const phase2Audio = phase2.state.audio;
+    assert.equal(phase2Audio.currentTime, 506.378);
+    phase2Audio.readyState = 4; phase2Audio.ranges = [];
+    phase2Audio.dispatchEvent(new Event("canplaythrough")); await flush();
+    assert.equal(phase2Audio.playCalls, 1);
+    assert.equal(phase2.state.phase, "starting-audible");
+    assert.equal(phase2.engine.getSnapshot().status, "loading", "play() resolution alone is not progression");
+    assert.equal(phase2Audio.currentTime, 506.378);
+    phase2Audio.currentTime += 0.5; phase2.state.evaluateBufferState();
+    assert.equal(phase2.engine.getSnapshot().status, "playing");
+    assert.equal(phase2.state.networkRecoveryTarget, null);
+
+    const insufficient = await fastRecover();
+    insufficient.state.audio.ranges = []; insufficient.state.audio.readyState = 3;
+    insufficient.state.audio.dispatchEvent(new Event("canplaythrough")); now += 3500; insufficient.state.evaluateBufferState();
+    assert.equal(insufficient.state.audio.playCalls, 0, "readyState below HAVE_ENOUGH_DATA keeps the generic guard");
+
+    const stillSeeking = await fastRecover();
+    stillSeeking.state.audio.ranges = []; stillSeeking.state.audio.readyState = 4; stillSeeking.state.audio.seeking = true;
+    stillSeeking.state.audio.dispatchEvent(new Event("canplaythrough")); now += 3500; stillSeeking.state.evaluateBufferState();
+    assert.equal(stillSeeking.state.audio.playCalls, 0, "a source still seeking cannot use the accelerated path");
+
+    const errored = await fastRecover();
+    errored.state.audio.ranges = []; errored.state.audio.readyState = 4; errored.state.audio.error = new Error("decode error");
+    errored.state.audio.dispatchEvent(new Event("canplaythrough")); now += 3500; errored.state.evaluateBufferState();
+    assert.equal(errored.state.audio.playCalls, 0, "a media error cannot use the accelerated path");
+
+    const mismatched = await fastRecover();
+    mismatched.state.audio.ranges = []; mismatched.state.audio.readyState = 4;
+    mismatched.state.networkRecoveryTarget!.position += 1;
+    mismatched.state.audio.dispatchEvent(new Event("canplaythrough")); now += 3500; mismatched.state.evaluateBufferState();
+    assert.equal(mismatched.state.audio.playCalls, 0, "a mismatched recovery target cannot use the accelerated path");
+
+    const pausedPhase2 = await fastRecover();
+    const pausedPhase2Audio = pausedPhase2.state.audio;
+    pausedPhase2Audio.ranges = []; pausedPhase2Audio.readyState = 4; pausedPhase2.engine.pause();
+    pausedPhase2Audio.dispatchEvent(new Event("canplaythrough")); now += 3500; pausedPhase2.state.evaluateBufferState();
+    assert.equal(pausedPhase2Audio.playCalls, 0, "Pause wins over accelerated readiness");
+
+    const stalePhase2 = await fastRecover();
+    const stalePhase2Audio = stalePhase2.state.audio;
+    stalePhase2Audio.ranges = []; stalePhase2Audio.readyState = 4;
+    stalePhase2.engine.dispose(); stalePhase2Audio.dispatchEvent(new Event("canplaythrough"));
+    assert.equal(stalePhase2Audio.playCalls, 0, "dispose invalidates accelerated readiness");
+
+    const noProgress = await fastRecover();
+    noProgress.state.audio.ranges = []; noProgress.state.audio.readyState = 4;
+    noProgress.state.audio.dispatchEvent(new Event("canplay")); await flush();
+    assert.equal(noProgress.state.audio.playCalls, 1);
+    assert.equal(noProgress.engine.getSnapshot().status, "loading");
+    now += 3001; noProgress.state.evaluateBufferState();
+    assert.equal(noProgress.state.sourceHasProgressed, false);
+    assert(noProgress.state.networkRetryTimer, "non-progress after provisional play retains ordinary network recovery");
+
     const seeking = await create(600);
     seeking.state.audio.currentTime = 601; seeking.state.audio.seeking = true;
     seeking.state.evaluateBufferState(); assert.equal(seeking.state.sourceHasProgressed, false);
@@ -156,7 +220,7 @@ async function main() {
     await flush();
     assert.equal(next.state.sourceVersion, version); assert.equal(next.state.audio.playCalls, 0);
     assert.equal(next.state.networkRecoveryTarget, null); assert.equal(oldAudio.playCalls, 0);
-    console.info("PASS: zero/resumed plateau; bounded Safari stale-range recovery before generic retry; prompt resumed buffer avoids reload; second fast reload prevented while generic recovery remains; Pause cancels eligibility; provisional recovery; dead-source protection; normal >=5s path; real progression excludes pre-start; seeking is not progression; stale retry/events after dispose cannot affect replacement engine.");
+    console.info("PASS: zero/resumed plateau; bounded Safari stale-range recovery; readiness-gated accelerated provisional start; real progression remains required; insufficient-readyState/seeking/error/target-mismatch/Pause/dispose guards; no-progression retains generic recovery; normal resume and fast-retry bounds; dead-source and stale-generation protections.");
   } finally { engines.forEach(engine => engine.dispose()); callbacks.clear(); globalThis.setTimeout = nativeTimeout; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
