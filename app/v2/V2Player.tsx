@@ -63,14 +63,14 @@ function WaveVisualization({ playing }: { playing: boolean }) {
   return <div className={s.waveZone} aria-hidden="true"><canvas ref={canvasRef} className={`${s.waveCanvas} ${playing ? s.waveCanvasVisible : ""}`} /></div>;
 }
 
-function PlayerHeader({ locationName }: { locationName?: string }) {
+function PlayerHeader({ organizationName, locationName }: { organizationName?: string; locationName?: string }) {
   return <header className={s.header}>
-    <div><div className={s.brand}>{locationName || "Sound Spa 2"}</div>{!locationName && <div className={s.platformTag}>Local prototype</div>}</div>
+    <div><div className={s.brand}>{organizationName || "Sound Spa 2"}</div><div className={s.platformTag}>{organizationName && locationName ? locationName : "Local prototype"}</div></div>
     <div className={s.badge}>Test mode</div>
   </header>;
 }
 
-export default function V2Player({ catalog, locationName }: { catalog: PlayerChannel[]; locationName?: string }) {
+export default function V2Player({ catalog, organizationName, locationName }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string }) {
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
   const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
@@ -196,7 +196,7 @@ export default function V2Player({ catalog, locationName }: { catalog: PlayerCha
     if (channel.playable !== false && channel.tracks.length) void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
-  if (!activeChannel) return <div className={s.shell}><PlayerHeader locationName={locationName} /><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
+  if (!activeChannel) return <div className={s.shell}><PlayerHeader organizationName={organizationName} locationName={locationName} /><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
 
   return (
     <div
@@ -215,7 +215,7 @@ export default function V2Player({ catalog, locationName }: { catalog: PlayerCha
       data-ambient-volume={ambientPlayback.volume}
       data-ambient-current-time={ambientPlayback.currentTime}
     >
-      <PlayerHeader locationName={locationName} />
+      <PlayerHeader organizationName={organizationName} locationName={locationName} />
 
       <main className={s.main}>
         <section className={s.hero}>

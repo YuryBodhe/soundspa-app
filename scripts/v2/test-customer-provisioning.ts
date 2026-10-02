@@ -200,7 +200,9 @@ async function main() {
     const syntheticPreview = await fetch(`${origin}/admin/ui/locations/${createdLocation.id}/player-preview`, { headers: { authorization } });
     assert.equal(syntheticPreview.status, 200);
     const syntheticPreviewHtml = await syntheticPreview.text();
-    assert(syntheticPreviewHtml.includes(`>${createdLocation.name}</div>`), "Operator Preview must brand the shared player with the Location name.");
+    assert(syntheticPreviewHtml.includes(`>${createdOrganization.name}</div>`), "Operator Preview must use the Organization as the shared player's primary brand.");
+    assert(syntheticPreviewHtml.includes(`>${createdLocation.name}</div>`), "Operator Preview must show the Location as the shared player's secondary brand.");
+    assert(!syntheticPreviewHtml.includes("Sound Spa 2"), "Customer-context preview must not show the technical player title.");
     assert(!syntheticPreviewHtml.includes("Local prototype"), "Customer-context preview must not show technical prototype branding.");
 
     assert.equal((await v2Db.select({ id: users.id }).from(users)).length, baseline.counts.users);
