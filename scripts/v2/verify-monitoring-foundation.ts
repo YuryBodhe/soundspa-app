@@ -45,8 +45,8 @@ async function main() {
         }).from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, device.id));
         assert.deepEqual(bothLanes, { music: "playing", ambient: "playing", musicChannel: channel.id, ambientChannel: channel.id });
 
-        const bucketValue = (await tx.execute(sql`SELECT date_trunc('hour', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket`)).rows[0]?.bucket;
-        const bucket = bucketValue instanceof Date ? bucketValue : new Date(String(bucketValue));
+        const bucket = new Date();
+        bucket.setUTCMinutes(0, 0, 0);
         await tx.insert(hourlyChannelPlayback).values([
           { bucketStart: bucket, deviceId: device.id, channelId: channel.id, lane: "music", playedSeconds: 1 },
           { bucketStart: bucket, deviceId: device.id, channelId: channel.id, lane: "ambient", playedSeconds: 1 },
