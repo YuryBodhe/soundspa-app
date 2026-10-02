@@ -17,6 +17,8 @@ import {
   users,
 } from "../../db/v2/schema";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
+import { validateCustomerProvisioningInput } from "../../db/v2/services/customerProvisioning";
+import { getTimeZoneOptions } from "../../lib/v2/timeZones";
 
 async function captureBaseline() {
   const [target, organizationCount, locationCount, userCount, memberCount, deviceCount, serviceAccessCount, entitlementCount, visibilityCount, channelCount, trackCount, migrationCount, base, grants, visibility, soundSpaFixture, yuryFixture] = await Promise.all([
@@ -108,8 +110,6 @@ async function main() {
   assert(otherLocation, "Existing technical Location fixture is required for isolation checks.");
 
   try {
-    const { getTimeZoneOptions } = await import("../../lib/v2/timeZones");
-    const { validateCustomerProvisioningInput } = await import("../../db/v2/services/customerProvisioning");
     const timeZoneOptions = getTimeZoneOptions();
     for (const timezone of ["Asia/Ho_Chi_Minh", "Europe/Moscow", "Asia/Bangkok"]) {
       assert(timeZoneOptions.includes(timezone), `${timezone} must be available in the timezone selector.`);
