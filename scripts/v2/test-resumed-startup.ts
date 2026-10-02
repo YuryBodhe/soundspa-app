@@ -131,6 +131,106 @@ async function main() {
     safariResume.state.audio.dispatchEvent(new Event("stalled"));
     assert(safariResume.state.networkRetryTimer);
 
+    // Phase 3: accelerate only a stable, clearly distant non-empty range after
+    // canplay readiness has been observed for this exact source version.
+    const wrongRangeResume = await create(529.914, 0);
+    const wrongRangeFirstAudio = wrongRangeResume.state.audio;
+    wrongRangeFirstAudio.readyState = 4;
+    wrongRangeFirstAudio.ranges = [{ start: 0, end: 1.776 }];
+    wrongRangeFirstAudio.dispatchEvent(new Event("canplaythrough"));
+    wrongRangeResume.state.evaluateBufferState();
+    now += 499; wrongRangeResume.state.evaluateBufferState(); await flush();
+    assert.equal(wrongRangeResume.state.audio, wrongRangeFirstAudio, "wrong-range evidence must remain stable for the short window");
+    now += 1; wrongRangeResume.state.evaluateBufferState(); await flush();
+    assert.notEqual(wrongRangeResume.state.audio, wrongRangeFirstAudio, "stable strong wrong-range state gets one accelerated recovery");
+    assert.equal(wrongRangeResume.state.audio.currentTime, 529.914, "recovery preserves the authoritative resume position");
+    assert.equal(wrongRangeResume.state.fastResumeRecoveryAttempts, 1);
+    assert.equal(wrongRangeResume.state.audio.playCalls, 0, "Phase 3 recreates only; Phase 2 controls provisional startup");
+
+    const transientWrongRange = await create(530, 0);
+    const transientAudio = transientWrongRange.state.audio;
+    transientAudio.readyState = 4; transientAudio.ranges = [{ start: 0, end: 1.776 }];
+    transientAudio.dispatchEvent(new Event("canplaythrough")); transientWrongRange.state.evaluateBufferState();
+    now += 250; transientAudio.ranges = [{ start: 530, end: 536 }]; transientWrongRange.state.evaluateBufferState();
+    now += 750; transientWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(transientWrongRange.state.audio, transientAudio, "a correct buffer appearing inside the debounce cancels Phase 3");
+    assert.equal(transientWrongRange.state.fastResumeRecoveryAttempts, 0);
+    assert.equal(transientAudio.playCalls, 1, "valid target reserve follows the normal startup path immediately");
+
+    const insufficientWrongRange = await create(531, 0);
+    const insufficientAudio = insufficientWrongRange.state.audio;
+    insufficientAudio.readyState = 3; insufficientAudio.ranges = [{ start: 0, end: 1.776 }];
+    insufficientAudio.dispatchEvent(new Event("canplaythrough")); insufficientWrongRange.state.evaluateBufferState();
+    now += 500; insufficientWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(insufficientWrongRange.state.audio, insufficientAudio, "HAVE_FUTURE_DATA is insufficient for Phase 3");
+    assert.equal(insufficientWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const seekingWrongRange = await create(532, 0);
+    const seekingWrongAudio = seekingWrongRange.state.audio;
+    seekingWrongAudio.readyState = 4; seekingWrongAudio.seeking = true;
+    seekingWrongAudio.ranges = [{ start: 0, end: 1.776 }];
+    seekingWrongAudio.dispatchEvent(new Event("canplaythrough")); seekingWrongRange.state.evaluateBufferState();
+    now += 500; seekingWrongAudio.seeking = false; seekingWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(seekingWrongRange.state.audio, seekingWrongAudio, "seeking invalidates wrong-range eligibility");
+    assert.equal(seekingWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const noReadinessWrongRange = await create(533, 0);
+    const noReadinessAudio = noReadinessWrongRange.state.audio;
+    noReadinessAudio.readyState = 4; noReadinessAudio.ranges = [{ start: 0, end: 1.776 }];
+    noReadinessWrongRange.state.evaluateBufferState(); now += 750; noReadinessWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(noReadinessWrongRange.state.audio, noReadinessAudio, "wrong ranges without current-source readiness do not accelerate");
+    assert.equal(noReadinessWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const emptyRangeResume = await create(534, 0);
+    const emptyRangeAudio = emptyRangeResume.state.audio;
+    emptyRangeAudio.readyState = 4; emptyRangeAudio.ranges = [];
+    emptyRangeAudio.dispatchEvent(new Event("canplaythrough")); emptyRangeResume.state.evaluateBufferState();
+    now += 750; emptyRangeResume.state.evaluateBufferState(); await flush();
+    assert.equal(emptyRangeResume.state.audio, emptyRangeAudio, "empty ranges are not Phase 3 wrong-range evidence");
+    assert.equal(emptyRangeResume.state.fastResumeRecoveryAttempts, 0);
+    assert.equal(emptyRangeAudio.playCalls, 0, "the separate Phase 2/generic empty-range paths remain in force");
+
+    const nearRangeResume = await create(535, 0);
+    const nearRangeAudio = nearRangeResume.state.audio;
+    nearRangeAudio.readyState = 4; nearRangeAudio.ranges = [{ start: 529, end: 535.5 }];
+    nearRangeAudio.dispatchEvent(new Event("canplaythrough")); nearRangeResume.state.evaluateBufferState();
+    now += 750; nearRangeResume.state.evaluateBufferState(); await flush();
+    assert.equal(nearRangeResume.state.audio, nearRangeAudio, "a nearby range is not strong contradictory evidence");
+    assert.equal(nearRangeResume.state.fastResumeRecoveryAttempts, 0);
+
+    const pausedWrongRange = await create(536, 0);
+    const pausedWrongAudio = pausedWrongRange.state.audio;
+    pausedWrongAudio.readyState = 4; pausedWrongAudio.ranges = [{ start: 0, end: 1.776 }];
+    pausedWrongAudio.dispatchEvent(new Event("canplaythrough")); pausedWrongRange.state.evaluateBufferState();
+    now += 250; pausedWrongRange.engine.pause(); now += 750; pausedWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(pausedWrongRange.state.audio, pausedWrongAudio, "Pause cancels accelerated recovery");
+    assert.equal(pausedWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const disposedWrongRange = await create(537, 0);
+    const disposedWrongAudio = disposedWrongRange.state.audio;
+    disposedWrongAudio.readyState = 4; disposedWrongAudio.ranges = [{ start: 0, end: 1.776 }];
+    disposedWrongAudio.dispatchEvent(new Event("canplaythrough")); disposedWrongRange.state.evaluateBufferState();
+    now += 250; disposedWrongRange.engine.dispose(); now += 750;
+    disposedWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(disposedWrongRange.state.audio, null, "dispose detaches the audio and invalidates accelerated recovery");
+    assert.equal(disposedWrongAudio.playCalls, 0, "no stale audio play is issued after dispose");
+    assert.equal(disposedWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const zeroWrongRange = await create(0, 0);
+    const zeroWrongAudio = zeroWrongRange.state.audio;
+    zeroWrongAudio.readyState = 4; zeroWrongAudio.ranges = [{ start: 0, end: 1.776 }];
+    zeroWrongAudio.dispatchEvent(new Event("canplaythrough")); zeroWrongRange.state.evaluateBufferState();
+    now += 750; zeroWrongRange.state.evaluateBufferState(); await flush();
+    assert.equal(zeroWrongRange.state.audio, zeroWrongAudio, "position-zero startup is excluded from Phase 3");
+    assert.equal(zeroWrongRange.state.fastResumeRecoveryAttempts, 0);
+
+    const genericStillBounded = await create(538, 0);
+    const genericAudio = genericStillBounded.state.audio;
+    genericAudio.readyState = 4; genericAudio.ranges = [{ start: 0, end: 1.776 }];
+    genericStillBounded.state.evaluateBufferState(); now += 3001; genericStillBounded.state.evaluateBufferState(); await flush();
+    assert.notEqual(genericStillBounded.state.audio, genericAudio, "without readiness evidence, generic Phase 1 retains its 3s recovery bound");
+    assert.equal(genericStillBounded.state.fastResumeRecoveryAttempts, 1);
+
     const promptResume = await create(540, 8);
     const promptAudio = promptResume.state.audio;
     promptAudio.ranges = [{ start: 540, end: 548 }];
@@ -220,7 +320,7 @@ async function main() {
     await flush();
     assert.equal(next.state.sourceVersion, version); assert.equal(next.state.audio.playCalls, 0);
     assert.equal(next.state.networkRecoveryTarget, null); assert.equal(oldAudio.playCalls, 0);
-    console.info("PASS: zero/resumed plateau; bounded Safari stale-range recovery; readiness-gated accelerated provisional start; real progression remains required; insufficient-readyState/seeking/error/target-mismatch/Pause/dispose guards; no-progression retains generic recovery; normal resume and fast-retry bounds; dead-source and stale-generation protections.");
+    console.info("PASS: zero/resumed plateau; bounded Phase 1 recovery; stable Phase 3 wrong-range acceleration/cancellation; readiness-gated Phase 2 provisional start; real progression remains required; empty/near ranges and insufficient-readyState/seeking/readiness/Pause/dispose guards; generic 3s fallback; normal resume and retry bounds; dead-source and stale-generation protections.");
   } finally { engines.forEach(engine => engine.dispose()); callbacks.clear(); globalThis.setTimeout = nativeTimeout; }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

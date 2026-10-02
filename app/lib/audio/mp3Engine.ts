@@ -32,6 +32,8 @@ const BUFFER_SAMPLE_INTERVAL_MS = 500;
 const STARTUP_BUFFER_SECONDS = 5;
 const STARTUP_BUFFER_PLATEAU_MS = 3_000;
 const RESUME_BUFFER_MISS_GRACE_MS = 3_000;
+const RESUME_WRONG_RANGE_STABILITY_MS = 500;
+const RESUME_WRONG_RANGE_MIN_DISTANCE_SECONDS = 5;
 const MAX_FAST_RESUME_RECOVERIES = 1;
 const STARTUP_BUFFER_GROWTH_EPSILON_SECONDS = 0.25;
 const PROGRESSION_FREEZE_MS = 3_000;
@@ -89,7 +91,7 @@ export class Mp3Engine {
   private startupPlateauLastGrowthAt: number | null = null;
   private emptyRangesEligibility: { audio: HTMLAudioElement; generation: number; sourceVersion: number; startupId: number; since: number } | null = null;
   private startupReadinessSourceVersion: number | null = null;
-  private resumeBufferMiss: { audio: HTMLAudioElement; generation: number; sourceVersion: number; startupId: number; position: number; since: number } | null = null;
+  private resumeBufferMiss: { audio: HTMLAudioElement; generation: number; sourceVersion: number; startupId: number; position: number; since: number; wrongRangeSince: number | null } | null = null;
   private fastResumeRecoveryAttempts = 0;
   private cachePreparationStarted = false;
   private cacheRetryNotBefore = 0;
@@ -822,42 +824,114 @@ export class Mp3Engine {
       return false;
     }
 
-    const observation = this.resumeBufferMiss;
+    let observation = this.resumeBufferMiss;
     if (!observation || observation.audio !== audio || observation.generation !== this.generation
       || observation.sourceVersion !== this.sourceVersion || observation.startupId !== this.startupId
       || Math.abs(observation.position - this.startupPosition) > BUFFER_RANGE_EPSILON_SECONDS) {
-      this.resumeBufferMiss = {
+      observation = this.resumeBufferMiss = {
         audio,
         generation: this.generation,
         sourceVersion: this.sourceVersion,
         startupId: this.startupId,
         position: this.startupPosition,
         since: now,
+        wrongRangeSince: null,
       };
       this.captureDiagnostic("resume-seek-buffer-missing", {
         position: this.startupPosition,
         bufferAhead: this.getBufferAhead(audio),
         bufferedRanges: this.getBufferedRanges(audio),
       }, audio, this.sourceVersion);
-      return false;
+    }
+
+    const wrongRangeDistance = this.getResumeWrongRangeDistance(audio, this.startupPosition);
+    const strongWrongRange = this.startupReadinessSourceVersion === this.sourceVersion
+      && audio.readyState === HTMLMediaElement.HAVE_ENOUGH_DATA
+      && wrongRangeDistance > RESUME_WRONG_RANGE_MIN_DISTANCE_SECONDS
+      && this.fastResumeRecoveryAttempts < MAX_FAST_RESUME_RECOVERIES;
+
+    if (!strongWrongRange) {
+      observation.wrongRangeSince = null;
+    } else if (observation.wrongRangeSince === null) {
+      observation.wrongRangeSince = now;
+      this.captureDiagnostic("resume-wrong-range-detected", {
+        position: this.startupPosition,
+        bufferedRanges: this.getBufferedRanges(audio),
+        bufferAhead: this.getBufferAhead(audio),
+        wrongRangeDistanceSeconds: wrongRangeDistance,
+        readyState: audio.readyState,
+        observationMs: 0,
+      }, audio, this.sourceVersion);
+      return true;
+    } else if (now - observation.wrongRangeSince >= RESUME_WRONG_RANGE_STABILITY_MS) {
+      return this.startFastResumeRecovery(
+        audio,
+        trackIndex,
+        this.startupPosition,
+        now - observation.wrongRangeSince,
+        "resume-wrong-range-fast-recovery",
+      );
+    } else {
+      return true;
     }
 
     if (now - observation.since < RESUME_BUFFER_MISS_GRACE_MS
       || this.fastResumeRecoveryAttempts >= MAX_FAST_RESUME_RECOVERIES) return false;
 
-    const position = this.startupPosition;
+    return this.startFastResumeRecovery(
+      audio,
+      trackIndex,
+      this.startupPosition,
+      now - observation.since,
+      "resume-seek-fast-recovery",
+    );
+  }
+
+  private getResumeWrongRangeDistance(audio: HTMLAudioElement, position: number) {
+    if (audio.buffered.length === 0) return 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < audio.buffered.length; index += 1) {
+      const start = audio.buffered.start(index);
+      const end = audio.buffered.end(index);
+      const distance = position < start ? start - position : position > end ? position - end : 0;
+      nearestDistance = Math.min(nearestDistance, distance);
+    }
+    return nearestDistance;
+  }
+
+  private startFastResumeRecovery(
+    audio: HTMLAudioElement,
+    trackIndex: number,
+    position: number,
+    observedMs: number,
+    diagnosticEvent: "resume-seek-fast-recovery" | "resume-wrong-range-fast-recovery",
+  ) {
+    if (
+      this.fastResumeRecoveryAttempts >= MAX_FAST_RESUME_RECOVERIES
+      || !this.isSourceCurrent(audio, this.sourceVersion)
+      || !this.wantsPlayback
+      || this.phase !== "startup-buffering"
+      || this.audibleSource?.trackIndex !== trackIndex
+      || Math.abs(position - this.startupPosition) > BUFFER_RANGE_EPSILON_SECONDS
+    ) return false;
+
     this.fastResumeRecoveryAttempts += 1;
     this.resumeBufferMiss = null;
     const target = this.setNetworkRecoveryTarget(trackIndex, position);
     this.clearNetworkRetryTimer();
-    this.captureDiagnostic("resume-seek-fast-recovery", {
+    this.captureDiagnostic(diagnosticEvent, {
       attempt: this.fastResumeRecoveryAttempts,
       maxAttempts: MAX_FAST_RESUME_RECOVERIES,
-      observedMs: now - observation.since,
+      observedMs,
       trackIndex,
       position,
       bufferAhead: this.getBufferAhead(audio),
       bufferedRanges: this.getBufferedRanges(audio),
+      readyState: audio.readyState,
+      readinessSourceVersion: this.startupReadinessSourceVersion,
+      ...(diagnosticEvent === "resume-wrong-range-fast-recovery"
+        ? { wrongRangeDistanceSeconds: this.getResumeWrongRangeDistance(audio, position) }
+        : {}),
       recoveryTarget: { ...target },
     }, audio, this.sourceVersion);
     void this.startNetworkTrack(trackIndex, true, position);
