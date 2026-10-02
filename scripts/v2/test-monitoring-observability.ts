@@ -105,6 +105,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`Gate 4D observability verification failed (${error instanceof Error ? error.name : typeof error})`);
+  const errorType = error instanceof Error ? error.name : typeof error;
+  const sourceFrame = error instanceof Error ? error.stack?.split("\n").find((line) => line.includes("test-monitoring-observability"))?.trim() : undefined;
+  console.error(`Gate 4D observability verification failed (${errorType})${sourceFrame ? ` at ${sourceFrame}` : ""}`);
   process.exitCode = 1;
 });
