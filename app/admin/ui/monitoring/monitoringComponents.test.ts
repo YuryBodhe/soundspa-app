@@ -41,3 +41,22 @@ test("Location detail keeps UUIDs available only in collapsed Technical details"
   assert.match(technicalContent, /Front Desk/);
   assert.match(visibleContent, /OFFLINE/);
 });
+
+test("Partially Online uses the yellow status treatment in list and detail", () => {
+  const partialSnapshot: MonitoringSnapshotV1 = {
+    ...snapshot,
+    organizations: [{ ...snapshot.organizations[0]!, locations: [{
+      ...snapshot.organizations[0]!.locations[0]!,
+      devices: [
+        { ...snapshot.organizations[0]!.locations[0]!.devices[0]!, id: "device-offline", online: false },
+        { ...snapshot.organizations[0]!.locations[0]!.devices[0]!, id: "device-online", online: true },
+      ],
+    }] }],
+  };
+  const list = renderToStaticMarkup(createElement(MonitoringDashboard, { initialSnapshot: partialSnapshot }));
+  assert.match(list, /class="badge badge-partial">Partially Online<\/span>/);
+
+  const detail = renderToStaticMarkup(createElement(MonitoringLocationDetail, { initialSnapshot: partialSnapshot, locationId: "loc-uuid-secret" }));
+  assert.match(detail, /monitoring-summary-partial/);
+  assert.match(detail, /<strong>Partially Online<\/strong>/);
+});

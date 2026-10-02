@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useReducer, useState, type FormEvent } from "react";
 import type { AnalyticsPeriod, AnalyticsReportV1, AnalyticsScope } from "../../../../db/v2/analyticsReportModel";
 import { currentLaneDisplay, formatAnalyticsDuration, formatAnalyticsRelativeTime, formatAnalyticsScope, formatAnalyticsUtc, lifecycleEventLabel } from "./analyticsPresentation";
+import { analyticsReportStateReducer, INITIAL_ANALYTICS_REPORT_STATE } from "./analyticsReportState";
+import { triggerAnalyticsTextDownload } from "./analyticsTextExport";
 
 type ScopeOptionData = {
   organizations: Array<{ id: string; name: string; archived: boolean }>;
@@ -26,11 +28,6 @@ function parseScope(value: string): AnalyticsScope {
   return { type: "location", locationId: id };
 }
 
-function scopeValue(scope: AnalyticsScope): string {
-  if (scope.type === "all") return "all";
-  return scope.type === "organization" ? `organization:${scope.organizationId}` : `location:${scope.locationId}`;
-}
-
 function periodLabel(period: AnalyticsPeriod) {
   return PERIODS.find((option) => option.value === period)?.label ?? period;
 }
@@ -38,15 +35,14 @@ function periodLabel(period: AnalyticsPeriod) {
 export default function AnalyticsReportClient({ options }: { options: ScopeOptionData }) {
   const [selectedScope, setSelectedScope] = useState("all");
   const [selectedPeriod, setSelectedPeriod] = useState<AnalyticsPeriod>("24h");
-  const [report, setReport] = useState<AnalyticsReportV1 | null>(null);
+  const [{ report, error }, dispatch] = useReducer(analyticsReportStateReducer, INITIAL_ANALYTICS_REPORT_STATE);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function generateReport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (loading) return;
     setLoading(true);
-    setError(null);
+    dispatch({ type: "generate-started" });
     try {
       const response = await fetch("/api/v2/admin/analytics/report", {
         method: "POST",
@@ -56,9 +52,9 @@ export default function AnalyticsReportClient({ options }: { options: ScopeOptio
       });
       const body = await response.json() as AnalyticsReportV1 | { message?: string };
       if (!response.ok) throw new Error("message" in body && body.message ? body.message : "The analytics report could not be generated.");
-      setReport(body as AnalyticsReportV1);
+      dispatch({ type: "generated", report: body as AnalyticsReportV1 });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The analytics report could not be generated.");
+      dispatch({ type: "generation-failed", error: caught instanceof Error ? caught.message : "The analytics report could not be generated." });
     } finally {
       setLoading(false);
     }
@@ -128,7 +124,9 @@ export function AnalyticsReportView({ report, options }: { report: AnalyticsRepo
         </div>
         <p className="analytics-interval-note">The effective interval is based on completed UTC-hour buckets, not a rolling-to-the-second window.</p>
       </div>
-      <div className="analytics-future-action" aria-hidden="true" />
+      <div className="analytics-report-actions">
+        <button className="btn btn-sm" type="button" onClick={() => triggerAnalyticsTextDownload(report)}>Download .txt</button>
+      </div>
     </section>
 
     <section className="analytics-summary" aria-label="Analytics summary">

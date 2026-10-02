@@ -44,7 +44,7 @@ export default function MonitoringLocationDetail({ initialSnapshot, locationId }
     </div>
 
     <section className="monitoring-summary monitoring-detail-summary" aria-label="Location status summary">
-      <SummaryItem label="Status" value={status} tone={status === "Online" ? "online" : status === "No Devices" ? undefined : "warn"} />
+      <SummaryItem label="Status" value={status} tone={status === "Online" ? "online" : status === "Partially Online" ? "partial" : status === "No Devices" ? undefined : "warn"} />
       <SummaryItem label="Devices" value={deviceCount} />
       <SummaryItem label="Online" value={onlineCount} tone="online" />
       <SummaryItem label="Playing" value={playingCount} tone="playing" />
@@ -88,7 +88,7 @@ function RelativeTime({ value, asOf }: { value: string | null; asOf: string }) {
     : <>—</>;
 }
 
-function SummaryItem({ label, value, tone }: { label: string; value: string | number; tone?: "online" | "playing" | "warn" }) {
+function SummaryItem({ label, value, tone }: { label: string; value: string | number; tone?: "online" | "playing" | "warn" | "partial" }) {
   return <div className={`monitoring-summary-item ${tone ? `monitoring-summary-${tone}` : ""}`}>
     <span>{label}</span><strong>{value}</strong>
   </div>;

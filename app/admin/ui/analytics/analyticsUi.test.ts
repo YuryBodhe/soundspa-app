@@ -56,6 +56,7 @@ test("scope/period controls render with dynamic options and no report request oc
     assert.match(html, /Last 30 days/);
     assert.match(html, /Generate Report/);
     assert.doesNotMatch(html, /GENERATED ANALYTICS REPORT/);
+    assert.doesNotMatch(html, /Download \.txt/);
     assert.equal(fetchCalls, 0);
   } finally {
     globalThis.fetch = previousFetch;
@@ -74,6 +75,7 @@ test("loading and error states are visible and operator-friendly", () => {
 test("canonical report keeps business sections primary and collapses technical details by default", () => {
   const report = buildAnalyticsReport(reportInput());
   const html = renderToStaticMarkup(createElement(AnalyticsReportView, { report, options }));
+  assert.match(html, /Download \.txt/);
   assert.match(html, /All Organizations/);
   assert.match(html, /Last 24 hours/);
   assert.match(html, /Effective interval:/);

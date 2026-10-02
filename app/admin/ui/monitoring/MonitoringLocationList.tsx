@@ -35,7 +35,7 @@ export default function MonitoringLocationList({ snapshot }: { snapshot: Monitor
             <td><Link className="monitoring-location-link" href={`/admin/ui/monitoring/locations/${encodeURIComponent(row.location.id)}`}>{row.location.name}<span aria-hidden="true"> →</span></Link></td>
             <td>{row.organizationName}</td>
             <td>{row.deviceCount}</td>
-            <td><span className={`badge ${row.status === "Online" ? "badge-ok" : row.status === "No Devices" ? "badge-neutral" : "badge-warn"}`}>{row.status}</span></td>
+            <td><span className={`badge ${row.status === "Online" ? "badge-ok" : row.status === "Partially Online" ? "badge-partial" : row.status === "No Devices" ? "badge-neutral" : "badge-warn"}`}>{row.status}</span></td>
             <td>{row.playingCount} / {row.deviceCount}</td>
             <td>{row.lastSeenAt ? <time dateTime={row.lastSeenAt} title={row.lastSeenAt}>{formatMonitoringRelativeTime(row.lastSeenAt, snapshot.asOf)}</time> : "—"}</td>
           </tr>)}
