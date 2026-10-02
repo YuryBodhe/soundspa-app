@@ -71,7 +71,7 @@ test("loading and error states are visible and operator-friendly", () => {
   assert.match(error, /selected Location was not found/);
 });
 
-test("canonical report renders summary, Locations, lane usage, Devices, zero errors, Lifecycle and data-quality semantics", () => {
+test("canonical report keeps business sections primary and collapses technical details by default", () => {
   const report = buildAnalyticsReport(reportInput());
   const html = renderToStaticMarkup(createElement(AnalyticsReportView, { report, options }));
   assert.match(html, /All Organizations/);
@@ -86,16 +86,33 @@ test("canonical report renders summary, Locations, lane usage, Devices, zero err
   assert.match(html, /Relax/);
   assert.match(html, /Ambient Usage/);
   assert.match(html, /Forest/);
-  assert.match(html, /Devices/);
-  assert.match(html, /Lobby Player/);
-  assert.match(html, /Player Active during period/);
-  assert.match(html, /Current Music/);
-  assert.match(html, /Last known · paused · Relax/);
   assert.match(html, /No reported errors during this period/);
-  assert.match(html, /Device Activated/);
   assert.match(html, /independent lanes; their combined totals can exceed Player Active/);
   assert.match(html, /exact channel-switch timestamps are not available/);
+  assert.match(html, /Reliability/);
+  const disclosure = html.match(/<details class="admin-card analytics-technical-details">([\s\S]*?)<\/details>/)?.[1];
+  assert.ok(disclosure, "technical sections use a native collapsed disclosure");
+  assert.doesNotMatch(html.slice(0, html.indexOf("<details class=\"admin-card analytics-technical-details\"")), /<h2 class="admin-card-title">Devices<\/h2>/);
+  assert.match(disclosure, /<h2 class="admin-card-title">Devices<\/h2>/);
+  assert.match(disclosure, /Lobby Player/);
+  assert.match(disclosure, /Player Active during period/);
+  assert.match(disclosure, /Current Music/);
+  assert.match(disclosure, /Last known · paused · Relax/);
+  assert.match(disclosure, /Device Activated/);
+  assert.match(disclosure, /Data quality &amp; interpretation/);
+  assert.doesNotMatch(html.slice(0, html.indexOf("<details class=\"admin-card analytics-technical-details\"")), /Data quality &amp; interpretation|Lifecycle/);
   assert.ok(report.summary.musicSeconds + report.summary.ambientSeconds > report.summary.playerActiveSeconds);
+});
+
+test("zero-usage report remains valid and keeps the effective interval visible", () => {
+  const report = buildAnalyticsReport(reportInput({ playerActiveBuckets: [], channelPlaybackBuckets: [] }));
+  const html = renderToStaticMarkup(createElement(AnalyticsReportView, { report, options }));
+  assert.equal(report.summary.playerActiveSeconds, 0);
+  assert.equal(report.summary.musicSeconds, 0);
+  assert.equal(report.summary.ambientSeconds, 0);
+  assert.match(html, /Effective interval:/);
+  assert.match(html, /0 sec/);
+  assert.doesNotMatch(html, /No data available/);
 });
 
 test("Organization and Location scope labels are represented in report header", () => {

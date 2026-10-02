@@ -165,24 +165,6 @@ export function AnalyticsReportView({ report, options }: { report: AnalyticsRepo
       <UsageTable title="Ambient Usage" rows={ambient} />
     </div>
 
-    <section className="admin-card analytics-section">
-      <h2 className="admin-card-title">Devices</h2>
-      <div className="analytics-table-wrap"><table className="admin-table analytics-table">
-        <thead><tr><th>Device</th><th>Location</th><th>Organization</th><th>Now</th><th>Player Active during period</th><th>Current Music</th><th>Current Ambient</th><th>Last seen</th><th>Last reported playback</th></tr></thead>
-        <tbody>{report.devices.map((device) => <tr key={device.deviceId}>
-          <td>{device.deviceLabel}{device.deviceStatus !== "active" ? <span className="badge badge-neutral">{device.deviceStatus.toUpperCase()}</span> : null}</td>
-          <td>{device.locationName ?? "—"}</td>
-          <td>{device.organizationName ?? "—"}</td>
-          <td><span className={`badge ${device.online ? "badge-ok" : "badge-warn"}`}>{device.online ? "ONLINE" : "OFFLINE"}</span></td>
-          <td>{formatAnalyticsDuration(device.playerActiveSeconds)}</td>
-          <td>{currentLaneDisplay(device.currentMusic, device.online)}</td>
-          <td>{currentLaneDisplay(device.currentAmbient, device.online)}</td>
-          <td><RelativeTime value={device.lastSeen} asOf={report.metadata.generatedAt} /></td>
-          <td><RelativeTime value={device.lastPlaybackObserved} asOf={report.metadata.generatedAt} /></td>
-        </tr>)}{!report.devices.length && <EmptyRow columns={9} text="No Devices in this report." />}</tbody>
-      </table></div>
-    </section>
-
     <div className="analytics-two-column">
       <section className="admin-card analytics-section">
         <h2 className="admin-card-title">Reliability</h2>
@@ -194,25 +176,47 @@ export function AnalyticsReportView({ report, options }: { report: AnalyticsRepo
           : <p className="analytics-empty">No reported errors during this period.</p>}
       </section>
 
-      <section className="admin-card analytics-section">
+    </div>
+
+    <details className="admin-card analytics-technical-details">
+      <summary>Technical details</summary>
+      <section className="analytics-section">
+        <h2 className="admin-card-title">Devices</h2>
+        <div className="analytics-table-wrap"><table className="admin-table analytics-table">
+          <thead><tr><th>Device</th><th>Location</th><th>Organization</th><th>Now</th><th>Player Active during period</th><th>Current Music</th><th>Current Ambient</th><th>Last seen</th><th>Last reported playback</th></tr></thead>
+          <tbody>{report.devices.map((device) => <tr key={device.deviceId}>
+            <td>{device.deviceLabel}{device.deviceStatus !== "active" ? <span className="badge badge-neutral">{device.deviceStatus.toUpperCase()}</span> : null}</td>
+            <td>{device.locationName ?? "—"}</td>
+            <td>{device.organizationName ?? "—"}</td>
+            <td><span className={`badge ${device.online ? "badge-ok" : "badge-warn"}`}>{device.online ? "ONLINE" : "OFFLINE"}</span></td>
+            <td>{formatAnalyticsDuration(device.playerActiveSeconds)}</td>
+            <td>{currentLaneDisplay(device.currentMusic, device.online)}</td>
+            <td>{currentLaneDisplay(device.currentAmbient, device.online)}</td>
+            <td><RelativeTime value={device.lastSeen} asOf={report.metadata.generatedAt} /></td>
+            <td><RelativeTime value={device.lastPlaybackObserved} asOf={report.metadata.generatedAt} /></td>
+          </tr>)}{!report.devices.length && <EmptyRow columns={9} text="No Devices in this report." />}</tbody>
+        </table></div>
+      </section>
+
+      <section className="analytics-section">
         <h2 className="admin-card-title">Lifecycle</h2>
         {report.lifecycle.byType.length
           ? <ul className="analytics-lifecycle">{report.lifecycle.byType.map((row) => <li key={row.eventType}><span>{lifecycleEventLabel(row.eventType)}</span><strong>{row.count}</strong></li>)}</ul>
           : <p className="analytics-empty">No reported lifecycle events during this period.</p>}
       </section>
-    </div>
 
-    <section className="analytics-data-quality">
-      <h2>Data quality &amp; interpretation</h2>
-      <ul>
-        <li>{report.dataQuality.hourlyGranularity}</li>
-        <li>Music and Ambient are independent lanes; their combined totals can exceed Player Active.</li>
-        <li>{report.dataQuality.channelTimelineCaveat}</li>
-        <li>{report.dataQuality.accountingCaveat}</li>
-        <li>Unattributed Player Active: {formatAnalyticsDuration(report.dataQuality.unattributedPlayerActiveSeconds)}; unattributed channel time: {formatAnalyticsDuration(report.dataQuality.unattributedChannelSeconds)}.</li>
-        {report.dataQuality.notes.map((note) => <li key={note}>{note}</li>)}
-      </ul>
-    </section>
+      <section className="analytics-data-quality">
+        <h2>Data quality &amp; interpretation</h2>
+        <ul>
+          <li>{report.dataQuality.hourlyGranularity}</li>
+          <li>Music and Ambient are independent lanes; their combined totals can exceed Player Active.</li>
+          <li>{report.dataQuality.channelTimelineCaveat}</li>
+          <li>{report.dataQuality.accountingCaveat}</li>
+          <li>Unattributed Player Active: {formatAnalyticsDuration(report.dataQuality.unattributedPlayerActiveSeconds)}; unattributed channel time: {formatAnalyticsDuration(report.dataQuality.unattributedChannelSeconds)}.</li>
+          {report.dataQuality.notes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      </section>
+    </details>
   </div>;
 }
 

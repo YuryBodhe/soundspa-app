@@ -258,6 +258,15 @@
 .monitoring-lanes p { margin: 5px 0 0; text-transform: capitalize; font-size: 13px; }
 .monitoring-times { justify-content: flex-start; margin-top: 14px; color: rgba(255,255,255,.56); font-size: 11px; }
 .monitoring-technical-id { display: block; color: rgba(255,255,255,.34); font-size: 10px; overflow-wrap: anywhere; }
+.monitoring-technical-details, .analytics-technical-details { margin: 12px 0; padding: 10px 13px; border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(12,12,20,.72); color: rgba(255,255,255,.62); font-size: 12px; }
+.monitoring-technical-details summary, .analytics-technical-details summary { color: rgba(255,255,255,.58); cursor: pointer; font-size: 12px; }
+.monitoring-technical-details p { margin: 10px 0 4px; color: rgba(255,255,255,.42); font-size: 10px; }
+.monitoring-technical-details ul { display: grid; gap: 4px; margin: 4px 0 0; padding-left: 18px; color: rgba(255,255,255,.42); font-size: 10px; }
+.monitoring-technical-details code { overflow-wrap: anywhere; }
+.analytics-technical-details { display: grid; gap: 12px; }
+.analytics-technical-details[open] { padding-bottom: 14px; }
+.analytics-technical-details > .analytics-section, .analytics-technical-details > .analytics-data-quality { margin: 0; padding: 10px 2px 0; border-top: 1px solid rgba(255,255,255,.06); }
+.monitoring-refresh-note { margin: 2px 0 0; color: rgba(255,255,255,.42); font-size: 11px; }
 .monitoring-detail-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .monitoring-summary-warn strong { color: #ffbd66; font-size: 15px; }
 .analytics-controls { margin-bottom: 16px; }
