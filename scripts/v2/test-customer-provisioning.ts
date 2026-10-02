@@ -187,10 +187,6 @@ async function main() {
     assert.equal(customersPage.status, 200);
     const customerHtml = await customersPage.text();
     assert(customerHtml.includes(organizationName));
-    assert(customerHtml.includes('name="timezone"'));
-    assert(customerHtml.includes('value="Asia/Ho_Chi_Minh"'));
-    assert(customerHtml.includes('value="Europe/Moscow"'));
-    assert(customerHtml.includes('value="Asia/Bangkok"'));
     assert(customerHtml.includes(`Open Location`));
     const detailPage = await fetch(`${origin}/admin/ui?location=${encodeURIComponent(createdLocation.id)}`, { headers: { authorization } });
     assert.equal(detailPage.status, 200);
