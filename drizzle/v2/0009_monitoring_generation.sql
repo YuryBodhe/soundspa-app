@@ -1,0 +1,2 @@
+ALTER TABLE "device_current_state" ADD COLUMN "monitoring_generation" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "device_current_state" ADD CONSTRAINT "device_current_state_monitoring_generation_check" CHECK ("device_current_state"."monitoring_generation" >= 0);

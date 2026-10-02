@@ -6,6 +6,7 @@ import { devices } from "./devices";
 
 export const deviceCurrentState = pgTable("device_current_state", {
   deviceId: uuid("device_id").primaryKey().references(() => devices.id, { onDelete: "cascade" }),
+  monitoringGeneration: bigint("monitoring_generation", { mode: "number" }).notNull().default(0),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   lastPlaybackAt: timestamp("last_playback_at", { withTimezone: true }),
   // Preserve legacy SQL column names; these now explicitly represent the MUSIC lane.
@@ -22,6 +23,7 @@ export const deviceCurrentState = pgTable("device_current_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index("device_current_state_last_seen_idx").on(table.lastSeenAt),
+  check("device_current_state_monitoring_generation_check", sql`${table.monitoringGeneration} >= 0`),
   check("device_current_state_music_signal_check", sql`(${table.musicSessionId} IS NULL AND ${table.musicSequence} IS NULL) OR (${table.musicSessionId} IS NOT NULL AND ${table.musicSequence} IS NOT NULL AND ${table.musicSequence} >= 0)`),
   check("device_current_state_ambient_signal_check", sql`(${table.ambientSessionId} IS NULL AND ${table.ambientSequence} IS NULL) OR (${table.ambientSessionId} IS NOT NULL AND ${table.ambientSequence} IS NOT NULL AND ${table.ambientSequence} >= 0)`),
 ]);
