@@ -3,6 +3,7 @@ import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import AccessMutationForm from "./accessMutationForm";
 import CustomerProvisioningForm from "./customerProvisioningForm";
 import DeviceProvisioningPanel from "./deviceProvisioningPanel";
+import DeleteLocationPanel from "./deleteLocationPanel";
 import { getTimeZoneOptions } from "../../../lib/v2/timeZones";
 
 export const dynamic = "force-dynamic";
@@ -65,5 +66,11 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
         })}
       </tbody></table>
     </section>}
+    {selected && !selected.organization.archivedAt && <DeleteLocationPanel
+      locationId={selected.location.id}
+      locationName={selected.location.name}
+      organizationName={selected.organization.name}
+      deviceCount={selectedDevices.length}
+    />}
   </>;
 }
