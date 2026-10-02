@@ -121,7 +121,7 @@ async function main() {
 
     const deviceToDelete = await createPending(locationA.id, `${marker} Delete Device`);
     const [{ id: channelId }] = await v2Db.select({ id: channels.id }).from(channels).orderBy(channels.id).limit(1);
-    await v2Db.insert(deviceCurrentState).values({ deviceId: deviceToDelete.id, currentChannelId: channelId });
+    await v2Db.insert(deviceCurrentState).values({ deviceId: deviceToDelete.id, musicCurrentChannelId: channelId });
     await v2Db.insert(deviceEvents).values({ deviceId: deviceToDelete.id, eventType: "session_started", channelId });
     const locationAccessBefore = {
       visibility: await v2Db.select().from(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, locationA.id)),
@@ -151,9 +151,9 @@ async function main() {
     }, locationAccessBefore, "deleting one Device must not alter Location access configuration");
 
     const betaDevice = await createPending(locationB.id, `${marker} Beta Device`);
-    await v2Db.insert(deviceCurrentState).values({ deviceId: recoverable.id, currentChannelId: channelId });
+    await v2Db.insert(deviceCurrentState).values({ deviceId: recoverable.id, musicCurrentChannelId: channelId });
     await v2Db.insert(deviceEvents).values({ deviceId: recoverable.id, eventType: "session_started", channelId });
-    await v2Db.insert(deviceCurrentState).values({ deviceId: betaDevice.id, currentChannelId: channelId });
+    await v2Db.insert(deviceCurrentState).values({ deviceId: betaDevice.id, musicCurrentChannelId: channelId });
     await v2Db.insert(deviceEvents).values({ deviceId: betaDevice.id, eventType: "session_started", channelId });
     const baselineBeforeLocationDelete = await counts();
     const noAuthLocationDelete = await fetch(`${origin}/api/v2/admin/locations/${locationA.id}`, { method: "DELETE", headers: { Origin: publicOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ confirmationName: locationA.name }) });

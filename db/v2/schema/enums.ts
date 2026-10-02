@@ -6,3 +6,10 @@ export const entitlementType = pgEnum("entitlement_type", ["included", "preview"
 export const deviceStatus = pgEnum("device_status", ["active", "revoked"]);
 export const devicePlaybackState = pgEnum("device_playback_state", ["idle", "playing", "paused", "buffering", "error"]);
 export const deviceEventType = pgEnum("device_event_type", ["session_started", "playback_started", "playback_stopped", "channel_changed", "playback_error", "player_recovered"]);
+export const monitoringLane = pgEnum("monitoring_lane", ["music", "ambient"]);
+export const monitoringErrorCategory = pgEnum("monitoring_error_category", ["AUTH", "PLAYBACK", "MEDIA_FETCH", "CATALOG_CONFIG"]);
+export const monitoringLifecycleEventType = pgEnum("monitoring_lifecycle_event_type", [
+  "organization_created", "organization_deleted",
+  "location_created", "location_deleted",
+  "device_created", "device_activated", "device_revoked", "device_deleted",
+]);

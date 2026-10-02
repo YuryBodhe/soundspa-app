@@ -13,7 +13,7 @@ async function main() {
   try {
     const target = await v2Db.execute(sql`SELECT current_database() AS database, current_user AS "user"`);
     assert.equal(target.rows[0]?.database, "soundspa_v2"); assert.equal(target.rows[0]?.user, "soundspa_v2");
-    const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`); assert.equal(journal.rows[0]?.count, 8);
+    const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`); assert.equal(journal.rows[0]?.count, 9);
     const counts = await v2Db.execute(sql`SELECT (SELECT count(*)::int FROM channels) AS channels, (SELECT count(*)::int FROM channel_tracks) AS tracks, (SELECT count(*)::int FROM channel_tracks WHERE is_enabled) AS enabled`);
     assert.deepEqual(counts.rows[0], { channels: 11, tracks: 32, enabled: 31 });
     const [{ getHiddenChannelIds }] = await Promise.all([import("../../db/v2/queries/locationChannelVisibility")]);
@@ -66,7 +66,7 @@ async function main() {
     const grantsAfter = (await v2Db.select().from(locationChannelGrants).where(and(eq(locationChannelGrants.locationId, LOCATION_ID), eq(locationChannelGrants.source, "admin")))).map((row) => ({ channelId: row.channelId, source: row.source, enabled: row.enabled, startsAt: row.startsAt?.toISOString() ?? null, endsAt: row.endsAt?.toISOString() ?? null })).sort((a, b) => a.channelId.localeCompare(b.channelId));
     assert.deepEqual(grantsAfter, grantsBefore);
     assert.equal((await v2Db.select().from(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, LOCATION_ID))).length, 0, "no test visibility rows remain");
-    console.info("V2 staging visibility lifecycle PASS: current Base/grants unchanged; Divnitsa visible→hidden(absent)→visible/playable(admin); unauthenticated/device-only=401, cross-origin=403; catalog=11/32/31; journal=8.");
+    console.info("V2 staging visibility lifecycle PASS: current Base/grants unchanged; Divnitsa visible→hidden(absent)→visible/playable(admin); unauthenticated/device-only=401, cross-origin=403; catalog=11/32/31; journal=9.");
   } catch (error) {
     if (mutationStarted && origin && basic) {
       try {

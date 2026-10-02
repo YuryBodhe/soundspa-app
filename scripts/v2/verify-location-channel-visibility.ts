@@ -15,7 +15,7 @@ async function main() {
     const target = await v2Db.execute(sql`SELECT current_database() AS database, current_user AS "user"`);
     assert.equal(target.rows[0]?.database, "soundspa_v2"); assert.equal(target.rows[0]?.user, "soundspa_v2");
     const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`);
-    assert.equal(journal.rows[0]?.count, 8);
+    assert.equal(journal.rows[0]?.count, 9);
 
     try {
       await v2Db.transaction(async (tx) => {
@@ -102,7 +102,7 @@ async function main() {
     assert(organizationId);
     assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
     for (const id of channelIds) assert.equal((await v2Db.select().from(channels).where(eq(channels.id, id))).length, 0);
-    console.info("V2 Location Channel Visibility PASS: default-visible/locked, hidden omission, Base/Admin/entitlement independence, restore, suspension, idempotency, Location isolation, music/ambient, rollback; journal=8.");
+    console.info("V2 Location Channel Visibility PASS: default-visible/locked, hidden omission, Base/Admin/entitlement independence, restore, suspension, idempotency, Location isolation, music/ambient, rollback; journal=9.");
   } finally { await v2Pool.end(); }
 }
 

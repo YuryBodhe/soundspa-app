@@ -117,7 +117,7 @@ async function main() {
     ]);
     const allDevices = [pendingA1, activatedA1, deviceA2, deviceB1];
     for (const device of allDevices) {
-      await v2Db.insert(deviceCurrentState).values({ deviceId: device.id, currentChannelId: channel.id });
+      await v2Db.insert(deviceCurrentState).values({ deviceId: device.id, musicCurrentChannelId: channel.id });
       await v2Db.insert(deviceEvents).values({ deviceId: device.id, eventType: "session_started", channelId: channel.id });
     }
 

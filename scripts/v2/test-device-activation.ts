@@ -34,7 +34,7 @@ async function baseline() {
       v2Db.select({ count: sql<number>`count(*)::int` }).from(channelTracks),
       v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`),
     ]),
-    v2Db.select({ deviceId: deviceCurrentState.deviceId, lastSeenAt: deviceCurrentState.lastSeenAt, playbackState: deviceCurrentState.playbackState, updatedAt: deviceCurrentState.updatedAt }).from(deviceCurrentState).orderBy(deviceCurrentState.deviceId),
+    v2Db.select({ deviceId: deviceCurrentState.deviceId, lastSeenAt: deviceCurrentState.lastSeenAt, playbackState: deviceCurrentState.musicPlaybackState, updatedAt: deviceCurrentState.updatedAt }).from(deviceCurrentState).orderBy(deviceCurrentState.deviceId),
     v2Db.select({ channelId: baseChannels.channelId }).from(baseChannels),
     v2Db.select({ locationId: locationChannelGrants.locationId, channelId: locationChannelGrants.channelId, source: locationChannelGrants.source, enabled: locationChannelGrants.enabled, startsAt: locationChannelGrants.startsAt, endsAt: locationChannelGrants.endsAt }).from(locationChannelGrants),
     v2Db.select({ locationId: locationChannelVisibility.locationId, channelId: locationChannelVisibility.channelId, hidden: locationChannelVisibility.hidden }).from(locationChannelVisibility),
@@ -46,7 +46,7 @@ async function baseline() {
   assert.equal(fixture[0]?.archivedAt, null);
   assert.equal(fixture[0]?.organizationArchivedAt, null);
   const countValues = counts.map((rows: any) => Array.isArray(rows) ? rows[0]?.count : rows.rows[0]?.count);
-  assert.equal(countValues[15], 8, "V2 migration journal must contain the new Gate 3B migration");
+  assert.equal(countValues[15], 9, "V2 migration journal must contain the Gate 4A migration");
   return {
     // A real customer Player can update these heartbeat rows while the
     // synthetic activation test runs. Compare stable identities only, not

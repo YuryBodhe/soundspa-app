@@ -28,10 +28,10 @@ export async function POST(request: Request) {
   const now = new Date();
   await v2Db.insert(deviceCurrentState).values({
     deviceId: device.deviceId, lastSeenAt: now, lastPlaybackAt: body.playbackState === "playing" ? now : null,
-    playbackState: body.playbackState, currentChannelId: body.currentChannelId ?? null,
+    musicPlaybackState: body.playbackState, musicCurrentChannelId: body.currentChannelId ?? null,
     clientVersion: body.clientVersion ?? null, lastErrorCode: body.lastErrorCode ?? null, updatedAt: now,
   }).onConflictDoUpdate({ target: deviceCurrentState.deviceId, set: {
-    lastSeenAt: now, playbackState: body.playbackState, currentChannelId: body.currentChannelId ?? null,
+    lastSeenAt: now, musicPlaybackState: body.playbackState, musicCurrentChannelId: body.currentChannelId ?? null,
     clientVersion: body.clientVersion ?? null, lastErrorCode: body.lastErrorCode ?? null, updatedAt: now,
     ...(body.playbackState === "playing" ? { lastPlaybackAt: now } : {}),
   }});

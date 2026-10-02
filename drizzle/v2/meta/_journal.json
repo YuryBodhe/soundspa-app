@@ -57,6 +57,13 @@
       "when": 1790858890813,
       "tag": "0007_device_activation",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790926736002,
+      "tag": "0008_melted_nekra",
+      "breakpoints": true
     }
   ]
 }

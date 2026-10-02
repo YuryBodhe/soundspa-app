@@ -8,7 +8,8 @@ import { deviceEvents } from "./deviceEvents";
 
 export const deviceCurrentStateRelations = relations(deviceCurrentState, ({ one }) => ({
   device: one(devices, { fields: [deviceCurrentState.deviceId], references: [devices.id] }),
-  currentChannel: one(channels, { fields: [deviceCurrentState.currentChannelId], references: [channels.id] }),
+  musicCurrentChannel: one(channels, { fields: [deviceCurrentState.musicCurrentChannelId], references: [channels.id] }),
+  ambientCurrentChannel: one(channels, { fields: [deviceCurrentState.ambientCurrentChannelId], references: [channels.id] }),
 }));
 export const deviceRelations = relations(devices, ({ one, many }) => ({
   location: one(locations, { fields: [devices.locationId], references: [locations.id] }),

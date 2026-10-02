@@ -18,3 +18,7 @@ export * from "./monitoring/deviceActivationTokens";
 export * from "./monitoring/deviceCurrentState";
 export * from "./monitoring/deviceEvents";
 export * from "./monitoring/relations";
+export * from "./monitoring/hourlyChannelPlayback";
+export * from "./monitoring/hourlyDevicePlayback";
+export * from "./monitoring/hourlyErrorAggregates";
+export * from "./monitoring/monitoringLifecycleEvents";
