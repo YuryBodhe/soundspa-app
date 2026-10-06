@@ -26,7 +26,6 @@ async function main() {
       await tx.insert(locationSubscriptions).values({ locationId: locationA, productId: addonProduct.id, provider: "staging", status: "active", startsAt: past, currentPeriodEndsAt: future });
       await tx.insert(locationSubscriptions).values({ locationId: locationB, productId: core.id, provider: "manual", status: "active", startsAt: past, currentPeriodEndsAt: future });
       await tx.insert(locationChannelGrants).values({ locationId: locationA, channelId: admin, source: "admin", enabled: true });
-      await tx.insert(locationChannelGrants).values({ locationId: locationA, channelId: admin, source: "admin", enabled: true });
       const accessA = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel]));
       assert.deepEqual(accessA.get(coreA)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(coreB)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(accessA.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(accessA.get(admin)?.accessSources, ["admin"]);
       const accessB = new Map((await resolveEffectiveChannelAccess(locationB, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(accessB.get(coreA)?.accessSources, ["subscription"]); assert.deepEqual(accessB.get(partner)?.accessSources, []);
