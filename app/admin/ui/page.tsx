@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
-    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
+  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { getSoundSpaTrial }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/coreTrials"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
   ]);
   const customers = await listOrganizationsWithLocations();
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
@@ -22,9 +22,9 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
   const selected = locs.find(({ location }) => location.id === params.location) ?? locs[0];
-  const [effective, hiddenIds, selectedDevices] = selected ? await Promise.all([
-    resolveEffectiveChannelAccess(selected.location.id, new Date()), getHiddenChannelIds(selected.location.id), import("../../../db/v2/queries/devices").then(({ listDevicesForLocation }) => listDevicesForLocation(selected.location.id)),
-  ]) : [[], new Set<string>(), []];
+  const [effective, hiddenIds, selectedDevices, soundSpaTrial] = selected ? await Promise.all([
+    resolveEffectiveChannelAccess(selected.location.id, new Date()), getHiddenChannelIds(selected.location.id), import("../../../db/v2/queries/devices").then(({ listDevicesForLocation }) => listDevicesForLocation(selected.location.id)), getSoundSpaTrial(selected.location.id),
+  ]) : [[], new Set<string>(), [], null];
 
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
@@ -52,6 +52,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
     {selected && <section className="admin-card">
       <h2 className="admin-card-title">{selected.location.name}</h2>
       <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
+      <div className="admin-card"><h3>SoundSpa Basic</h3><p className="text-dim">10 channels · Access: {soundSpaTrial?.trial.status === "active" && soundSpaTrial.trial.endsAt > new Date() ? "TRIAL" : soundSpaTrial ? "USED" : "NONE"}</p>{soundSpaTrial?.trial.status === "active" && soundSpaTrial.trial.endsAt > new Date() ? <><p className="text-dim">Started: {soundSpaTrial.trial.startsAt.toLocaleString()} · Ends: {soundSpaTrial.trial.endsAt.toLocaleString()}</p><AccessMutationForm operation="end-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">End trial now</button></AccessMutationForm></> : !soundSpaTrial ? <AccessMutationForm operation="start-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">Start 30-day trial</button></AccessMutationForm> : <p className="text-dim">This Location has already used its trial.</p>}</div>
       {!selected.organization.archivedAt && <p><a className="btn btn-primary" href={`/admin/ui/locations/${encodeURIComponent(selected.location.id)}/player-preview`} target="_blank" rel="noopener noreferrer">Open Player Preview</a></p>}
       {!selected.organization.archivedAt && <DeviceProvisioningPanel locationId={selected.location.id} devices={selectedDevices} />}
       <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Actions</th></tr></thead><tbody>
