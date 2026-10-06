@@ -39,5 +39,8 @@ export function resolveMediaUrl(kind: "music" | "ambient", storageKey: string): 
 }
 
 export function resolveImageUrl(imageKey: string | null): string | null {
-  return imageKey ? "/" + safeSegments(imageKey).map(encodeURIComponent).join("/") : null;
+  if (!imageKey) return null;
+  const path = safeSegments(imageKey).map(encodeURIComponent).join("/");
+  if (imageKey.startsWith("covers/")) return `${cdnBaseUrl()}/${path}`;
+  return `/${path}`;
 }
