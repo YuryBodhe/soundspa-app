@@ -86,10 +86,17 @@ async function main() {
       const addGrant = async (offerId: string, productId: string, grantType: "partner_benefit" | "trial", durationDays: number | null) => {
         await tx.insert(commercialOfferGrants).values({ offerId, productId, grantType, durationDays });
       };
-      const makeInvite = async (offerId: string, options: { maxClaims?: number | null; expiresAt?: Date | null; revokedAt?: Date | null } = {}) => {
+      const makeInvite = async (offerId: string, options: { maxClaims?: number | null; createdAt?: Date; expiresAt?: Date | null; revokedAt?: Date | null } = {}) => {
         const token = `opaque-${suffix}-${randomUUID()}`;
         const tokenHash = createHash("sha256").update(token).digest("hex");
-        const [invite] = await tx.insert(commercialPartnerInvites).values({ offerId, tokenHash, maxClaims: options.maxClaims ?? null, expiresAt: options.expiresAt ?? null, revokedAt: options.revokedAt ?? null }).returning();
+        const [invite] = await tx.insert(commercialPartnerInvites).values({
+          offerId,
+          tokenHash,
+          maxClaims: options.maxClaims ?? null,
+          expiresAt: options.expiresAt ?? null,
+          revokedAt: options.revokedAt ?? null,
+          ...(options.createdAt ? { createdAt: options.createdAt } : {}),
+        }).returning();
         return { token, invite };
       };
       const countClaims = async (inviteId: string) => (await tx.select().from(commercialPartnerInviteClaims).where(eq(commercialPartnerInviteClaims.inviteId, inviteId))).length;
@@ -168,8 +175,23 @@ async function main() {
       await addGrant(revokedOffer.id, permanentProduct.id, "partner_benefit", null);
       const revoked = await makeInvite(revokedOffer.id, { revokedAt: now });
       await expectDomainError(claimPartnerInvite({ token: revoked.token, locationId: locationB.id }, runner), "INVITE_UNAVAILABLE");
-      const expired = await makeInvite(revokedOffer.id, { expiresAt: past });
+      const expiredCreatedAt = new Date(now.getTime() - 2 * DAY_MS);
+      const expiredAt = new Date(now.getTime() - DAY_MS);
+      const expired = await makeInvite(revokedOffer.id, { createdAt: expiredCreatedAt, expiresAt: expiredAt });
+      assert(expired.invite.createdAt < expired.invite.expiresAt!, "expired invite fixture must satisfy created_at < expires_at");
+      assert(expired.invite.expiresAt! < new Date(), "expired invite fixture must already be expired at claim time");
+      const expiredBenefitCount = (await tx.select().from(commercialPartnerBenefits).where(and(
+        eq(commercialPartnerBenefits.partnerId, partner.id),
+        eq(commercialPartnerBenefits.productId, permanentProduct.id),
+        eq(commercialPartnerBenefits.locationId, locationB.id),
+      ))).length;
       await expectDomainError(claimPartnerInvite({ token: expired.token, locationId: locationB.id }, runner), "INVITE_UNAVAILABLE");
+      assert.equal(await countClaims(expired.invite.id), 0);
+      assert.equal((await tx.select().from(commercialPartnerBenefits).where(and(
+        eq(commercialPartnerBenefits.partnerId, partner.id),
+        eq(commercialPartnerBenefits.productId, permanentProduct.id),
+        eq(commercialPartnerBenefits.locationId, locationB.id),
+      ))).length, expiredBenefitCount);
       await expectDomainError(claimPartnerInvite({ token: `unknown-${suffix}`, locationId: locationB.id }, runner), "INVITE_UNAVAILABLE");
       await expectDomainError(claimPartnerInvite({ token: revoked.token, locationId: "not-a-uuid" }, runner), "LOCATION_UNAVAILABLE");
 
