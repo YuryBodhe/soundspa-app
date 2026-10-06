@@ -13,7 +13,7 @@ async function main() {
   try {
     const target = await v2Db.execute(sql`SELECT current_database() AS database, current_user AS "user"`);
     assert.equal(target.rows[0]?.database, "soundspa_v2"); assert.equal(target.rows[0]?.user, "soundspa_v2");
-    const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`); assert.equal(journal.rows[0]?.count, 9);
+    const journal = await v2Db.execute(sql`SELECT count(*)::int AS count FROM drizzle_v2.__drizzle_migrations`); assert.equal(journal.rows[0]?.count, 11);
     const counts = await v2Db.execute(sql`SELECT (SELECT count(*)::int FROM channels) AS channels, (SELECT count(*)::int FROM channel_tracks) AS tracks, (SELECT count(*)::int FROM channel_tracks WHERE is_enabled) AS enabled`);
     assert.deepEqual(counts.rows[0], { channels: 11, tracks: 32, enabled: 31 });
     const [{ getHiddenChannelIds }] = await Promise.all([import("../../db/v2/queries/locationChannelVisibility")]);
