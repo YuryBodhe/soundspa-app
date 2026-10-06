@@ -13,6 +13,7 @@ import { localMediaStorage } from "./localMediaStorage";
 import { UploadError } from "./uploadError";
 
 const TRACK_KEY = /^(music|ambient)\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.mp3$/;
+const COVER_KEY = /^covers\/[a-f0-9-]{36}\/[a-f0-9]{64}\.jpg$/;
 
 export class S3ObjectAlreadyExistsError extends UploadError {
   readonly code = "S3_OBJECT_ALREADY_EXISTS";
@@ -60,6 +61,10 @@ function validateTrackKey(key: string, testPrefix?: string) {
   const candidate = testPrefix && key.startsWith(testPrefix) ? key.slice(testPrefix.length) : key;
   if (!TRACK_KEY.test(candidate) || key.split("/").some(part => !part || part === "." || part === "..")) throw new UploadError("Unsafe track storage key.");
 }
+function validateKey(key: string, testPrefix?: string) {
+  const candidate = testPrefix && key.startsWith(testPrefix) ? key.slice(testPrefix.length) : key;
+  if ((!TRACK_KEY.test(candidate) && !COVER_KEY.test(candidate)) || key.split("/").some(part => !part || part === "." || part === "..")) throw new UploadError("Unsafe canonical media key.");
+}
 const status = (error: unknown) => (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
 const isNotFound = (error: unknown) => status(error) === 404 || (error as { name?: string })?.name === "NotFound";
 const isPreconditionFailed = (error: unknown) => status(error) === 412 || (error as { name?: string })?.name === "PreconditionFailed";
@@ -81,7 +86,7 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
     return bodyBytes(result.Body);
   }
   async function matches(key: string, expected: { size?: number; sha256: string }) {
-    validateTrackKey(key, options.testPrefix);
+    validateKey(key, options.testPrefix);
     try {
       const head = await client.send(new HeadObjectCommand(input(key)));
       if (expected.size !== undefined && head.ContentLength !== expected.size) return false;
@@ -94,12 +99,12 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
   return {
     async publishImmutable(source, key) {
       if (key.startsWith("artwork/")) return local.publishImmutable(source, key);
-      validateTrackKey(key, options.testPrefix);
+      validateKey(key, options.testPrefix);
       const bytes = await readFile(source);
       const expected = { size: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") };
       try {
-        await client.send(new PutObjectCommand({ ...input(key), Body: bytes, IfNoneMatch: "*", ContentType: "audio/mpeg",
-          CacheControl: "public, max-age=2592000", Metadata: { sha256: expected.sha256 } }));
+        await client.send(new PutObjectCommand({ ...input(key), Body: bytes, IfNoneMatch: "*", ContentType: key.startsWith("covers/") ? "image/jpeg" : "audio/mpeg",
+          CacheControl: key.startsWith("covers/") ? "public, max-age=31536000, immutable" : "public, max-age=2592000", Metadata: { sha256: expected.sha256 } }));
       } catch (error) {
         if (isPreconditionFailed(error)) throw new S3ObjectAlreadyExistsError();
         try { if (await matches(key, expected)) return; } catch { /* preserve the original ambiguous PUT error */ }
@@ -109,7 +114,7 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
     isAlreadyExistsError: error => error instanceof S3ObjectAlreadyExistsError,
     async size(key) {
       if (key.startsWith("artwork/")) return local.size(key);
-      validateTrackKey(key, options.testPrefix);
+      validateKey(key, options.testPrefix);
       try {
         const result = await client.send(new HeadObjectCommand(input(key)));
         if (result.ContentLength === undefined) throw new UploadError("S3 object size is unavailable.", 503);
@@ -118,12 +123,12 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
     },
     matchesOwnedTrack: matches,
     async inspectOwnedTrack(key) {
-      validateTrackKey(key, options.testPrefix);
+      validateKey(key, options.testPrefix);
       try { await client.send(new HeadObjectCommand(input(key))); return { missing: false }; }
       catch (error) { if (isNotFound(error)) return { missing: true }; throw error; }
     },
     async removeOwnedTrack(key) {
-      validateTrackKey(key, options.testPrefix);
+      validateKey(key, options.testPrefix);
       if (!options.allowDelete || (options.deletePrefix && !key.startsWith(options.deletePrefix))) throw new UploadError("S3 object deletion is disabled.", 503);
       const inspected = await this.inspectOwnedTrack(key);
       if (inspected.missing) return "already-missing";
@@ -131,7 +136,11 @@ export function s3MediaStorage(localRoot: string, config: S3MediaStorageConfig, 
       return "removed";
     },
     async validateReferences(channel: ChannelReference, tracks: TrackReference[]) {
-      await local.validateReferences(channel, []);
+      if (channel.imageKey?.startsWith("covers/")) {
+        validateKey(channel.imageKey, options.testPrefix);
+        const head = await client.send(new HeadObjectCommand(input(channel.imageKey)));
+        if (head.ContentType !== "image/jpeg" || head.CacheControl !== "public, max-age=31536000, immutable") throw new Error("Cover metadata mismatch");
+      } else await local.validateReferences(channel, []);
       try {
         for (const track of tracks.filter(track => track.isEnabled)) {
           validateTrackKey(track.storageKey, options.testPrefix);
