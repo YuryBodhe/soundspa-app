@@ -13,3 +13,7 @@ export const monitoringLifecycleEventType = pgEnum("monitoring_lifecycle_event_t
   "location_created", "location_deleted",
   "device_created", "device_activated", "device_revoked", "device_deleted",
 ]);
+export const commercialProductKind = pgEnum("commercial_product_kind", ["core", "partner", "addon"]);
+export const commercialTrialStatus = pgEnum("commercial_trial_status", ["active", "expired"]);
+export const commercialSubscriptionStatus = pgEnum("commercial_subscription_status", ["active", "past_due", "canceled", "expired"]);
+export const commercialProvider = pgEnum("commercial_provider", ["manual", "staging", "prodamus"]);
