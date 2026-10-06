@@ -225,7 +225,7 @@ async function main() {
     const newLocationAccess = await resolveEffectiveChannelAccess(createdLocation.id, new Date());
     const baseAccess = newLocationAccess.find(({ id }) => id === baseChannel.id);
     const lockedAccess = newLocationAccess.find(({ id }) => id === nonBaseChannel.id);
-    assert(baseAccess?.playable && baseAccess.accessSources.includes("base"));
+    assert(baseAccess && !baseAccess.playable && baseAccess.tracks.length === 0);
     assert(lockedAccess && !lockedAccess.playable && lockedAccess.tracks.length === 0);
     const defaultHidden = new Set(await v2Db.select({ id: locationChannelVisibility.channelId }).from(locationChannelVisibility).where(eq(locationChannelVisibility.locationId, createdLocation.id)).then((rows) => rows.map(({ id }) => id)));
     assert.equal(defaultHidden.size, 0, "New Locations are default-visible through sparse visibility semantics.");

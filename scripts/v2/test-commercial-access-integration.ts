@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
-import { baseChannels, channelTracks, channels, commercialPartnerBenefits, commercialPartners, commercialProductChannels, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations, locationChannelGrants } from "../../db/v2/schema";
+import { channelTracks, channels, commercialPartnerBenefits, commercialPartners, commercialProductChannels, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations, locationChannelGrants } from "../../db/v2/schema";
 
 class Rollback extends Error {}
 async function main() {
@@ -25,13 +25,13 @@ async function main() {
       await tx.insert(commercialPartnerBenefits).values({ locationId: locationA, productId: partnerProduct.id, partnerId: partnerRow.id, startsAt: past, endsAt: null });
       await tx.insert(locationSubscriptions).values({ locationId: locationA, productId: addonProduct.id, provider: "staging", status: "active", startsAt: past, currentPeriodEndsAt: future });
       await tx.insert(locationSubscriptions).values({ locationId: locationB, productId: core.id, provider: "manual", status: "active", startsAt: past, currentPeriodEndsAt: future });
-      await tx.insert(baseChannels).values({ channelId: admin });
+      await tx.insert(locationChannelGrants).values({ locationId: locationA, channelId: admin, source: "admin", enabled: true });
       await tx.insert(locationChannelGrants).values({ locationId: locationA, channelId: admin, source: "admin", enabled: true });
       const accessA = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel]));
-      assert.deepEqual(accessA.get(coreA)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(coreB)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(accessA.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(accessA.get(admin)?.accessSources, ["base", "admin"]);
+      assert.deepEqual(accessA.get(coreA)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(coreB)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(accessA.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(accessA.get(admin)?.accessSources, ["admin"]);
       const accessB = new Map((await resolveEffectiveChannelAccess(locationB, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(accessB.get(coreA)?.accessSources, ["subscription"]); assert.deepEqual(accessB.get(partner)?.accessSources, []);
       await tx.update(locationCoreTrials).set({ status: "expired" }).where(eq(locationCoreTrials.locationId, locationA));
-      const afterTrial = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(afterTrial.get(coreA)?.accessSources, []); assert.deepEqual(afterTrial.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(afterTrial.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(afterTrial.get(admin)?.accessSources, ["base", "admin"]);
+      const afterTrial = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(afterTrial.get(coreA)?.accessSources, []); assert.deepEqual(afterTrial.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(afterTrial.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(afterTrial.get(admin)?.accessSources, ["admin"]);
       await tx.update(locationSubscriptions).set({ status: "expired" }).where(eq(locationSubscriptions.locationId, locationA));
       const afterSubscription = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(afterSubscription.get(addon)?.accessSources, []);
       throw new Rollback();

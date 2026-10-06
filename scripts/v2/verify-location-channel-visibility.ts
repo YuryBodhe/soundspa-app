@@ -60,9 +60,9 @@ async function main() {
         await hideChannelForLocation(a.id, lockedMusic.id, tx); assert.equal(await find(a.id, lockedMusic.id), undefined);
         await showChannelForLocation(a.id, lockedMusic.id, tx); assert(await find(a.id, lockedMusic.id));
         await hideChannelForLocation(a.id, baseAmbient.id, tx); assert.equal(await find(a.id, baseAmbient.id), undefined);
-        // G/O/P/R: global Base and other Locations remain unchanged; show restores Base access.
-        item = await find(b.id, baseAmbient.id); assert(item?.playable); assert(item.accessSources.includes("base"));
-        await showChannelForLocation(a.id, baseAmbient.id, tx); item = await find(a.id, baseAmbient.id); assert(item?.playable); assert(item.accessSources.includes("base"));
+        // G/O/P/R: legacy Base rows no longer grant access; visibility still remains independent.
+        item = await find(b.id, baseAmbient.id); assert(item && !item.playable); assert.deepEqual(item.accessSources, []);
+        await showChannelForLocation(a.id, baseAmbient.id, tx); item = await find(a.id, baseAmbient.id); assert(item && !item.playable); assert.deepEqual(item.accessSources, []);
         // C/D/E: Admin access disappears from the DTO while hidden and returns unchanged on show.
         item = await find(a.id, adminMusic.id); assert(item?.playable); assert(item.accessSources.includes("admin"));
         const [grantBefore] = await tx.select().from(locationChannelGrants).where(eq(locationChannelGrants.channelId, adminMusic.id));

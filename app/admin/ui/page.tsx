@@ -13,12 +13,11 @@ export const dynamic = "force-dynamic";
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getBaseChannelIds }, { getSoundSpaProduct }, { getLocationAdminGrants }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, inArray, isNull }, { v2Db }] = await Promise.all([
-    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/base"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
+  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getLocationAdminGrants }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
   ]);
   const customers = await listOrganizationsWithLocations();
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
-  const baseIds = new Set(await getBaseChannelIds());
   const soundSpaProduct = await getSoundSpaProduct();
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
@@ -32,14 +31,8 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
     {params.message && <p role="status">{params.message.slice(0, 200)}</p>}
     <section className="admin-card">
-      <h2 className="admin-card-title">Base</h2><p className="text-dim">Global package membership uses the effective access resolver.</p>
-      <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Base</th><th /></tr></thead><tbody>
-        {published.map((channel) => <tr key={channel.id}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{baseIds.has(channel.id) ? <span className="badge badge-ok">BASE</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={baseIds.has(channel.id) ? "remove-base" : "add-base"} channelId={channel.id}><button className="btn btn-sm">{baseIds.has(channel.id) ? "Remove from Base" : "Add to Base"}</button></AccessMutationForm></td></tr>)}
-      </tbody></table>
-    </section>
-    <section className="admin-card">
-      <h2 className="admin-card-title">SoundSpa Product</h2>
-      <p className="text-dim">Commercial product composition is independent from legacy Base membership.</p>
+      <h2 className="admin-card-title">SoundSpa Basic</h2>
+      <p className="text-dim">SoundSpa Basic composition defines the standard commercial package.</p>
       {soundSpaProduct ? <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>SoundSpa</th><th /></tr></thead><tbody>{published.map((channel) => <tr key={`soundspa-${channel.id}`}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{soundSpaChannelIds.has(channel.id) ? <span className="badge badge-ok">INCLUDED</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={soundSpaChannelIds.has(channel.id) ? "remove-product-channel" : "add-product-channel"} productCode="soundspa" channelId={channel.id}><button className="btn btn-sm">{soundSpaChannelIds.has(channel.id) ? "Remove from SoundSpa" : "Add to SoundSpa"}</button></AccessMutationForm></td></tr>)}</tbody></table> : <p className="text-dim">SoundSpa product is not provisioned.</p>}
     </section>
     <section className="admin-card">

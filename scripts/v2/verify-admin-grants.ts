@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
-import { organizations, locations, channels, channelTracks, locationChannelGrants, baseChannels, locationChannelEntitlements, locationServiceAccess } from "../../db/v2/schema";
+import { organizations, locations, channels, channelTracks, locationChannelGrants, locationChannelEntitlements, locationServiceAccess } from "../../db/v2/schema";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
 import { disableLocationAdminGrant, removeLocationAdminGrant, upsertLocationAdminGrant } from "../../db/v2/queries/adminGrants";
 
@@ -23,12 +23,11 @@ async function main() {
       await upsertLocationAdminGrant({ locationId, channelId: otherChannel, startsAt: future }, tx); assert.equal((await get(otherChannel)).playable, false); // C
       await upsertLocationAdminGrant({ locationId, channelId: otherChannel, startsAt: null, endsAt: past }, tx); assert.equal((await get(otherChannel)).playable, false); // D
       await upsertLocationAdminGrant({ locationId, channelId: otherChannel, enabled: false }, tx); assert.equal((await get(otherChannel)).playable, false); // E
-      await tx.insert(baseChannels).values({ channelId: adminChannel }); c = await get(adminChannel); assert.deepEqual(c.accessSources, ["base", "admin"]); // F
       await tx.insert(locationChannelEntitlements).values({ locationId, channelId: otherChannel, accessType: "included" }); await upsertLocationAdminGrant({ locationId, channelId: otherChannel }, tx); c = await get(otherChannel); assert.deepEqual(c.accessSources, ["included", "admin"]); // G
       await tx.update(locationChannelEntitlements).set({ accessType: "preview", expiresAt: future }).where(eq(locationChannelEntitlements.channelId, otherChannel)); c = await get(otherChannel); assert.deepEqual(c.accessSources, ["preview", "admin"]); // H
       await tx.update(locationChannelEntitlements).set({ accessType: "subscribed", expiresAt: null }).where(eq(locationChannelEntitlements.channelId, otherChannel)); c = await get(otherChannel); assert.deepEqual(c.accessSources, ["admin"]); // I/J without service
       const same = await upsertLocationAdminGrant({ locationId, channelId: adminChannel }, tx); assert.equal(same.id, (await upsertLocationAdminGrant({ locationId, channelId: adminChannel }, tx)).id); // R
-      await tx.update(locationChannelGrants).set({ endsAt: past }).where(eq(locationChannelGrants.channelId, adminChannel)); c = await get(adminChannel); assert.deepEqual(c.accessSources, ["base"]); // K
+      await tx.update(locationChannelGrants).set({ endsAt: past }).where(eq(locationChannelGrants.channelId, adminChannel)); c = await get(adminChannel); assert.deepEqual(c.accessSources, []); // K
       await disableLocationAdminGrant(locationId, otherChannel, tx); c = await get(otherChannel); assert.deepEqual(c.accessSources, []); // S
       await upsertLocationAdminGrant({ locationId, channelId: otherChannel }, tx); await tx.update(locationChannelGrants).set({ enabled: true }).where(eq(locationChannelGrants.channelId, adminChannel));
       await tx.insert(locationServiceAccess).values({ locationId }); await tx.update(locationServiceAccess).set({ suspendedAt: now }).where(eq(locationServiceAccess.locationId, locationId));
