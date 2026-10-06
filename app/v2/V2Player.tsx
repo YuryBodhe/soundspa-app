@@ -90,7 +90,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
-  const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
+  const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId && channel.playable !== false && channel.tracks.length) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
@@ -184,7 +184,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
 
   useEffect(() => {
     const initial = playableMusicChannels[0];
-    if (initial.tracks.length) replaceMusicEngine(initial.id, initial.tracks);
+    if (initial?.tracks.length) replaceMusicEngine(initial.id, initial.tracks);
     return () => {
       engineUnsubscribeRef.current?.();
       engineUnsubscribeRef.current = null;
@@ -237,7 +237,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
   };
 
   const togglePlayback = () => {
-    if (activeChannel.tracks.length && engineChannelIdRef.current === activeChannelId) toggleMusicPlayback();
+    if (activeChannel?.tracks.length && engineChannelIdRef.current === activeChannelId) toggleMusicPlayback();
   };
 
   const nextMusicTrack = () => {
@@ -259,8 +259,8 @@ export default function V2Player({ catalog, organizationName, locationName, moni
 
   const playbackModeLabel = playbackMode === "repeat-one" ? "Repeat one" : playbackMode[0].toUpperCase() + playbackMode.slice(1);
 
-  const currentTrackName = activeChannel.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
-  const playbackLabel = !activeChannel.tracks.length
+  const currentTrackName = activeChannel?.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
+  const playbackLabel = !activeChannel?.tracks.length
     ? "Planned channel"
     : playback.status === "loading"
       ? currentTrackName ? `Buffering: ${currentTrackName}` : "Buffering"
@@ -278,14 +278,12 @@ export default function V2Player({ catalog, organizationName, locationName, moni
     void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
-  if (!activeChannel) return <div className={s.shell}><PlayerHeader organizationName={organizationName} locationName={locationName} /><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>No playable channels</h1><p>There are no playable music channels for this device.</p></section></main></div>;
-
   return (
     <div
       className={s.shell}
       data-testid="v2-player"
       data-catalog-source="v2-db"
-      data-channel-slug={activeChannel.slug}
+      data-channel-slug={activeChannel?.slug ?? "none"}
       data-playback-status={playback.status}
       data-source-kind={playback.sourceKind ?? "none"}
       data-track-index={playback.currentTrackIndex}
@@ -301,6 +299,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
 
       <main className={s.main}>
         <section className={s.hero}>
+          {activeChannel ? <>
           <div className={s.nowPlayingLabel}>Now selected</div>
           <h1 className={s.channelName}>{activeChannel.title}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
@@ -317,7 +316,11 @@ export default function V2Player({ catalog, organizationName, locationName, moni
               {playbackModeLabel}
             </button>
             <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track"><span>Next</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
-          </div>
+          </div></> : <>
+            <div className={s.nowPlayingLabel}>Player</div>
+            <h1 className={s.channelName}>No channels currently available</h1>
+            <p className={s.channelMood}>There are no playable music channels for this location.</p>
+          </>}
         </section>
 
         <section className={s.section}>

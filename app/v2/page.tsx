@@ -14,7 +14,6 @@ export default async function SoundSpaV2Page() {
     // and avoids any DB connection during the production build.
     const { getPublishedContentCatalog } = await import("../../db/v2/queries/content");
     const catalog = toPlayerCatalog(await getPublishedContentCatalog());
-    if (!catalog.some((c) => c.kind === "music" && c.tracks.length)) throw new Error("No playable catalog");
     return <V2Player catalog={catalog} />;
   } catch {
     console.error("SoundSpa V2 catalog loading failed");
