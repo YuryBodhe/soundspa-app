@@ -11,4 +11,5 @@ assert(!isLocale("de") && !isLocale(null));
 assert.equal(browserLocale("ru-RU"), "ru"); assert.equal(browserLocale("th"), "th"); assert.equal(browserLocale("de-DE"), null);
 for (const dictionary of [ru, vi, th]) for (const key of Object.keys(en) as Array<keyof typeof en>) assert.equal(typeof dictionary[key], "string", `missing ${key}`);
 assert.equal(en.playingTrack, "Playing track");
+assert.equal(en.standard, "Standard"); assert.equal(ru.standard, "Стандартный"); assert.equal(vi.standard, "Tiêu chuẩn"); assert.equal(th.standard, "มาตรฐาน");
 console.info("V2 i18n dictionaries/locales PASS: supported locales, browser hints, typed dictionary completeness.");

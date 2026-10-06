@@ -267,7 +267,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
     engineRef.current?.setPlaybackMode(nextMode);
   };
 
-  const playbackModeLabel = playbackMode === "repeat-one" ? t("repeatOne") : playbackMode === "shuffle" ? t("shuffle") : t("normal");
+  const playbackModeLabel = playbackMode === "repeat-one" ? t("repeatOne") : playbackMode === "shuffle" ? t("shuffle") : t("standard");
 
   const currentTrackName = activeChannel?.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
   const playbackLabel = !activeChannel?.tracks.length
