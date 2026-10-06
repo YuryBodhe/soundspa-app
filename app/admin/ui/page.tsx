@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getLocationAdminGrants }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
-    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/adminGrants"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
+  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+    import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
   ]);
   const customers = await listOrganizationsWithLocations();
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
@@ -22,10 +22,9 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
   const selected = locs.find(({ location }) => location.id === params.location) ?? locs[0];
-  const [effective, grants, hiddenIds, selectedDevices] = selected ? await Promise.all([
-    resolveEffectiveChannelAccess(selected.location.id, new Date()), getLocationAdminGrants(selected.location.id), getHiddenChannelIds(selected.location.id), import("../../../db/v2/queries/devices").then(({ listDevicesForLocation }) => listDevicesForLocation(selected.location.id)),
-  ]) : [[], [], new Set<string>(), []];
-  const grantByChannel = new Map(grants.map(({ grant }) => [grant.channelId, grant]));
+  const [effective, hiddenIds, selectedDevices] = selected ? await Promise.all([
+    resolveEffectiveChannelAccess(selected.location.id, new Date()), getHiddenChannelIds(selected.location.id), import("../../../db/v2/queries/devices").then(({ listDevicesForLocation }) => listDevicesForLocation(selected.location.id)),
+  ]) : [[], new Set<string>(), []];
 
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
@@ -55,16 +54,15 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
       <p className="text-dim">{selected.organization.name} · {selected.location.slug} · Effective playable channels: {effective.filter((c) => c.playable).length}</p>
       {!selected.organization.archivedAt && <p><a className="btn btn-primary" href={`/admin/ui/locations/${encodeURIComponent(selected.location.id)}/player-preview`} target="_blank" rel="noopener noreferrer">Open Player Preview</a></p>}
       {!selected.organization.archivedAt && <DeviceProvisioningPanel locationId={selected.location.id} devices={selectedDevices} />}
-      <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Admin Override</th><th /></tr></thead><tbody>
+      <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>Visibility</th><th>Effective Access</th><th>Sources</th><th>Actions</th></tr></thead><tbody>
         {effective.map((channel) => {
-          const grant = grantByChannel.get(channel.id); const hidden = hiddenIds.has(channel.id);
+          const hidden = hiddenIds.has(channel.id); const hasAdminSource = channel.accessSources.includes("admin");
           return <tr key={channel.id}>
             <td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td>
             <td><span className={hidden ? "badge badge-warn" : "badge badge-ok"}>{hidden ? "HIDDEN" : "VISIBLE"}</span></td>
-            <td>{channel.playable ? <span className="badge badge-ok">PLAYABLE</span> : <span className="badge badge-warn">LOCKED</span>}</td>
+            <td>{hasAdminSource ? <AccessMutationForm operation="remove-admin" locationId={selected.location.id} channelId={channel.id}><button type="submit" className="badge badge-ok" title="Remove manual access">OPEN</button></AccessMutationForm> : channel.playable ? <span className="badge badge-ok" title="Access provided by Trial / Subscription / Partner Benefit">OPEN</span> : <AccessMutationForm operation="enable-admin" locationId={selected.location.id} channelId={channel.id}><button type="submit" className="badge badge-warn" title="Grant manual access">LOCKED</button></AccessMutationForm>}</td>
             <td>{channel.accessSources.length ? channel.accessSources.join(", ") : "—"}</td>
-            <td>{grant ? <span className={grant.enabled ? "badge badge-ok" : "badge badge-neutral"}>{grant.enabled ? "ADMIN ON" : "ADMIN OFF"}</span> : "OFF"}</td>
-            <td><AccessMutationForm operation={hidden ? "show-channel" : "hide-channel"} locationId={selected.location.id} channelId={channel.id}><button className="btn btn-sm">{hidden ? "Show" : "Hide"}</button></AccessMutationForm></td>
+            <td><AccessMutationForm operation={hidden ? "show-channel" : "hide-channel"} locationId={selected.location.id} channelId={channel.id}><button className="btn btn-sm">{hidden ? "Show" : "Hide"}</button></AccessMutationForm>{channel.playable && !hasAdminSource && <span className="text-dim" title="Access provided by Trial / Subscription / Partner Benefit">Provided</span>}</td>
           </tr>;
         })}
       </tbody></table>
