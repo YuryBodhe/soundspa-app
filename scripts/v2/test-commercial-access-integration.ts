@@ -32,7 +32,7 @@ async function main() {
       const accessB = new Map((await resolveEffectiveChannelAccess(locationB, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(accessB.get(coreA)?.accessSources, ["subscription"]); assert.deepEqual(accessB.get(partner)?.accessSources, []);
       await tx.update(locationCoreTrials).set({ status: "expired" }).where(eq(locationCoreTrials.locationId, locationA));
       const afterTrial = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(afterTrial.get(coreA)?.accessSources, []); assert.deepEqual(afterTrial.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(afterTrial.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(afterTrial.get(admin)?.accessSources, ["base", "admin"]);
-      await tx.update(locationSubscriptions).set({ status: "expired", currentPeriodEndsAt: past }).where(eq(locationSubscriptions.locationId, locationA));
+      await tx.update(locationSubscriptions).set({ status: "expired" }).where(eq(locationSubscriptions.locationId, locationA));
       const afterSubscription = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel])); assert.deepEqual(afterSubscription.get(addon)?.accessSources, []);
       throw new Rollback();
     });
