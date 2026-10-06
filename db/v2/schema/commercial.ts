@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { commercialProductKind, commercialProvider, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
+import { boolean, check, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { commercialOfferGrantType, commercialProductKind, commercialProvider, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
 import { organizations } from "./core/organizations";
 import { locations } from "./core/locations";
 import { channels } from "./product/channels";
@@ -109,4 +109,62 @@ export const commercialOrganizationPayerReference = pgTable("commercial_organiza
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   foreignKey({ name: "commercial_organization_payer_references_organization_fk", columns: [table.organizationId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+]);
+
+export const commercialOffers = pgTable("commercial_offers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  partnerId: uuid("partner_id").notNull(),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_offers_partner_code_unique").on(table.partnerId, table.code),
+  foreignKey({ name: "commercial_offers_partner_fk", columns: [table.partnerId], foreignColumns: [commercialPartners.id] }).onDelete("restrict"),
+  check("commercial_offers_code_nonempty", sql`length(btrim(${table.code})) > 0`),
+  check("commercial_offers_name_nonempty", sql`length(btrim(${table.name})) > 0`),
+]);
+
+export const commercialOfferGrants = pgTable("commercial_offer_grants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  offerId: uuid("offer_id").notNull(),
+  productId: uuid("product_id").notNull(),
+  grantType: commercialOfferGrantType("grant_type").notNull(),
+  durationDays: integer("duration_days"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_offer_grants_offer_product_type_unique").on(table.offerId, table.productId, table.grantType),
+  foreignKey({ name: "commercial_offer_grants_offer_fk", columns: [table.offerId], foreignColumns: [commercialOffers.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_offer_grants_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
+  check("commercial_offer_grants_duration_valid", sql`(${table.grantType} = 'partner_benefit' AND (${table.durationDays} IS NULL OR ${table.durationDays} > 0)) OR (${table.grantType} = 'trial' AND ${table.durationDays} > 0)`),
+]);
+
+export const commercialPartnerInvites = pgTable("commercial_partner_invites", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  offerId: uuid("offer_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  maxClaims: integer("max_claims"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_partner_invites_token_hash_unique").on(table.tokenHash),
+  index("commercial_partner_invites_offer_idx").on(table.offerId),
+  foreignKey({ name: "commercial_partner_invites_offer_fk", columns: [table.offerId], foreignColumns: [commercialOffers.id] }).onDelete("restrict"),
+  check("commercial_partner_invites_token_hash_sha256", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+  check("commercial_partner_invites_max_claims_positive", sql`${table.maxClaims} IS NULL OR ${table.maxClaims} > 0`),
+  check("commercial_partner_invites_expiry_after_creation", sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`),
+]);
+
+export const commercialPartnerInviteClaims = pgTable("commercial_partner_invite_claims", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  inviteId: uuid("invite_id").notNull(),
+  locationId: uuid("location_id").notNull(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_partner_invite_claims_invite_location_unique").on(table.inviteId, table.locationId),
+  index("commercial_partner_invite_claims_location_idx").on(table.locationId),
+  foreignKey({ name: "commercial_partner_invite_claims_invite_fk", columns: [table.inviteId], foreignColumns: [commercialPartnerInvites.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_partner_invite_claims_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
 ]);

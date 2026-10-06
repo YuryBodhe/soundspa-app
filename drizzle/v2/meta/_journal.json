@@ -85,6 +85,13 @@
       "when": 1791290726000,
       "tag": "0011_channel_translations",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791298062265,
+      "tag": "0012_partner_offer_invites",
+      "breakpoints": true
     }
   ]
 }
