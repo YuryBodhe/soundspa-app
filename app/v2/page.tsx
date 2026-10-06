@@ -1,6 +1,7 @@
 import V2Player from "./V2Player";
 import s from "./v2.module.css";
 import { toPlayerCatalog } from "./catalog";
+import { I18nProvider } from "../i18n/I18nProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export default async function SoundSpaV2Page() {
     // and avoids any DB connection during the production build.
     const { getPublishedContentCatalog } = await import("../../db/v2/queries/content");
     const catalog = toPlayerCatalog(await getPublishedContentCatalog());
-    return <V2Player catalog={catalog} />;
+    return <I18nProvider><V2Player catalog={catalog} /></I18nProvider>;
   } catch {
     console.error("SoundSpa V2 catalog loading failed");
     return <div className={s.shell}><header className={s.header}><div className={s.brand}>Sound Spa 2</div></header><main className={s.main}><section className={s.hero} role="alert"><h1 className={s.channelName}>Catalog unavailable</h1><p>Unable to load the music catalog. Please try again later.</p></section></main></div>;

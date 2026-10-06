@@ -10,6 +10,12 @@ import type { PlayerChannel } from "./catalog";
 import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
 import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
+import { useI18n } from "../i18n/useI18n";
+
+function LanguageSelector() {
+  const { locale, setLocale, t } = useI18n();
+  return <label className={s.languageSelector} title={t("selectLanguage")}><span className={s.srOnly}>{t("language")}</span><select value={locale} onChange={(event) => setLocale(event.target.value as typeof locale)} aria-label={t("selectLanguage")}><option value="en">EN</option><option value="ru">RU</option><option value="vi">VI</option><option value="th">TH</option></select></label>;
+}
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   const [enabled, setEnabled] = useState(false);
@@ -34,6 +40,7 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
 }
 
 function MusicCard({ channel, active, playing, onSelect }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void }) {
+  const { t } = useI18n();
   return (
     <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
       <span className={s.cardImage}>
@@ -41,12 +48,13 @@ function MusicCard({ channel, active, playing, onSelect }: { channel: PlayerChan
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active && playing ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span><span className={s.cardMood}>{channel.playable === false ? "Locked" : channel.mood}</span></span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span><span className={s.cardMood}>{channel.playable === false ? t("locked") : channel.mood}</span></span>
     </button>
   );
 }
 
 function AmbientCard({ channel, active, onSelect }: { channel: PlayerChannel; active: boolean; onSelect: () => void }) {
+  const { t } = useI18n();
   return (
     <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
       <span className={s.cardImage}>
@@ -54,7 +62,7 @@ function AmbientCard({ channel, active, onSelect }: { channel: PlayerChannel; ac
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span>{channel.playable === false && <span className={s.cardMood}>Locked</span>}</span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{channel.title}</span>{channel.playable === false && <span className={s.cardMood}>{t("locked")}</span>}</span>
     </button>
   );
 }
@@ -65,13 +73,15 @@ function WaveVisualization({ playing }: { playing: boolean }) {
 }
 
 function PlayerHeader({ organizationName, locationName }: { organizationName?: string; locationName?: string }) {
+  const { t } = useI18n();
   return <header className={s.header}>
-    <div><div className={s.brand}>{organizationName || "Sound Spa 2"}</div><div className={s.platformTag}>{organizationName && locationName ? locationName : "Local prototype"}</div></div>
-    <div className={s.badge}>Test mode</div>
+    <div><div className={s.brand}>{organizationName || t("brand")}</div><div className={s.platformTag}>{organizationName && locationName ? locationName : t("localPrototype")}</div></div>
+    <div className={s.headerOverlay}><LanguageSelector /><div className={s.badge}>{t("testMode")}</div></div>
   </header>;
 }
 
 export default function V2Player({ catalog, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
+  const { t } = useI18n();
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
   const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
@@ -257,20 +267,20 @@ export default function V2Player({ catalog, organizationName, locationName, moni
     engineRef.current?.setPlaybackMode(nextMode);
   };
 
-  const playbackModeLabel = playbackMode === "repeat-one" ? "Repeat one" : playbackMode[0].toUpperCase() + playbackMode.slice(1);
+  const playbackModeLabel = playbackMode === "repeat-one" ? t("repeatOne") : playbackMode === "shuffle" ? t("shuffle") : t("normal");
 
   const currentTrackName = activeChannel?.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
   const playbackLabel = !activeChannel?.tracks.length
-    ? "Planned channel"
-    : playback.status === "loading"
-      ? currentTrackName ? `Buffering: ${currentTrackName}` : "Buffering"
+      ? t("plannedChannel")
+      : playback.status === "loading"
+      ? currentTrackName ? `${t("buffering")}: ${currentTrackName}` : t("buffering")
       : playback.status === "error"
-        ? "Playback error"
+        ? t("playbackError")
         : playing
-          ? currentTrackName ? `Playing: ${currentTrackName}` : "Playing track"
+          ? currentTrackName ? `${t("playing")}: ${currentTrackName}` : t("playingTrack")
           : playback.status === "paused"
-            ? currentTrackName ? `Paused: ${currentTrackName}` : "Preview paused"
-            : currentTrackName ? `Ready: ${currentTrackName}` : "Ready to play";
+            ? currentTrackName ? `${t("paused")}: ${currentTrackName}` : `${t("paused")}`
+            : currentTrackName ? `${t("ready")}: ${currentTrackName}` : t("readyToPlay");
 
   const toggleAmbient = (channel: PlayerChannel) => {
     if (channel.playable === false || !channel.tracks.length) return;
@@ -300,7 +310,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
       <main className={s.main}>
         <section className={s.hero}>
           {activeChannel ? <>
-          <div className={s.nowPlayingLabel}>Now selected</div>
+          <div className={s.nowPlayingLabel}>{t("nowSelected")}</div>
           <h1 className={s.channelName}>{activeChannel.title}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
           <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={buffering ? `Pause buffering ${activeChannel.title}` : playing ? `Pause ${activeChannel.title}` : `Play ${activeChannel.title}`} aria-pressed={playing} aria-busy={buffering}>
@@ -310,32 +320,32 @@ export default function V2Player({ catalog, organizationName, locationName, moni
           </button>
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
-          <div className={s.trackControls} aria-label="Music track controls">
-            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Previous track"><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>Previous</span></button>
-            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} aria-label={`Playback mode: ${playbackModeLabel}`} title={`Playback mode: ${playbackModeLabel}`}>
+          <div className={s.trackControls} aria-label={t("musicChannels")}>
+            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label={t("previousTrack")}><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>{t("previous")}</span></button>
+            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} aria-label={`${t("playbackMode")}: ${playbackModeLabel}`} title={`${t("playbackMode")}: ${playbackModeLabel}`}>
               {playbackModeLabel}
             </button>
-            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label="Next track"><span>Next</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
+            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label={t("nextTrack")}><span>{t("next")}</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div></> : <>
-            <div className={s.nowPlayingLabel}>Player</div>
-            <h1 className={s.channelName}>No channels currently available</h1>
-            <p className={s.channelMood}>There are no playable music channels for this location.</p>
+            <div className={s.nowPlayingLabel}>{t("player")}</div>
+            <h1 className={s.channelName}>{t("noChannels")}</h1>
+            <p className={s.channelMood}>{t("noPlayableChannels")}</p>
           </>}
         </section>
 
         <section className={s.section}>
-          <div className={s.sectionHeader}><div className={s.sectionLabel}>Music channels</div><div className={s.sectionCount}>{musicChannels.length} channels</div></div>
+          <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("musicChannels")}</div><div className={s.sectionCount}>{musicChannels.length} {t("channels")}</div></div>
           <div className={s.cardsRow} data-testid="music-row">
             {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} onSelect={() => selectMusic(channel)} />)}
           </div>
         </section>
 
         <section className={`${s.section} ${s.ambientSection}`} title={ambientPlayback.error ?? undefined}>
-          <div className={s.sectionHeader}><div className={s.sectionLabel}>Ambient</div><div className={s.ambientValue}>{ambientVolume}%</div></div>
+          <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("ambient")}</div><div className={s.ambientValue}>{ambientVolume}%</div></div>
           <div className={s.sliderWrap}>
             <div className={s.sliderTrack} /><div className={s.sliderFill} style={{ width: `${ambientVolume}%` }} />
             <div className={s.sliderThumb} style={{ left: `${ambientVolume}%` }}><span /></div>
-            <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label="Ambient volume" />
+            <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
             {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} onSelect={() => toggleAmbient(channel)} />)}
@@ -343,7 +353,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
         </section>
       </main>
 
-      <footer className={s.footer}><div><div className={s.footerLabel}>Prototype access</div><div className={s.footerText}>Local test · no account required</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
+      <footer className={s.footer}><div><div className={s.footerLabel}>{t("prototypeAccess")}</div><div className={s.footerText}>{t("noAccount")}</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
     </div>
   );
 }
