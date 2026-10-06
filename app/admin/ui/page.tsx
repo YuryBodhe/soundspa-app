@@ -33,7 +33,7 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   ]) : [[], new Set<string>(), [], null];
 
   return <>
-    <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
+    <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/offers" className="btn btn-sm">Offers &amp; Invites</Link><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
     {params.message && <p role="status">{params.message.slice(0, 200)}</p>}
     <section className="admin-card">
       <h2 className="admin-card-title">Products</h2>
