@@ -9,8 +9,10 @@ export default async function PartnerOffersPage() {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) {
     throw new Error("V2 operator authorization required.");
   }
-  const { listPartnerOffers } = await import("../../../../db/v2/services/partnerOfferAdmin");
+  const { listPartnerInvites, listPartnerOffers } = await import("../../../../db/v2/services/partnerOfferAdmin");
   const data = await listPartnerOffers();
+  const inviteLists = await Promise.all(data.partners.flatMap(({ offers }) => offers.map(async (offer) => [offer.id, await listPartnerInvites(offer.id)] as const)));
+  const invitesByOffer = new Map(inviteLists);
   const partners = data.partners.map(({ partner, offers }) => ({
     id: partner.id,
     name: partner.name,
@@ -23,6 +25,14 @@ export default async function PartnerOffersPage() {
       isActive: offer.isActive,
       inviteCount: offer.inviteCount,
       grantsLocked: offer.grantsLocked,
+      invites: (invitesByOffer.get(offer.id) ?? []).map((invite) => ({
+        id: invite.id,
+        createdAt: invite.createdAt.toISOString(),
+        expiresAt: invite.expiresAt?.toISOString() ?? null,
+        maxClaims: invite.maxClaims,
+        claimCount: invite.claimCount,
+        status: invite.status,
+      })),
       grants: offer.grants.map(({ grant, product }) => ({
         id: grant.id,
         productId: product.id,

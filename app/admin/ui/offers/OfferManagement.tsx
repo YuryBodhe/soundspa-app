@@ -2,10 +2,12 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import InviteManagement from "./InviteManagement";
 
 type Product = { id: string; code: string; name: string; kind: string; isActive: boolean };
 type Grant = { id: string; productId: string; productName: string; productKind: string; productActive: boolean; grantType: "partner_benefit" | "trial"; durationDays: number | null };
-type Offer = { id: string; code: string; name: string; isActive: boolean; inviteCount: number; grantsLocked: boolean; grants: Grant[] };
+type Invite = { id: string; createdAt: string; expiresAt: string | null; maxClaims: number | null; claimCount: number; status: "ACTIVE" | "EXPIRED" | "EXHAUSTED" | "REVOKED" };
+type Offer = { id: string; code: string; name: string; isActive: boolean; inviteCount: number; grantsLocked: boolean; grants: Grant[]; invites: Invite[] };
 type Partner = { id: string; name: string; code: string; isActive: boolean; offers: Offer[] };
 
 export default function OfferManagement({ partners, products }: { partners: Partner[]; products: Product[] }) {
@@ -71,6 +73,7 @@ export default function OfferManagement({ partners, products }: { partners: Part
             <button className="btn btn-primary" disabled={pending === `grant-${offer.id}` || products.length === 0}>{pending === `grant-${offer.id}` ? "Adding…" : "Add grant"}</button>
             <p className="text-dim">A Trial requires a positive number of days. A Partner benefit may be permanent or time-limited.</p>
           </form>}
+          <InviteManagement offerId={offer.id} offerActive={offer.isActive} partnerActive={partner.isActive} grants={offer.grants.map(({ productActive }) => ({ productActive }))} invites={offer.invites} />
         </div>
       </details>)}
       <form className="partner-offer-create-form" onSubmit={(event) => void createOffer(event, partner.id)}>
