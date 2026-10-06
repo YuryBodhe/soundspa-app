@@ -208,8 +208,8 @@ async function main() {
 
       const inactiveProductOffer = await makeOffer("inactive-product");
       await tx.insert(commercialOfferGrants).values([
-        { id: `00000000-0000-4000-8000-${suffix.replaceAll("-", "").slice(0, 12)}`, offerId: inactiveProductOffer.id, productId: rollbackBenefitProduct.id, grantType: "partner_benefit", durationDays: null },
-        { id: `ffffffff-ffff-4fff-8fff-${suffix.replaceAll("-", "").slice(0, 12)}`, offerId: inactiveProductOffer.id, productId: inactiveProduct.id, grantType: "partner_benefit", durationDays: null },
+        { offerId: inactiveProductOffer.id, productId: rollbackBenefitProduct.id, grantType: "partner_benefit", durationDays: null },
+        { offerId: inactiveProductOffer.id, productId: inactiveProduct.id, grantType: "partner_benefit", durationDays: null },
       ]);
       const inactiveProductInvite = await makeInvite(inactiveProductOffer.id);
       const benefitCountBeforeInactive = (await tx.select().from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, locationB.id), eq(commercialPartnerBenefits.productId, rollbackBenefitProduct.id)))).length;
@@ -228,10 +228,10 @@ async function main() {
       const fnName = `p3_fail_${suffix.replaceAll("-", "")}`;
       const triggerName = `${fnName}_trigger`;
       const rollbackOffer = await makeOffer("forced-rollback");
-      const grantTail = suffix.replaceAll("-", "").slice(0, 12);
+      const [benefitGrantId, trialGrantId] = [randomUUID(), randomUUID()].sort();
       await tx.insert(commercialOfferGrants).values([
-        { id: `00000000-0000-4000-8000-${grantTail}`, offerId: rollbackOffer.id, productId: rollbackBenefitProduct.id, grantType: "partner_benefit", durationDays: null },
-        { id: `ffffffff-ffff-4fff-8fff-${grantTail}`, offerId: rollbackOffer.id, productId: rollbackTrialProduct.id, grantType: "trial", durationDays: 30 },
+        { id: benefitGrantId, offerId: rollbackOffer.id, productId: rollbackBenefitProduct.id, grantType: "partner_benefit", durationDays: null },
+        { id: trialGrantId, offerId: rollbackOffer.id, productId: rollbackTrialProduct.id, grantType: "trial", durationDays: 30 },
       ]);
       const rollbackInvite = await makeInvite(rollbackOffer.id);
       await tx.execute(sql.raw(`CREATE FUNCTION public.${fnName}() RETURNS trigger LANGUAGE plpgsql AS $p3$ BEGIN IF NEW.product_id = '${rollbackTrialProduct.id}'::uuid THEN RAISE EXCEPTION 'intentional P3 rollback test' USING ERRCODE = 'P0001'; END IF; RETURN NEW; END; $p3$`));
