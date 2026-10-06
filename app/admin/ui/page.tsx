@@ -13,11 +13,17 @@ export const dynamic = "force-dynamic";
 export default async function SoundSpaAdmin({ searchParams }: { searchParams: Promise<{ location?: string; message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const params = await searchParams;
-  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { getSoundSpaTrial }, { listOrganizationsWithLocations }, { channels, commercialProductChannels, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
+  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { getSoundSpaTrial }, { listOrganizationsWithLocations }, { channels, commercialPartners, commercialProductChannels, commercialProducts, locations, organizations }, { and, asc, eq, isNull }, { v2Db }] = await Promise.all([
     import("../../../db/v2/queries/effectiveAccess"), import("../../../db/v2/queries/commercialProducts"), import("../../../db/v2/queries/locationChannelVisibility"), import("../../../db/v2/queries/coreTrials"), import("../../../db/v2/queries/core"), import("../../../db/v2/schema"), import("drizzle-orm"), import("../../../db/v2/client"),
   ]);
   const customers = await listOrganizationsWithLocations();
   const published = await v2Db.select().from(channels).where(and(eq(channels.isPublished, true), isNull(channels.archivedAt))).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.id));
+  const products = await v2Db.select().from(commercialProducts).orderBy(asc(commercialProducts.code));
+  const productComposition = await v2Db.select({ productId: commercialProductChannels.productId, channelId: channels.id, channelSlug: channels.slug, channelName: channels.displayName })
+    .from(commercialProductChannels).innerJoin(channels, eq(channels.id, commercialProductChannels.channelId)).orderBy(asc(channels.sortOrder), asc(channels.id));
+  const productChannels = new Map<string, typeof productComposition>();
+  for (const item of productComposition) productChannels.set(item.productId, [...(productChannels.get(item.productId) ?? []), item]);
+  const partners = await v2Db.select().from(commercialPartners).orderBy(asc(commercialPartners.code));
   const soundSpaProduct = await getSoundSpaProduct();
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
   const locs = await v2Db.select({ location: locations, organization: organizations }).from(locations).innerJoin(organizations, eq(organizations.id, locations.organizationId)).where(isNull(locations.archivedAt)).orderBy(asc(locations.name));
@@ -29,6 +35,23 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav"><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
     {params.message && <p role="status">{params.message.slice(0, 200)}</p>}
+    <section className="admin-card">
+      <h2 className="admin-card-title">Products</h2>
+      <table className="admin-table"><thead><tr><th>Code</th><th>Name</th><th>Kind</th><th>State</th><th>Channel composition</th></tr></thead><tbody>
+        {products.map((product) => <tr key={product.id}>
+          <td>{product.code}</td><td>{product.name}</td><td>{product.kind}</td><td>{product.isActive ? "Active" : "Inactive"}</td>
+          <td>{(productChannels.get(product.id) ?? []).map((channel, index) => <span key={channel.channelId} title={channel.channelSlug}>{index ? ", " : ""}{channel.channelName}</span>)}</td>
+        </tr>)}
+        {!products.length && <tr><td colSpan={5} className="text-dim">No Products configured.</td></tr>}
+      </tbody></table>
+    </section>
+    <section className="admin-card">
+      <h2 className="admin-card-title">Partners</h2>
+      <table className="admin-table"><thead><tr><th>Code</th><th>Name</th><th>State</th></tr></thead><tbody>
+        {partners.map((partner) => <tr key={partner.id}><td>{partner.code}</td><td>{partner.name}</td><td>{partner.isActive ? "Active" : "Inactive"}</td></tr>)}
+        {!partners.length && <tr><td colSpan={3} className="text-dim">No Partners configured.</td></tr>}
+      </tbody></table>
+    </section>
     <section className="admin-card">
       <h2 className="admin-card-title">SoundSpa Basic</h2>
       <p className="text-dim">SoundSpa Basic composition defines the standard commercial package.</p>
