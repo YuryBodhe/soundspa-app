@@ -71,6 +71,20 @@
       "when": 1790928821241,
       "tag": "0009_monitoring_generation",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791274271924,
+      "tag": "0010_commercial_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791290726000,
+      "tag": "0011_channel_translations",
+      "breakpoints": true
     }
   ]
 }
