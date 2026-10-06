@@ -3,6 +3,9 @@ import { operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 import { resolveImageUrl } from "../../../../v2/mediaUrls";
 import { UploadControls } from "./UploadControls";
 import { DeleteTrackControl } from "./DeleteTrackControl";
+import { v2Db } from "../../../../../db/v2/client";
+import { channelTranslations } from "../../../../../db/v2/schema";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 const endpoint = "/api/v2/admin/content";
@@ -19,12 +22,13 @@ function MetadataFields({ channel, locked = false }: { channel?: Metadata; locke
     <input type="hidden" name="imageKey" value={channel?.imageKey ?? ""} />
   </>;
 }
+function TranslationFields({ values }: { values: Record<string, string> }) { return <details><summary>Translations</summary><label>EN<input name="translation_en" maxLength={200} defaultValue={values.en ?? ""} /></label><label>RU<input name="translation_ru" maxLength={200} defaultValue={values.ru ?? ""} /></label><label>VI<input name="translation_vi" maxLength={200} defaultValue={values.vi ?? ""} /></label><label>TH<input name="translation_th" maxLength={200} defaultValue={values.th ?? ""} /></label><p className="text-dim">Leave a field empty to use the default title or English fallback.</p></details>; }
 
 export default async function ContentAdminPage({ searchParams }: { searchParams: Promise<{ message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const { listAdminChannels, getAdminChannel } = await import("../../../../../db/v2/queries/contentAdmin");
   const list = await listAdminChannels();
-  const details = await Promise.all(list.map((channel) => getAdminChannel(channel.id)));
+  const details = await Promise.all(list.map(async (channel) => { const detail = await getAdminChannel(channel.id); const rows = await v2Db.select().from(channelTranslations).where(eq(channelTranslations.channelId, channel.id)); return detail && { ...detail, translations: Object.fromEntries(rows.map((row) => [row.locale, row.title])) }; }));
   const { message } = await searchParams;
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">V2 Content — Channels</h1></div>
@@ -40,7 +44,7 @@ export default async function ContentAdminPage({ searchParams }: { searchParams:
       <h2 className="admin-card-title">{channel.displayName}</h2><p className="text-dim">UUID: {channel.id}</p>
       <h3>Channel metadata</h3><form action={endpoint} method="post" className="admin-form">
         <input type="hidden" name="operation" value="edit" /><input type="hidden" name="channelId" value={channel.id} />
-        <fieldset disabled={!!channel.archivedAt}><MetadataFields channel={channel} locked={channel.tracks.length > 0} /><button className="btn">Save metadata</button></fieldset>
+        <fieldset disabled={!!channel.archivedAt}><MetadataFields channel={channel} locked={channel.tracks.length > 0} /><TranslationFields values={channel.translations} /><button className="btn">Save metadata</button></fieldset>
       </form>
       {channel.tracks.length > 0 && <p className="text-dim">Slug and kind are locked because track records exist.</p>}
       <h3>Artwork</h3>{channel.imageKey && <img src={resolveImageUrl(channel.imageKey)!} alt={`${channel.displayName} artwork`} width={120} height={120} style={{objectFit:"cover"}} />}

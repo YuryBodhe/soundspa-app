@@ -7,7 +7,7 @@ import type { CustomerCatalogChannel } from "@/lib/v2/customerCatalog";
 import { I18nProvider, useI18n } from "../i18n/I18nProvider";
 export type ApiChannel = CustomerCatalogChannel;
 type CatalogState = {status:"loading"|"ready"|"unauthorized"|"error";catalog?:PlayerChannel[];organizationName?:string;locationName?:string};
-function toPlayerChannels(channels: ApiChannel[]): PlayerChannel[] { return channels.map(c=>({id:c.id,slug:c.slug,kind:c.kind,title:c.displayName,mood:c.description??"",image:c.imageUrl,playable:c.playable,accessSources:c.accessSources,accessExpiries:c.accessExpiries,tracks:c.tracks})); }
+function toPlayerChannels(channels: ApiChannel[]): PlayerChannel[] { return channels.map(c=>({id:c.id,slug:c.slug,kind:c.kind,title:c.displayName,localizedTitles:c.localizedTitles,mood:c.description??"",image:c.imageUrl,playable:c.playable,accessSources:c.accessSources,accessExpiries:c.accessExpiries,tracks:c.tracks})); }
 function CustomerCatalogPlayerContent({ initialCatalog, organizationName: initialOrganizationName, locationName: initialLocationName, monitoringEnabled = false }: { initialCatalog?: ApiChannel[]; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t } = useI18n();
   const [state,setState]=useState<CatalogState>(()=>initialCatalog ? {status:"ready",catalog:toPlayerChannels(initialCatalog),organizationName:initialOrganizationName,locationName:initialLocationName} : {status:"loading"});

@@ -1,6 +1,7 @@
 import { resolveEffectiveChannelAccess } from "@/db/v2/queries/effectiveAccess";
 import { filterVisibleChannels, getHiddenChannelIds } from "@/db/v2/queries/locationChannelVisibility";
 import { resolveImageUrl, resolveMediaUrl } from "@/app/v2/mediaUrls";
+import { getChannelLocalizedTitles } from "@/db/v2/queries/channelTranslations";
 
 /** Customer-safe catalog shape shared by the device API and operator preview. */
 export type CustomerCatalogChannel = {
@@ -10,6 +11,7 @@ export type CustomerCatalogChannel = {
   kind: "music" | "ambient";
   description: string | null;
   imageUrl: string | null;
+  localizedTitles: Record<string, string>;
   playable: boolean;
   suspended: boolean;
   accessSources: string[];
@@ -22,7 +24,8 @@ export async function getLocationCustomerCatalog(locationId: string, now = new D
     resolveEffectiveChannelAccess(locationId, now),
     getHiddenChannelIds(locationId),
   ]);
-  return filterVisibleChannels(effectiveAccess, hiddenChannelIds).map((channel) => ({
+  const visible = filterVisibleChannels(effectiveAccess, hiddenChannelIds); const titles = await getChannelLocalizedTitles(visible.map((channel) => channel.id));
+  return visible.map((channel) => ({
     id: channel.id,
     slug: channel.slug,
     displayName: channel.displayName,
@@ -33,7 +36,7 @@ export async function getLocationCustomerCatalog(locationId: string, now = new D
     suspended: channel.suspended,
     accessSources: channel.accessSources,
     accessExpiries: Object.fromEntries(Object.entries(channel.accessExpiries).map(([key, value]) => [key, value.toISOString()])),
-    tracks: channel.playable ? channel.tracks.map((track) => ({
+    localizedTitles: titles.get(channel.id) ?? {}, tracks: channel.playable ? channel.tracks.map((track) => ({
       id: track.id,
       url: resolveMediaUrl(channel.kind, track.storageKey),
       sizeBytes: track.sizeBytes.toString(),

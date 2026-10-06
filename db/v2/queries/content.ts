@@ -1,6 +1,7 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { v2Db } from "../client";
 import { channels, channelTracks } from "../schema";
+import { getChannelLocalizedTitles } from "./channelTranslations";
 
 // Content-only catalog. No Location, access projection or entitlement joins.
 export async function getPublishedContentCatalog() {
@@ -14,5 +15,6 @@ export async function getPublishedContentCatalog() {
     if (!item) { item = { ...channel, tracks: [] }; catalog.set(channel.id, item); }
     if (track) item.tracks.push(track);
   }
-  return [...catalog.values()];
+  const result = [...catalog.values()]; const titles = await getChannelLocalizedTitles(result.map((channel) => channel.id));
+  return result.map((channel) => ({ ...channel, localizedTitles: titles.get(channel.id) ?? {} }));
 }

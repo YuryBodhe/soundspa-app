@@ -4,7 +4,7 @@ import { resolveImageUrl, resolveMediaUrl } from "./mediaUrls";
 export type PlayerChannel = {
   id: string; slug: string; kind: "music" | "ambient"; title: string;
   mood: string; image: string | null; playable?: boolean; accessSources?: string[]; accessExpiries?: Record<string,string>;
-  tracks: { id: string; url: string; sizeBytes: string; originalFilename?: string }[];
+  localizedTitles?: Record<string, string>; tracks: { id: string; url: string; sizeBytes: string; originalFilename?: string }[];
 };
 
 // Existing visual captions only: these do not define catalog entries/playlists.
@@ -14,7 +14,7 @@ const musicCaptions: Record<string, string> = {
 
 export function toPlayerCatalog(content: Awaited<ReturnType<typeof getPublishedContentCatalog>>): PlayerChannel[] {
   return content.map((channel) => ({
-    id: channel.id, slug: channel.slug, kind: channel.kind, title: channel.displayName,
+    id: channel.id, slug: channel.slug, kind: channel.kind, title: channel.displayName, localizedTitles: channel.localizedTitles ?? {},
     mood: channel.description ?? (channel.kind === "music" ? musicCaptions[channel.slug] ?? "" : ""),
     image: resolveImageUrl(channel.imageKey),
     tracks: channel.tracks.map((track) => ({

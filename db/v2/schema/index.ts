@@ -7,6 +7,7 @@ export * from "./core/organizationMembers";
 export * from "./core/locations";
 export * from "./core/relations";
 export * from "./product/channels";
+export * from "./product/channelTranslations";
 export * from "./product/channelTracks";
 export * from "./product/relations";
 export * from "./access/locationServiceAccess";

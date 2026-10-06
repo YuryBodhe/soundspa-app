@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { v2Db } from "../client";
-import { channels, channelTracks } from "../schema";
+import { channels, channelTracks, channelTranslations } from "../schema";
 import { validateChannelReferences } from "../../../lib/v2/mediaStorage";
 
 export class ContentValidationError extends Error {
@@ -18,7 +18,8 @@ export const channelInput = z.object({
   sortOrder: z.number().int().min(0).max(2147483647),
 });
 export type ChannelInput = z.infer<typeof channelInput>;
-type ContentConnection = Pick<typeof v2Db, "select" | "insert" | "update" | "execute">;
+const translationInput = z.record(z.string().regex(/^[a-z]{2,8}(-[a-z]{2,8})?$/), z.string().trim().max(200));
+type ContentConnection = Pick<typeof v2Db, "select" | "insert" | "update" | "delete" | "execute">;
 
 // Trusted server service. HTTP callers must authorize before invoking it.
 // Injecting the transaction allows verification to roll back all synthetic data.
@@ -40,7 +41,7 @@ export function contentAdminService(tx: ContentConnection, validateReferences = 
       const [channel] = await tx.insert(channels).values({ ...values, description: values.description || null, imageKey: values.imageKey || null, isPublished: false }).returning();
       return channel;
     },
-    async edit(id: string, input: ChannelInput) {
+    async edit(id: string, input: ChannelInput, translations: Record<string, string> = {}) {
       const values = channelInput.parse(input);
       const channel = await lockChannel(id); editable(channel);
       const tracks = await tracksFor(id);
@@ -48,6 +49,10 @@ export function contentAdminService(tx: ContentConnection, validateReferences = 
       if (tracks.length && values.kind !== channel.kind) throw new ContentValidationError("Kind cannot change while track records exist.");
       if (channel.isPublished && !values.imageKey) throw new ContentValidationError("Unpublish before removing artwork metadata.");
       await tx.update(channels).set({ ...values, description: values.description || null, imageKey: values.imageKey || null, updatedAt: new Date() }).where(eq(channels.id, id));
+      for (const [locale, title] of Object.entries(translationInput.parse(translations))) {
+        if (!title.trim()) await tx.delete(channelTranslations).where(and(eq(channelTranslations.channelId, id), eq(channelTranslations.locale, locale)));
+        else await tx.insert(channelTranslations).values({ channelId: id, locale, title: title.trim() }).onConflictDoUpdate({ target: [channelTranslations.channelId, channelTranslations.locale], set: { title: title.trim(), updatedAt: new Date() } });
+      }
     },
     async publication(id: string, published: boolean) {
       const channel = await lockChannel(id);

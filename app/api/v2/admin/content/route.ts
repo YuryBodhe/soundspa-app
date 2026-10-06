@@ -29,7 +29,8 @@ export async function POST(request: Request) {
       switch (get("operation")) {
         case "create": case "edit": {
           const input = { displayName: get("displayName"), slug: get("slug"), kind: get("kind") as "music" | "ambient", description: get("description"), imageKey: get("imageKey"), sortOrder: Number(get("sortOrder")) };
-          if (get("operation") === "create") await service.create(input); else await service.edit(id, input); break;
+          const translations = Object.fromEntries(["en", "ru", "vi", "th"].map((locale) => [locale, get(`translation_${locale}`)]));
+          if (get("operation") === "create") await service.create(input); else await service.edit(id, input, translations); break;
         }
         case "publish": await service.publication(id, true); break;
         case "unpublish": await service.publication(id, false); break;
