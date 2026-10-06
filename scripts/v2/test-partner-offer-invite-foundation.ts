@@ -14,6 +14,27 @@ import {
 } from "../../db/v2/schema";
 
 class Rollback extends Error {}
+type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
+
+function hasPostgresCode(error: unknown, expectedCode: string): boolean {
+  const seen = new Set<object>();
+  let current: unknown = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (candidate.code === expectedCode) return true;
+    current = candidate.cause;
+  }
+  return false;
+}
+
+async function expectSqlState(
+  tx: V2Transaction,
+  expectedCode: string,
+  operation: (savepoint: V2Transaction) => Promise<unknown>,
+) {
+  await assert.rejects(tx.transaction(operation), (error: unknown) => hasPostgresCode(error, expectedCode));
+}
 
 async function main() {
   let organizationId = "";
@@ -44,29 +65,20 @@ async function main() {
 
       // Expected unique/check violations run under savepoints so the outer
       // rollback-only fixture remains usable.
-      await assert.rejects(
-        tx.transaction(async (nested) => {
-          await nested.insert(commercialPartnerInvites).values({ offerId: offer.id, tokenHash });
-        }),
-        /unique|duplicate/i,
-      );
-      await assert.rejects(
-        tx.transaction(async (nested) => {
-          await nested.insert(commercialOfferGrants).values({ offerId: offer.id, productId: basic.id, grantType: "trial", durationDays: 0 });
-        }),
-        /check|duration/i,
-      );
+      await expectSqlState(tx, "23505", async (savepoint) => {
+        await savepoint.insert(commercialPartnerInvites).values({ offerId: offer.id, tokenHash });
+      });
+      await expectSqlState(tx, "23514", async (savepoint) => {
+        await savepoint.insert(commercialOfferGrants).values({ offerId: offer.id, productId: basic.id, grantType: "trial", durationDays: 0 });
+      });
 
       const [organization] = await tx.insert(organizations).values({ name: `p2-invite-test-${suffix}` }).returning();
       organizationId = organization.id;
       const [location] = await tx.insert(locations).values({ organizationId, name: "Invite test location", slug: `p2-invite-${suffix}`, timezone: "UTC" }).returning();
       await tx.insert(commercialPartnerInviteClaims).values({ inviteId: invite.id, locationId: location.id });
-      await assert.rejects(
-        tx.transaction(async (nested) => {
-          await nested.insert(commercialPartnerInviteClaims).values({ inviteId: invite.id, locationId: location.id });
-        }),
-        /unique|duplicate/i,
-      );
+      await expectSqlState(tx, "23505", async (savepoint) => {
+        await savepoint.insert(commercialPartnerInviteClaims).values({ inviteId: invite.id, locationId: location.id });
+      });
       throw new Rollback();
     });
   } catch (error) {
