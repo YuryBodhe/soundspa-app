@@ -102,7 +102,7 @@ async function main() {
     assert(organizationId);
     assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
     for (const id of channelIds) assert.equal((await v2Db.select().from(channels).where(eq(channels.id, id))).length, 0);
-    console.info("V2 Location Channel Visibility PASS: default-visible/locked, hidden omission, Base/Admin/entitlement independence, restore, suspension, idempotency, Location isolation, music/ambient, rollback; journal=9.");
+    console.info("V2 Location Channel Visibility PASS: default-visible/locked, legacy Base non-granting, Admin/entitlement independence, restore, suspension, idempotency, Location isolation, music/ambient, rollback; journal=11.");
   } finally { await v2Pool.end(); }
 }
 
