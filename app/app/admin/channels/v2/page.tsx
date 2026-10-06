@@ -3,9 +3,6 @@ import { operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 import { resolveImageUrl } from "../../../../v2/mediaUrls";
 import { UploadControls } from "./UploadControls";
 import { DeleteTrackControl } from "./DeleteTrackControl";
-import { v2Db } from "../../../../../db/v2/client";
-import { channelTranslations } from "../../../../../db/v2/schema";
-import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 const endpoint = "/api/v2/admin/content";
@@ -27,6 +24,9 @@ function TranslationFields({ values }: { values: Record<string, string> }) { ret
 export default async function ContentAdminPage({ searchParams }: { searchParams: Promise<{ message?: string }> }) {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const { listAdminChannels, getAdminChannel } = await import("../../../../../db/v2/queries/contentAdmin");
+  const [{ v2Db }, { channelTranslations }, { eq }] = await Promise.all([
+    import("../../../../../db/v2/client"), import("../../../../../db/v2/schema"), import("drizzle-orm"),
+  ]);
   const list = await listAdminChannels();
   const details = await Promise.all(list.map(async (channel) => { const detail = await getAdminChannel(channel.id); const rows = await v2Db.select().from(channelTranslations).where(eq(channelTranslations.channelId, channel.id)); return detail && { ...detail, translations: Object.fromEntries(rows.map((row) => [row.locale, row.title])) }; }));
   const { message } = await searchParams;
