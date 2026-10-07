@@ -191,6 +191,31 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
+.product-management-list { display: grid; gap: 12px; }
+.product-management-card { margin-bottom: 0; }
+.product-management-summary { display: flex; justify-content: space-between; align-items: center; gap: 16px; cursor: pointer; list-style: none; }
+.product-management-summary::-webkit-details-marker { display: none; }
+.product-management-summary > span:first-child { display: grid; gap: 4px; min-width: 0; }
+.product-management-summary small { color: rgba(255, 255, 255, 0.5); overflow-wrap: anywhere; }
+.product-management-content { padding-top: 16px; }
+.product-management-form { max-width: 720px; }
+.product-management-form > label:not(.product-active-option) { display: grid; gap: 6px; color: rgba(255, 255, 255, 0.7); font-size: 12px; }
+.product-management-form input:not([type="checkbox"]),
+.product-management-form select { width: 100%; min-height: 40px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(8, 8, 14, 0.95); color: #f5f5f7; padding: 8px 10px; font-size: 14px; }
+.product-management-form input[readonly] { opacity: 0.72; }
+.product-management-form .product-active-option { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.product-channel-fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 8px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; padding: 12px; }
+.product-channel-fieldset legend { padding: 0 6px; color: rgba(195, 168, 108, 0.9); font-size: 12px; }
+.product-channel-option { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 40px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.035); }
+.product-channel-option input { width: 18px; height: 18px; accent-color: #c3a86c; }
+.product-create-card .admin-form > .text-dim { margin: -4px 0 0; font-size: 12px; }
+@media (max-width: 700px) {
+  .product-management-summary { align-items: flex-start; }
+  .admin-main-nav,
+  .product-page-nav { flex-wrap: wrap; }
+  .product-page-header { align-items: flex-start; flex-wrap: wrap; }
+  .product-channel-fieldset { grid-template-columns: minmax(0, 1fr); }
+}
 .monitoring-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
