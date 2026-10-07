@@ -35,6 +35,8 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/drizzle.v2.config.ts ./drizzle.v2.config.ts
+COPY --from=builder /app/drizzle/v2 ./drizzle/v2
 
 # Копируем папки, которые нужны воркеру (cron-задачам)
 COPY --from=builder /app/scripts ./scripts
