@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { commercialOfferGrantType, commercialProductKind, commercialProvider, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
+import { bigint, boolean, check, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { commercialOfferGrantType, commercialProductKind, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
 import { organizations } from "./core/organizations";
 import { locations } from "./core/locations";
 import { channels } from "./product/channels";
@@ -31,6 +31,17 @@ export const commercialProductChannels = pgTable("commercial_product_channels", 
   primaryKey({ columns: [table.productId, table.channelId] }),
   foreignKey({ name: "commercial_product_channels_product_id_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_product_channels_channel_id_fk", columns: [table.channelId], foreignColumns: [channels.id] }).onDelete("restrict"),
+]);
+
+export const commercialPaymentProviders = pgTable("commercial_payment_providers", {
+  code: text("code").primaryKey(),
+  displayName: text("display_name").notNull(),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  check("commercial_payment_providers_code_format", sql`${table.code} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`),
+  check("commercial_payment_providers_name_nonempty", sql`length(btrim(${table.displayName})) > 0`),
 ]);
 
 export const commercialPartners = pgTable("commercial_partners", {
@@ -82,7 +93,7 @@ export const locationSubscriptions = pgTable("location_subscriptions", {
   id: uuid("id").defaultRandom().primaryKey(),
   locationId: uuid("location_id").notNull(),
   productId: uuid("product_id").notNull(),
-  provider: commercialProvider("provider").notNull(),
+  provider: text("provider").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
   status: commercialSubscriptionStatus("status").notNull(),
   providerCustomerRef: text("provider_customer_ref"),
   providerSubscriptionRef: text("provider_subscription_ref"),
@@ -103,7 +114,7 @@ export const locationSubscriptions = pgTable("location_subscriptions", {
 
 export const commercialOrganizationPayerReference = pgTable("commercial_organization_payer_references", {
   organizationId: uuid("organization_id").primaryKey(),
-  provider: commercialProvider("provider").notNull(),
+  provider: text("provider").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
   providerCustomerRef: text("provider_customer_ref"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -167,4 +178,76 @@ export const commercialPartnerInviteClaims = pgTable("commercial_partner_invite_
   index("commercial_partner_invite_claims_location_idx").on(table.locationId),
   foreignKey({ name: "commercial_partner_invite_claims_invite_fk", columns: [table.inviteId], foreignColumns: [commercialPartnerInvites.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_invite_claims_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
+]);
+
+export const commercialPaymentRoutes = pgTable("commercial_payment_routes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  marketCode: text("market_code").notNull(),
+  productId: uuid("product_id").notNull(),
+  providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
+  externalReference: text("external_reference").notNull(),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ name: "commercial_payment_routes_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
+  uniqueIndex("commercial_payment_routes_external_ref_unique").on(table.marketCode, table.productId, table.providerCode, table.externalReference),
+  index("commercial_payment_routes_lookup_idx").on(table.marketCode, table.productId, table.isEnabled, table.displayOrder),
+  check("commercial_payment_routes_market_format", sql`${table.marketCode} ~ '^[A-Z]{2}$'`),
+  check("commercial_payment_routes_external_reference_nonempty", sql`length(btrim(${table.externalReference})) > 0`),
+  check("commercial_payment_routes_display_order_nonnegative", sql`${table.displayOrder} >= 0`),
+]);
+
+export const commercialPayments = pgTable("commercial_payments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  locationId: uuid("location_id").notNull(),
+  productId: uuid("product_id").notNull(),
+  subscriptionId: uuid("subscription_id"),
+  routeId: uuid("route_id"),
+  providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
+  // paymentKey is a stable provider-scoped transaction identity. Adapters can
+  // use a provider payment ID or another documented stable transaction key.
+  paymentKey: text("payment_key").notNull(),
+  externalPaymentId: text("external_payment_id"),
+  externalSubscriptionRef: text("external_subscription_ref"),
+  status: text("status").notNull(),
+  amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+  currency: text("currency").notNull(),
+  providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ name: "commercial_payments_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_payments_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_payments_subscription_fk", columns: [table.subscriptionId], foreignColumns: [locationSubscriptions.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_payments_route_fk", columns: [table.routeId], foreignColumns: [commercialPaymentRoutes.id] }).onDelete("restrict"),
+  uniqueIndex("commercial_payments_provider_key_unique").on(table.providerCode, table.paymentKey),
+  uniqueIndex("commercial_payments_provider_external_id_unique").on(table.providerCode, table.externalPaymentId).where(sql`${table.externalPaymentId} IS NOT NULL`),
+  index("commercial_payments_location_created_idx").on(table.locationId, table.createdAt),
+  check("commercial_payments_key_nonempty", sql`length(btrim(${table.paymentKey})) > 0`),
+  check("commercial_payments_status_valid", sql`${table.status} IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded')`),
+  check("commercial_payments_amount_nonnegative", sql`${table.amountMinor} >= 0`),
+  check("commercial_payments_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+]);
+
+export const commercialPaymentEvents = pgTable("commercial_payment_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
+  paymentId: uuid("payment_id").references(() => commercialPayments.id, { onDelete: "restrict" }),
+  externalEventId: text("external_event_id"),
+  paymentKey: text("payment_key").notNull(),
+  // Required stable dedupe identity supplied by a provider adapter; it need not
+  // be the provider's external event ID when that provider has none.
+  idempotencyKey: text("idempotency_key").notNull(),
+  status: text("status").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_payment_events_provider_key_unique").on(table.providerCode, table.idempotencyKey),
+  uniqueIndex("commercial_payment_events_provider_external_id_unique").on(table.providerCode, table.externalEventId).where(sql`${table.externalEventId} IS NOT NULL`),
+  index("commercial_payment_events_payment_idx").on(table.paymentId),
+  check("commercial_payment_events_key_nonempty", sql`length(btrim(${table.idempotencyKey})) > 0`),
+  check("commercial_payment_events_payment_key_nonempty", sql`length(btrim(${table.paymentKey})) > 0`),
+  check("commercial_payment_events_status_valid", sql`${table.status} IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded')`),
 ]);

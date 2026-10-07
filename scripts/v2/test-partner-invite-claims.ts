@@ -9,6 +9,7 @@ import {
   channels,
   commercialOfferGrants,
   commercialOffers,
+  commercialPaymentProviders,
   commercialPartnerBenefits,
   commercialPartnerInviteClaims,
   commercialPartnerInvites,
@@ -54,6 +55,8 @@ async function main() {
       const [organization] = await tx.insert(organizations).values({ name: `p3-claims-${suffix}` }).returning();
       const [locationA] = await tx.insert(locations).values({ organizationId: organization.id, name: "Claim location A", slug: `p3-claim-a-${suffix}`, timezone: "UTC" }).returning();
       const [locationB] = await tx.insert(locations).values({ organizationId: organization.id, name: "Claim location B", slug: `p3-claim-b-${suffix}`, timezone: "UTC" }).returning();
+      const providerCode = `test-${suffix}`;
+      await tx.insert(commercialPaymentProviders).values({ code: providerCode, displayName: "Rollback-only test provider" });
       const [partner] = await tx.insert(commercialPartners).values({ code: `p3-partner-${suffix}`, name: "P3 Partner" }).returning();
       const product = async (code: string, kind: "core" | "partner", isActive = true) => {
         const [row] = await tx.insert(commercialProducts).values({ code: `${code}-${suffix}`, name: code, kind, isActive }).returning();
@@ -161,7 +164,7 @@ async function main() {
         { locationId: locationB.id, productId: activeTrial.id, status: "active", startsAt: past, endsAt: future },
         { locationId: locationB.id, productId: usedTrial.id, status: "expired", startsAt: past, endsAt: ended },
       ]);
-      await tx.insert(locationSubscriptions).values({ locationId: locationB.id, productId: paidTrial.id, provider: "staging", status: "active", startsAt: past, currentPeriodEndsAt: future });
+      await tx.insert(locationSubscriptions).values({ locationId: locationB.id, productId: paidTrial.id, provider: providerCode, status: "active", startsAt: past, currentPeriodEndsAt: future });
       const skipOffer = await makeOffer("skip-trials");
       await addGrant(skipOffer.id, activeTrial.id, "trial", 30);
       await addGrant(skipOffer.id, usedTrial.id, "trial", 30);

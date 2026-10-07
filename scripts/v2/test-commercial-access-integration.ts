@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
-import { channelTracks, channels, commercialPartnerBenefits, commercialPartners, commercialProductChannels, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations, locationChannelGrants } from "../../db/v2/schema";
+import { channelTracks, channels, commercialPartnerBenefits, commercialPaymentProviders, commercialPartners, commercialProductChannels, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations, locationChannelGrants } from "../../db/v2/schema";
 
 class Rollback extends Error {}
 async function main() {
@@ -11,6 +11,8 @@ async function main() {
   try {
     await v2Db.transaction(async (tx) => {
       const now = new Date("2026-10-06T12:00:00.000Z"), future = new Date("2026-10-07T12:00:00.000Z"), past = new Date("2026-10-05T12:00:00.000Z"), suffix = randomUUID();
+      const providerCode = `test-${suffix}`;
+      await tx.insert(commercialPaymentProviders).values({ code: providerCode, displayName: "Rollback-only test provider" });
       const [org] = await tx.insert(organizations).values({ name: `commercial-${suffix}` }).returning(); organizationId = org.id;
       const [a] = await tx.insert(locations).values({ organizationId: org.id, name: "Location A", slug: `commercial-a-${suffix}`, timezone: "UTC" }).returning(); locationA = a.id;
       const [b] = await tx.insert(locations).values({ organizationId: org.id, name: "Location B", slug: `commercial-b-${suffix}`, timezone: "UTC" }).returning(); locationB = b.id;
@@ -23,8 +25,8 @@ async function main() {
       const [partnerRow] = await tx.insert(commercialPartners).values({ code: `partner-${suffix}`, name: "Generic Partner" }).returning();
       await tx.insert(locationCoreTrials).values({ locationId: locationA, productId: core.id, status: "active", startsAt: past, endsAt: future });
       await tx.insert(commercialPartnerBenefits).values({ locationId: locationA, productId: partnerProduct.id, partnerId: partnerRow.id, startsAt: past, endsAt: null });
-      await tx.insert(locationSubscriptions).values({ locationId: locationA, productId: addonProduct.id, provider: "staging", status: "active", startsAt: past, currentPeriodEndsAt: future });
-      await tx.insert(locationSubscriptions).values({ locationId: locationB, productId: core.id, provider: "manual", status: "active", startsAt: past, currentPeriodEndsAt: future });
+      await tx.insert(locationSubscriptions).values({ locationId: locationA, productId: addonProduct.id, provider: providerCode, status: "active", startsAt: past, currentPeriodEndsAt: future });
+      await tx.insert(locationSubscriptions).values({ locationId: locationB, productId: core.id, provider: providerCode, status: "active", startsAt: past, currentPeriodEndsAt: future });
       await tx.insert(locationChannelGrants).values({ locationId: locationA, channelId: admin, source: "admin", enabled: true });
       const accessA = new Map((await resolveEffectiveChannelAccess(locationA, now, tx)).map((channel) => [channel.id, channel]));
       assert.deepEqual(accessA.get(coreA)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(coreB)?.accessSources, ["trial"]); assert.deepEqual(accessA.get(partner)?.accessSources, ["partner_benefit"]); assert.deepEqual(accessA.get(addon)?.accessSources, ["subscription"]); assert.deepEqual(accessA.get(admin)?.accessSources, ["admin"]);

@@ -16,5 +16,4 @@ export const monitoringLifecycleEventType = pgEnum("monitoring_lifecycle_event_t
 export const commercialProductKind = pgEnum("commercial_product_kind", ["core", "partner", "addon"]);
 export const commercialTrialStatus = pgEnum("commercial_trial_status", ["active", "expired"]);
 export const commercialSubscriptionStatus = pgEnum("commercial_subscription_status", ["active", "past_due", "canceled", "expired"]);
-export const commercialProvider = pgEnum("commercial_provider", ["manual", "staging", "prodamus"]);
 export const commercialOfferGrantType = pgEnum("commercial_offer_grant_type", ["partner_benefit", "trial"]);
