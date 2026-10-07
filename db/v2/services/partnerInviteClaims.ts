@@ -43,22 +43,20 @@ export type PartnerInviteClaimResult =
     };
 
 export type ClaimPartnerInviteInput = { token: string; locationId: string };
+export type AdminClaimPartnerInviteInput = { inviteId: string; locationId: string };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Claims a hashed invite and applies its declarative grants in one transaction.
- * The optional runner is an internal test seam for wrapping the whole operation
- * in an outer rollback-only transaction; production callers should omit it.
- */
-export async function claimPartnerInvite(
-  input: ClaimPartnerInviteInput,
+type InviteLookup = { kind: "token_hash"; tokenHash: string } | { kind: "admin_id"; inviteId: string };
+
+/** Shared transaction for opaque-token claims and trusted Admin lookups. */
+async function claimPartnerInviteWithLookup(
+  lookup: InviteLookup,
+  locationId: string,
   runInTransaction: TransactionRunner = (operation) => v2Db.transaction(operation),
 ): Promise<PartnerInviteClaimResult> {
-  if (!input.token) throw new PartnerInviteClaimError("INVITE_UNAVAILABLE");
-  if (!uuidPattern.test(input.locationId)) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
-  const tokenHash = createHash("sha256").update(input.token, "utf8").digest("hex");
+  if (!uuidPattern.test(locationId)) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
 
   return runInTransaction(async (tx) => {
     const [resolved] = await tx.select({
@@ -68,7 +66,9 @@ export async function claimPartnerInvite(
     }).from(commercialPartnerInvites)
       .innerJoin(commercialOffers, eq(commercialOffers.id, commercialPartnerInvites.offerId))
       .innerJoin(commercialPartners, eq(commercialPartners.id, commercialOffers.partnerId))
-      .where(eq(commercialPartnerInvites.tokenHash, tokenHash))
+      .where(lookup.kind === "token_hash"
+        ? eq(commercialPartnerInvites.tokenHash, lookup.tokenHash)
+        : eq(commercialPartnerInvites.id, lookup.inviteId))
       // Serializes all claim attempts for this invite, including max-claim checks.
       .for("update", { of: [commercialPartnerInvites, commercialOffers, commercialPartners] });
 
@@ -76,8 +76,17 @@ export async function claimPartnerInvite(
     // future public route can avoid revealing invite state to token guessers.
     if (!resolved) throw new PartnerInviteClaimError("INVITE_UNAVAILABLE");
 
+    if (lookup.kind === "admin_id") {
+      // Validate the operator-selected Location before P3's idempotent early
+      // return, without changing public-token semantics or lock ordering.
+      const [selectedLocation] = await tx.select({ id: locations.id }).from(locations)
+        .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+        .where(and(eq(locations.id, locationId), isNull(locations.archivedAt), isNull(organizations.archivedAt)));
+      if (!selectedLocation) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
+    }
+
     const [priorClaim] = await tx.select({ id: commercialPartnerInviteClaims.id }).from(commercialPartnerInviteClaims)
-      .where(and(eq(commercialPartnerInviteClaims.inviteId, resolved.invite.id), eq(commercialPartnerInviteClaims.locationId, input.locationId)));
+      .where(and(eq(commercialPartnerInviteClaims.inviteId, resolved.invite.id), eq(commercialPartnerInviteClaims.locationId, locationId)));
     if (priorClaim) return { status: "already_claimed", benefits: [], trials: [] };
 
     const now = new Date();
@@ -89,7 +98,7 @@ export async function claimPartnerInvite(
 
     const [location] = await tx.select({ id: locations.id }).from(locations)
       .innerJoin(organizations, eq(organizations.id, locations.organizationId))
-      .where(and(eq(locations.id, input.locationId), isNull(locations.archivedAt), isNull(organizations.archivedAt)))
+      .where(and(eq(locations.id, locationId), isNull(locations.archivedAt), isNull(organizations.archivedAt)))
       .for("share", { of: [locations, organizations] });
     if (!location) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
 
@@ -134,7 +143,7 @@ export async function claimPartnerInvite(
         await tx.insert(commercialPartnerBenefits).values({
           partnerId: resolved.partner.id,
           productId: product.id,
-          locationId: input.locationId,
+          locationId,
           startsAt: now,
           endsAt,
         });
@@ -143,7 +152,7 @@ export async function claimPartnerInvite(
       }
 
       const [existingTrial] = await tx.select().from(locationCoreTrials)
-        .where(and(eq(locationCoreTrials.locationId, input.locationId), eq(locationCoreTrials.productId, product.id)));
+        .where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, product.id)));
       if (existingTrial) {
         const active = existingTrial.status === "active" && existingTrial.startsAt <= now && existingTrial.endsAt > now;
         trials.push({ productId: product.id, result: active ? "skipped_active" : "skipped_already_used" });
@@ -154,7 +163,7 @@ export async function claimPartnerInvite(
       // within period subscriptions both represent current Product access.
       const [paidAccess] = await tx.select({ id: locationSubscriptions.id }).from(locationSubscriptions)
         .where(and(
-          eq(locationSubscriptions.locationId, input.locationId),
+          eq(locationSubscriptions.locationId, locationId),
           eq(locationSubscriptions.productId, product.id),
           or(eq(locationSubscriptions.status, "active"), eq(locationSubscriptions.status, "canceled")),
           lte(locationSubscriptions.startsAt, now),
@@ -166,7 +175,7 @@ export async function claimPartnerInvite(
       }
 
       const [createdTrial] = await tx.insert(locationCoreTrials).values({
-        locationId: input.locationId,
+        locationId,
         productId: product.id,
         status: "active",
         startsAt: now,
@@ -179,10 +188,33 @@ export async function claimPartnerInvite(
 
     await tx.insert(commercialPartnerInviteClaims).values({
       inviteId: resolved.invite.id,
-      locationId: input.locationId,
+      locationId,
       claimedAt: now,
     });
 
     return { status: "claimed", benefits, trials };
   });
+}
+
+/** Public credential-based entry point. The opaque plaintext token is hashed
+ * before lookup and remains the only public claim credential. */
+export async function claimPartnerInvite(
+  input: ClaimPartnerInviteInput,
+  runInTransaction: TransactionRunner = (operation) => v2Db.transaction(operation),
+): Promise<PartnerInviteClaimResult> {
+  if (!input.token) throw new PartnerInviteClaimError("INVITE_UNAVAILABLE");
+  if (!uuidPattern.test(input.locationId)) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
+  const tokenHash = createHash("sha256").update(input.token, "utf8").digest("hex");
+  return claimPartnerInviteWithLookup({ kind: "token_hash", tokenHash }, input.locationId, runInTransaction);
+}
+
+/** Trusted operator-only entry point. Call only behind the authenticated,
+ * same-origin V2 Admin API; Invite IDs are not public claim credentials. */
+export async function adminClaimPartnerInvite(
+  input: AdminClaimPartnerInviteInput,
+  runInTransaction: TransactionRunner = (operation) => v2Db.transaction(operation),
+): Promise<PartnerInviteClaimResult> {
+  if (!uuidPattern.test(input.inviteId)) throw new PartnerInviteClaimError("INVITE_UNAVAILABLE");
+  if (!uuidPattern.test(input.locationId)) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
+  return claimPartnerInviteWithLookup({ kind: "admin_id", inviteId: input.inviteId }, input.locationId, runInTransaction);
 }

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNull } from "drizzle-orm";
 import { v2Db } from "../client";
 import {
   commercialOfferGrants,
@@ -8,6 +8,8 @@ import {
   commercialPartnerInvites,
   commercialPartners,
   commercialProducts,
+  locations,
+  organizations,
 } from "../schema";
 import { getPartnerInviteLifecycleStatus, PartnerOfferAdminError, requiredOfferText, validatePartnerInviteOptions, validatePartnerOfferGrant } from "./partnerOfferAdminValidation";
 export { getPartnerInviteLifecycleStatus, PartnerOfferAdminError, type PartnerInviteLifecycleStatus, type PartnerOfferAdminErrorCode } from "./partnerOfferAdminValidation";
@@ -92,6 +94,34 @@ export async function listPartnerInvites(offerId: string, now = new Date(), db: 
     const claims = Number(claimCount);
     return { ...invite, claimCount: claims, status: getPartnerInviteLifecycleStatus({ ...invite, claimCount: claims }, now) };
   });
+}
+
+export async function listPartnerOfferInviteClaims(offerId: string, db: Pick<typeof v2Db, "select"> = v2Db) {
+  return db.select({
+    inviteId: commercialPartnerInviteClaims.inviteId,
+    locationId: commercialPartnerInviteClaims.locationId,
+    organizationName: organizations.name,
+    locationName: locations.name,
+    locationSlug: locations.slug,
+    claimedAt: commercialPartnerInviteClaims.claimedAt,
+  }).from(commercialPartnerInviteClaims)
+    .innerJoin(commercialPartnerInvites, eq(commercialPartnerInvites.id, commercialPartnerInviteClaims.inviteId))
+    .innerJoin(locations, eq(locations.id, commercialPartnerInviteClaims.locationId))
+    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+    .where(eq(commercialPartnerInvites.offerId, offerId))
+    .orderBy(asc(commercialPartnerInviteClaims.claimedAt), asc(commercialPartnerInviteClaims.id));
+}
+
+export async function listPartnerInviteClaimLocations(db: Pick<typeof v2Db, "select"> = v2Db) {
+  return db.select({
+    id: locations.id,
+    organizationName: organizations.name,
+    locationName: locations.name,
+    locationSlug: locations.slug,
+  }).from(locations)
+    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+    .where(and(isNull(locations.archivedAt), isNull(organizations.archivedAt)))
+    .orderBy(asc(organizations.name), asc(locations.name), asc(locations.id));
 }
 
 export async function revokePartnerInvite(
