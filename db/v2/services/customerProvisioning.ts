@@ -9,6 +9,8 @@ export type CustomerProvisioningInput = {
   timezone: string;
 };
 
+type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
+
 export class CustomerProvisioningError extends Error {
   constructor(readonly code: "validation" | "slug_conflict", message: string) {
     super(message);
@@ -54,43 +56,46 @@ function isLocationSlugConflict(error: unknown): boolean {
   return false;
 }
 
-export async function createCustomerWithFirstLocation(value: unknown) {
+export async function createCustomerWithFirstLocationInTransaction(tx: V2Transaction, value: unknown) {
   const input = validateCustomerProvisioningInput(value);
   try {
-    return await v2Db.transaction(async (tx) => {
-      const [organization] = await tx.insert(organizations).values({ name: input.organizationName }).returning({
-        id: organizations.id,
-        name: organizations.name,
-      });
-      const [location] = await tx.insert(locations).values({
-        organizationId: organization.id,
-        name: input.locationName,
-        slug: input.slug,
-        timezone: input.timezone,
-      }).returning({
-        id: locations.id,
-        name: locations.name,
-        slug: locations.slug,
-        timezone: locations.timezone,
-      });
-      await recordLifecycleEvent(tx, {
-        eventType: "organization_created",
-        organizationId: organization.id,
-        organizationName: organization.name,
-      });
-      await recordLifecycleEvent(tx, {
-        eventType: "location_created",
-        organizationId: organization.id,
-        organizationName: organization.name,
-        locationId: location.id,
-        locationName: location.name,
-      });
-      return { organization, location };
+    const [organization] = await tx.insert(organizations).values({ name: input.organizationName }).returning({
+      id: organizations.id,
+      name: organizations.name,
     });
+    const [location] = await tx.insert(locations).values({
+      organizationId: organization.id,
+      name: input.locationName,
+      slug: input.slug,
+      timezone: input.timezone,
+    }).returning({
+      id: locations.id,
+      name: locations.name,
+      slug: locations.slug,
+      timezone: locations.timezone,
+    });
+    await recordLifecycleEvent(tx, {
+      eventType: "organization_created",
+      organizationId: organization.id,
+      organizationName: organization.name,
+    });
+    await recordLifecycleEvent(tx, {
+      eventType: "location_created",
+      organizationId: organization.id,
+      organizationName: organization.name,
+      locationId: location.id,
+      locationName: location.name,
+    });
+    return { organization, location };
   } catch (error) {
     if (isLocationSlugConflict(error)) {
       throw new CustomerProvisioningError("slug_conflict", "That Location slug is already in use. Choose a different slug.");
     }
     throw error;
   }
+}
+
+export async function createCustomerWithFirstLocation(value: unknown) {
+  const input = validateCustomerProvisioningInput(value);
+  return v2Db.transaction((tx) => createCustomerWithFirstLocationInTransaction(tx, input));
 }
