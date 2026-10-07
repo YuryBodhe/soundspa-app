@@ -22,10 +22,11 @@ export async function GET(request: Request) {
   try {
     const session = await authenticatedSession(request);
     if (!session || !session.user.emailVerifiedAt) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
-    const { getCustomerOnboarding, isPartnerSignupContext } = await import("@/db/v2/services/customerOnboarding");
+    const { getCustomerOnboarding, isPartnerSignupContext, hasCompletedPartnerOnboarding } = await import("@/db/v2/services/customerOnboarding");
     const account = await getCustomerOnboarding(session.user.id);
     const partnerContext = await isPartnerSignupContext(session.user.email);
-    return NextResponse.json({ account, partnerContext }, { headers: authResponseHeaders() });
+    const partnerCompleted = await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
+    return NextResponse.json({ account, partnerContext, partnerCompleted }, { headers: authResponseHeaders() });
   } catch {
     return NextResponse.json({ error: "unavailable" }, { status: 503, headers: authResponseHeaders() });
   }
@@ -36,19 +37,28 @@ export async function POST(request: Request) {
   try {
     const raw = await request.text();
     if (raw.length > 4096) return NextResponse.json({ error: "invalid" }, { status: 400, headers: authResponseHeaders() });
-    const body = JSON.parse(raw) as Record<string, unknown>;
+    const body: unknown = JSON.parse(raw);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "invalid" }, { status: 400, headers: authResponseHeaders() });
+    const values = body as Record<string, unknown>;
     const session = await authenticatedSession(request);
     if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
     if (!session.user.emailVerifiedAt) return NextResponse.json({ error: "unverified" }, { status: 403, headers: authResponseHeaders() });
-    const { completeOrdinaryCustomerOnboarding } = await import("@/db/v2/services/customerOnboarding");
-    const result = await completeOrdinaryCustomerOnboarding({
+    const { completeOrdinaryCustomerOnboarding, completePartnerCustomerOnboarding, isPartnerSignupContext } = await import("@/db/v2/services/customerOnboarding");
+    const onboardingInput = {
       authenticatedUserId: session.user.id,
       signupIntentId: session.session.signupIntentId,
-      organizationName: body.organizationName,
-      locationName: body.locationName,
-      timezone: body.timezone,
-    });
-    return NextResponse.json(result, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
+      organizationName: values.organizationName,
+      locationName: values.locationName,
+      timezone: values.timezone,
+    };
+    const partnerRequest = await isPartnerSignupContext(session.user.email);
+    const result = await (partnerRequest
+      ? completePartnerCustomerOnboarding(onboardingInput)
+      : completeOrdinaryCustomerOnboarding(onboardingInput));
+    const { getCustomerOnboarding, hasCompletedPartnerOnboarding } = await import("@/db/v2/services/customerOnboarding");
+    const account = await getCustomerOnboarding(session.user.id);
+    const partnerCompleted = partnerRequest || await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
+    return NextResponse.json({ ...result, account: account ?? result.account, partnerCompleted }, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "invalid" }, { status: 400, headers: authResponseHeaders() });
     if (error && typeof error === "object" && "code" in error) {
@@ -57,6 +67,10 @@ export async function POST(request: Request) {
       if (code === "unverified") return NextResponse.json({ error: "unverified" }, { status: 403, headers: authResponseHeaders() });
       if (code === "unauthenticated") return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
       if (code === "validation") return NextResponse.json({ error: "invalid_details" }, { status: 400, headers: authResponseHeaders() });
+      if (code === "invite_unavailable") return NextResponse.json({ error: "partner_invite_unavailable" }, { status: 409, headers: authResponseHeaders() });
+      if (code === "invitation_ambiguous") return NextResponse.json({ error: "partner_invite_ambiguous" }, { status: 409, headers: authResponseHeaders() });
+      if (code === "existing_organization") return NextResponse.json({ error: "existing_organization" }, { status: 409, headers: authResponseHeaders() });
+      if (code === "claim_failure") return NextResponse.json({ error: "partner_claim_failure" }, { status: 503, headers: authResponseHeaders() });
     }
     return NextResponse.json({ error: "unavailable" }, { status: 503, headers: authResponseHeaders() });
   }

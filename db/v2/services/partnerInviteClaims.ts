@@ -43,6 +43,7 @@ export type PartnerInviteClaimResult =
     };
 
 export type ClaimPartnerInviteInput = { token: string; locationId: string };
+export type ClaimPartnerInviteByHashInput = { tokenHash: string; locationId: string };
 export type AdminClaimPartnerInviteInput = { inviteId: string; locationId: string };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -206,6 +207,17 @@ export async function claimPartnerInvite(
   if (!uuidPattern.test(input.locationId)) throw new PartnerInviteClaimError("LOCATION_UNAVAILABLE");
   const tokenHash = createHash("sha256").update(input.token, "utf8").digest("hex");
   return claimPartnerInviteWithLookup({ kind: "token_hash", tokenHash }, input.locationId, runInTransaction);
+}
+
+/** Server-internal entry point for a token hash already stored by the signup-intent flow. */
+export async function claimPartnerInviteByHash(
+  input: ClaimPartnerInviteByHashInput,
+  runInTransaction: TransactionRunner = (operation) => v2Db.transaction(operation),
+): Promise<PartnerInviteClaimResult> {
+  if (!/^[0-9a-f]{64}$/.test(input.tokenHash) || !uuidPattern.test(input.locationId)) {
+    throw new PartnerInviteClaimError("INVITE_UNAVAILABLE");
+  }
+  return claimPartnerInviteWithLookup({ kind: "token_hash", tokenHash: input.tokenHash }, input.locationId, runInTransaction);
 }
 
 /** Trusted operator-only entry point. Call only behind the authenticated,

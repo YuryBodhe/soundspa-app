@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
-import { claimPartnerInvite, PartnerInviteClaimError, type PartnerInviteClaimErrorCode } from "../../db/v2/services/partnerInviteClaims";
+import { claimPartnerInvite, claimPartnerInviteByHash, PartnerInviteClaimError, type PartnerInviteClaimErrorCode } from "../../db/v2/services/partnerInviteClaims";
 import {
   channelTracks,
   channels,
@@ -125,6 +125,16 @@ async function main() {
       assert.equal(await countClaims(standard.invite.id), 1);
       assert.equal((await tx.select().from(commercialPartnerBenefits).where(eq(commercialPartnerBenefits.locationId, locationA.id))).length, 2);
       assert.equal((await tx.select().from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationA.id), eq(locationCoreTrials.productId, trialProduct.id)))).length, 1);
+
+      // P5.3's trusted stored-hash path delegates to the same P3 claim engine.
+      const hashClaim = await claimPartnerInviteByHash({ tokenHash: standard.invite.tokenHash, locationId: locationB.id }, runner);
+      assert.equal(hashClaim.status, "claimed");
+      if (hashClaim.status !== "claimed") throw new Error("Expected stored-hash claim result");
+      assert.equal(hashClaim.benefits.length, 2);
+      assert.deepEqual(hashClaim.trials, [{ productId: trialProduct.id, result: "created" }]);
+      assert.equal(await countClaims(standard.invite.id), 2);
+      await assert.rejects(claimPartnerInviteByHash({ tokenHash: "not-a-sha256", locationId: locationB.id }, runner),
+        (error: unknown) => error instanceof PartnerInviteClaimError && error.code === "INVITE_UNAVAILABLE");
 
       const effective = new Map((await resolveEffectiveChannelAccess(locationA.id, new Date(), tx)).map((item) => [item.id, item]));
       assert(effective.get(permanentChannel)?.accessSources.includes("partner_benefit"));
@@ -253,7 +263,7 @@ async function main() {
   }
 
   await runConcurrentMaxClaimTest();
-  console.info("Partner invite claim service PASS: grant mapping, idempotency, limits, inactive/expired states, trial skip rules, Effective Access integration, rollback atomicity, and PostgreSQL concurrency.");
+  console.info("Partner invite claim service PASS: plaintext and stored-hash entry points share grant mapping, idempotency, limits, inactive/expired states, trial skip rules, Effective Access integration, rollback atomicity, and PostgreSQL concurrency.");
   await v2Pool.end();
 }
 

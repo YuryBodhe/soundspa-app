@@ -11,8 +11,9 @@ type Account = {
   organization: { id: string; name: string } | null;
   location: { id: string; name: string; slug: string; timezone: string } | null;
   trial: { status: string; startsAt: string; endsAt: string } | null;
+  availableChannels: string[];
 };
-type LoadResult = { account: Account | null; partnerContext: boolean };
+type LoadResult = { account: Account | null; partnerContext: boolean; partnerCompleted?: boolean };
 
 function Content() {
   const { t } = useI18n();
@@ -52,12 +53,18 @@ function Content() {
       });
       if (!response.ok) {
         const body = await response.json() as { error?: string };
-        setError(body.error === "invalid_details" ? t("onboardingInvalid") : body.error === "partner_context" ? t("onboardingPartnerContext") : t("onboardingUnavailable"));
+        const errorKey = body.error === "invalid_details" ? "onboardingInvalid"
+          : body.error === "partner_context" ? "partnerInvitePending"
+          : body.error === "partner_invite_unavailable" ? "partnerInviteUnavailable"
+            : body.error === "partner_claim_failure" ? "partnerClaimFailure"
+            : body.error === "partner_invite_ambiguous" ? "partnerInviteAmbiguous"
+              : body.error === "existing_organization" ? "existingOrganization" : "onboardingUnavailable";
+        setError(t(errorKey));
         if (body.error === "partner_context") await load();
         return;
       }
-      const completed = await response.json() as { account: Account };
-      setResult({ account: completed.account, partnerContext: false });
+      const completed = await response.json() as { account: Account; partnerCompleted?: boolean };
+      setResult({ account: completed.account, partnerContext: false, partnerCompleted: completed.partnerCompleted });
     } catch { setError(t("onboardingUnavailable")); }
     finally { setSaving(false); }
   }
@@ -72,15 +79,19 @@ function Content() {
     <h1>{t("authAccountTitle")}</h1>
     {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href="/login">{t("authLoginLink")}</Link></> : <>
       <p>{t("authEmailVerified")}: <strong>{account.email}</strong></p>
-      {result?.partnerContext ? <p role="status">{t("onboardingPartnerContext")}</p> : complete ? <>
-        <p>{t("onboardingCompleted")}</p>
+      {complete ? <>
+        {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
+        <p>{result?.partnerCompleted ? t("partnerSetupCompleted") : t("onboardingCompleted")}</p>
         <dl className="customer-account-details">
           <dt>{t("accountOrganization")}</dt><dd>{account.organization!.name}</dd>
           <dt>{t("accountLocation")}</dt><dd>{account.location!.name}</dd>
           <dt>{t("accountTimezone")}</dt><dd>{account.location!.timezone}</dd>
-          <dt>{t("trialLabel")}</dt><dd>{account.trial ? trialStatus : t("trialEnded")}</dd>
+          {account.trial && <><dt>{t("trialLabel")}</dt><dd>{trialStatus}</dd></>}
         </dl>
+        <h2>{t("partnerAccess")}</h2>
+        {account.availableChannels.length ? <ul className="customer-account-channels">{account.availableChannels.map((name) => <li key={name}>{name}</li>)}</ul> : <p>{t("noAvailableChannels")}</p>}
       </> : <>
+        {result?.partnerContext && <p role="status">{t("partnerInvitePending")}</p>}
         <p>{t("onboardingIncomplete")}</p><h2>{t("onboardingTitle")}</h2><p>{t("onboardingDescription")}</p>
         <form onSubmit={submit}>
           <label>{t("organizationName")}<input required maxLength={160} autoComplete="organization" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} /></label>

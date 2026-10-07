@@ -355,5 +355,6 @@ input[type="button"]:active {
 .customer-account-details { display: grid; grid-template-columns: minmax(100px, auto) minmax(0, 1fr); gap: 10px 14px; margin: 24px 0; overflow-wrap: anywhere; }
 .customer-account-details dt { color: rgba(245,240,230,.62); }
 .customer-account-details dd { margin: 0; }
+.customer-account-channels { margin: 8px 0 20px; padding-left: 22px; color: rgba(245,240,230,.82); }
 .customer-account-logout { margin-top: 18px; }
 @media (max-width: 480px) { .customer-auth-page { padding: 16px; } .customer-auth-card { padding: 22px 18px; } }

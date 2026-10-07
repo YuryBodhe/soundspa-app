@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const issued = await createSignupAuthRequest({ email, locale, contextTokenHash });
     if (issued) {
       try {
-        const message = renderCustomerAuthEmail("verify_email", locale, authEmailUrl(request, issued.token));
+        const message = renderCustomerAuthEmail(issued.purpose, locale, authEmailUrl(request, issued.token));
         await new ResendCustomerMailSender().send({ to: email, message });
       } catch {
         // Deliberately avoid logging addresses, tokens, provider responses, or invite context.

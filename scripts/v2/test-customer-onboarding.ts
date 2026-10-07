@@ -18,4 +18,7 @@ assert.deepEqual(trialCountdown({ ...activeTrial("2026-10-06T00:00:00.000Z", "20
 
 const onboardingKeys = ["onboardingTitle", "onboardingDescription", "organizationName", "locationName", "timezone", "timezoneHelp", "onboardingSubmit", "onboardingSubmitting", "onboardingIncomplete", "onboardingCompleted", "onboardingInvalid", "onboardingUnavailable", "onboardingPartnerContext", "trialLabel", "trialDays", "trialLessThanDay", "trialEnded", "trialActive", "accountOrganization", "accountLocation", "accountTimezone", "timezoneRequired"] as const;
 for (const dictionary of [en, ru, vi, th]) for (const key of onboardingKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
-console.info("V2 Customer Onboarding unit PASS: generated location slug, timezone-safe inputs remain server-validated, trial countdown boundaries, and EN/RU/VI/TH onboarding dictionary coverage.");
+const partnerKeys = ["partnerInvitePending", "partnerSetupCompleted", "partnerInviteUnavailable", "partnerInviteAmbiguous", "partnerClaimFailure", "existingOrganization", "partnerAccess", "noAvailableChannels"] as const;
+for (const dictionary of [en, ru, vi, th]) for (const key of partnerKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
+assert(en.partnerInviteUnavailable && en.partnerInviteAmbiguous, "English partner invitation copy provides the fallback wording.");
+console.info("V2 Customer Onboarding unit PASS: generated location slug, timezone-safe inputs remain server-validated, trial countdown boundaries, and EN/RU/VI/TH ordinary + Partner onboarding dictionary coverage.");

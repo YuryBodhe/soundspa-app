@@ -31,12 +31,20 @@ try {
     const [unverified] = await outer.insert(schema.users).values({ email: `unverified-${fixture}@example.invalid` }).returning();
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: unverified.id }, { runInTransaction }), expectedError("unverified"));
 
+    const legacyPartnerVerifiedAt = new Date();
     const [partnerIntent] = await outer.insert(schema.customerSignupIntents).values({
-      email: user.email, locale: "en", inviteTokenHash: "a".repeat(64), expiresAt: new Date(Date.now() + 60_000), verifiedAt: new Date(), completedAt: new Date(),
+      email: user.email, locale: "en", inviteTokenHash: "a".repeat(64), expiresAt: new Date(Date.now() + 60_000), verifiedAt: legacyPartnerVerifiedAt, completedAt: legacyPartnerVerifiedAt,
     }).returning();
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, signupIntentId: partnerIntent.id }, { runInTransaction }), expectedError("partner_context"));
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, signupIntentId: null }, { runInTransaction }), expectedError("partner_context"), "Partner context must remain protected after a later login without the original session intent id.");
     assert.equal((await outer.select({ id: schema.organizationMembers.organizationId }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id))).length, 0, "Partner context must not create an owner membership or trial.");
+
+    const [preverificationUser] = await outer.insert(schema.users).values({ email: `preverification-partner-${fixture}@example.invalid`, emailVerifiedAt: new Date() }).returning();
+    const [preverificationIntent] = await outer.insert(schema.customerSignupIntents).values({
+      email: preverificationUser.email, locale: "en", inviteTokenHash: "b".repeat(64), expiresAt: new Date(Date.now() + 60_000),
+    }).returning();
+    await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: preverificationUser.id, signupIntentId: preverificationIntent.id }, { runInTransaction }), expectedError("partner_context"), "A pending Partner intent must not fall through before its email auth link is consumed.");
+    assert.equal((await outer.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, preverificationUser.id))).length, 0);
 
     const created = await completeOrdinaryCustomerOnboarding(input, { runInTransaction, createTrial: (locationId, tx) => startSoundSpaTrial(locationId, tx) });
     assert.equal(created.status, "completed");

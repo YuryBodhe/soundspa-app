@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { v2Db } from "../client";
 import { customerAuthTokens, customerSessions, customerSignupIntents, users } from "../schema";
 import {
@@ -9,11 +9,29 @@ import {
 type Locale = "en" | "ru" | "vi" | "th";
 type AuthPurpose = "verify_email" | "login_link";
 
+function pendingPartnerIntentCondition() {
+  // Equality supports P5.1 intents that were marked complete during verification.
+  return or(isNull(customerSignupIntents.completedAt), and(
+    isNotNull(customerSignupIntents.verifiedAt), lte(customerSignupIntents.completedAt, customerSignupIntents.verifiedAt),
+  ));
+}
+
 export async function createSignupAuthRequest(input: { email: string; locale: Locale; contextTokenHash: string | null; now?: Date }) {
   const now = input.now ?? new Date();
   const existing = await v2Db.select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
     .from(users).where(sql`lower(${users.email}) = ${input.email}`).limit(1);
-  if (existing[0]?.disabledAt || existing[0]?.emailVerifiedAt || input.contextTokenHash === "invalid") return null;
+  if (existing[0]?.disabledAt || input.contextTokenHash === "invalid") return null;
+
+  if (existing[0]?.emailVerifiedAt) {
+    if (!input.contextTokenHash) return null;
+    const [partnerIntent] = await v2Db.update(customerSignupIntents).set({ email: input.email, locale: input.locale, updatedAt: now }).where(and(
+      eq(customerSignupIntents.contextTokenHash, input.contextTokenHash), isNotNull(customerSignupIntents.inviteTokenHash),
+      gt(customerSignupIntents.expiresAt, now), pendingPartnerIntentCondition(),
+      or(isNull(customerSignupIntents.email), eq(customerSignupIntents.email, input.email)),
+    )).returning({ id: customerSignupIntents.id });
+    if (!partnerIntent) return null;
+    return createAuthToken("login_link", input.locale, { userId: existing[0].id, signupIntentId: partnerIntent.id }, now);
+  }
 
   let intentId: string;
   if (input.contextTokenHash) {
@@ -84,12 +102,26 @@ export async function consumeCustomerAuthToken(token: string, now = new Date()) 
             await tx.update(users).set({ emailVerifiedAt: now, preferredLocale: intent.locale, updatedAt: now }).where(eq(users.id, racedUser.id));
           }
         }
-        await tx.update(customerSignupIntents).set({ verifiedAt: now, completedAt: now, updatedAt: now })
+        await tx.update(customerSignupIntents).set({
+          verifiedAt: now,
+          ...(intent.inviteTokenHash ? {} : { completedAt: now }),
+          updatedAt: now,
+        })
           .where(eq(customerSignupIntents.id, intent.id));
       } else if (authToken.purpose === "login_link" && userId) {
-        const [user] = await tx.select({ disabledAt: users.disabledAt, emailVerifiedAt: users.emailVerifiedAt })
+        const [user] = await tx.select({ email: users.email, disabledAt: users.disabledAt, emailVerifiedAt: users.emailVerifiedAt })
           .from(users).where(eq(users.id, userId)).limit(1);
         if (!user || user.disabledAt || !user.emailVerifiedAt) return null;
+        if (authToken.signupIntentId) {
+          const [partnerIntent] = await tx.select({ id: customerSignupIntents.id }).from(customerSignupIntents).where(and(
+            eq(customerSignupIntents.id, authToken.signupIntentId), eq(customerSignupIntents.email, user.email),
+            isNotNull(customerSignupIntents.inviteTokenHash), pendingPartnerIntentCondition(),
+            gt(customerSignupIntents.expiresAt, now),
+          )).limit(1).for("update");
+          if (!partnerIntent) return null;
+          await tx.update(customerSignupIntents).set({ verifiedAt: now, updatedAt: now })
+            .where(eq(customerSignupIntents.id, partnerIntent.id));
+        }
         await tx.update(users).set({ preferredLocale: authToken.locale, updatedAt: now }).where(eq(users.id, userId));
       } else return null;
 

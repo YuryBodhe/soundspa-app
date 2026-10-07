@@ -47,6 +47,23 @@ async function main() {
     assert.ok(consumed.user.emailVerifiedAt);
     assert.equal(await service.consumeCustomerAuthToken(verification.token, now), null, "consumed token replay must fail");
     assert.equal((await v2Db.select().from(organizationMembers).where(eq(organizationMembers.userId, consumed.user.id))).length, 0, "P5.1 must not create owner membership");
+    const [verifiedPartnerIntent] = await v2Db.select().from(customerSignupIntents).where(eq(customerSignupIntents.id, intentId!));
+    assert.equal(verifiedPartnerIntent.completedAt, null, "Partner context remains pending after email verification.");
+    // Existing intents created before P5.3 may have the P5.1 verification
+    // timestamp in completed_at; equality remains a pending Partner marker.
+    await v2Db.update(customerSignupIntents).set({ completedAt: now }).where(eq(customerSignupIntents.id, intentId!));
+
+    const partnerLogin = await service.createSignupAuthRequest({ email, locale: "ru", contextTokenHash: contextHash, now });
+    assert.equal(partnerLogin?.purpose, "login_link", "An existing verified user entering through a Partner link receives the normal login email purpose.");
+    const partnerLoginSession = await service.consumeCustomerAuthToken(partnerLogin!.token, now);
+    assert.equal(partnerLoginSession?.user.id, consumed.user.id, "Existing verified Partner user must reuse the same identity.");
+    const [linkedSession] = await v2Db.select().from(customerSessions).where(eq(customerSessions.tokenHash, sha256(partnerLoginSession!.sessionToken)));
+    assert.equal(linkedSession.signupIntentId, intentId, "The authenticated Partner context remains attached server-side to the session.");
+    const expiredIntentLogin = await service.createSignupAuthRequest({ email, locale: "en", contextTokenHash: contextHash, now });
+    assert.equal(expiredIntentLogin?.purpose, "login_link");
+    await v2Db.update(customerSignupIntents).set({ expiresAt: new Date(now.getTime() - 1) }).where(eq(customerSignupIntents.id, intentId!));
+    assert.equal(await service.consumeCustomerAuthToken(expiredIntentLogin!.token, now), null, "An expired Partner signup intent must not be restored through a login link.");
+    await v2Db.update(customerSignupIntents).set({ expiresAt: new Date(now.getTime() + 60_000) }).where(eq(customerSignupIntents.id, intentId!));
 
     const ordinary = await service.createSignupAuthRequest({ email: ordinaryEmail, locale: "en", contextTokenHash: null, now });
     assert.ok(ordinary);
