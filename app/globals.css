@@ -359,5 +359,21 @@ input[type="button"]:active {
 .customer-account-details dt { color: rgba(245,240,230,.62); }
 .customer-account-details dd { margin: 0; }
 .customer-account-partner-access { margin-top: 20px; }
+.customer-account-organization { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(245,240,230,.12); }
+.customer-account-organization > h2 { margin: 0 0 12px; font-size: 18px; font-weight: 500; }
+.customer-account-location { margin: 16px 0 0; padding: 16px; border-radius: 10px; background: rgba(245,240,230,.035); }
+.customer-account-location h3 { margin: 0; font-size: 16px; font-weight: 500; }
+.customer-account-location > p { margin: 4px 0 14px; color: rgba(245,240,230,.62); font-size: 13px; }
+.customer-account-location h4 { margin: 14px 0 8px; font-size: 14px; font-weight: 500; }
+.customer-account-location form { margin-top: 14px; }
+.customer-account-location form label { display: grid; gap: 7px; margin: 12px 0; color: rgba(245,240,230,.78); }
+.customer-account-location form input { min-width: 0; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; background: #111115; color: #f5f0e6; font: inherit; }
+.customer-account-devices { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.customer-account-devices li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 9px 0; border-bottom: 1px solid rgba(245,240,230,.08); font-size: 13px; }
+.customer-account-devices li span:nth-child(n+2) { color: rgba(245,240,230,.62); }
+.customer-account-activation { display: grid; gap: 8px; margin-top: 16px; padding: 14px; border: 1px solid rgba(195,168,108,.28); border-radius: 8px; }
+.customer-account-activation h4, .customer-account-activation p { margin: 0; }
+.customer-account-activation a { overflow-wrap: anywhere; color: #d5bd84; }
+.customer-account-activation button { justify-self: start; min-height: 42px; padding: 8px 12px; border: 1px solid rgba(195,168,108,.35); border-radius: 7px; background: transparent; color: #d5bd84; font: inherit; cursor: pointer; }
 .customer-account-logout { margin-top: 18px; }
 @media (max-width: 480px) { .customer-auth-page { padding: 16px; } .customer-auth-card { padding: 22px 18px; } }

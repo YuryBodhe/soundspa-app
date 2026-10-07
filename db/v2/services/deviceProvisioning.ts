@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { customerDeviceAuthorizationFailure } from "@/lib/v2/customerDeviceAuthorization";
 import { v2Db } from "../client";
-import { devices, deviceActivationTokens, locations, organizations } from "../schema";
+import { devices, deviceActivationTokens, locations, organizationMembers, organizations, users } from "../schema";
 import { recordLifecycleEvent } from "./monitoringObservability";
 
 const ACTIVATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -35,7 +36,7 @@ export class DeviceProvisioningError extends Error {
   }
 }
 
-export async function createDeviceWithActivation(input: { locationId?: unknown; name?: unknown }) {
+export async function createDeviceWithActivation(input: { locationId?: unknown; name?: unknown; authorizedUserId?: string }) {
   const locationId = typeof input.locationId === "string" ? input.locationId.trim() : "";
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!uuidPattern.test(locationId) || !name || name.length > 120) throw new DeviceProvisioningError("validation");
@@ -51,6 +52,33 @@ export async function createDeviceWithActivation(input: { locationId?: unknown; 
       .where(and(eq(locations.id, locationId), isNull(locations.archivedAt), isNull(organizations.archivedAt)))
       .limit(1);
     if (!location) throw new DeviceProvisioningError("location_unavailable");
+
+    if (input.authorizedUserId) {
+      const [user] = await tx.select({ emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
+        .from(users).where(eq(users.id, input.authorizedUserId)).limit(1);
+      const memberships = await tx.select({
+        locationId: locations.id,
+        role: organizationMembers.role,
+        locationArchivedAt: locations.archivedAt,
+        organizationArchivedAt: organizations.archivedAt,
+      }).from(organizationMembers)
+        .innerJoin(locations, eq(locations.organizationId, organizationMembers.organizationId))
+        .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+        .where(and(eq(organizationMembers.userId, input.authorizedUserId), eq(locations.id, locationId)));
+      const authorizationFailure = customerDeviceAuthorizationFailure({
+        userFound: Boolean(user),
+        emailVerified: Boolean(user?.emailVerifiedAt),
+        userDisabled: Boolean(user?.disabledAt),
+        locationId,
+        memberships: memberships.map((membership) => ({
+          locationId: membership.locationId,
+          role: membership.role,
+          locationArchived: Boolean(membership.locationArchivedAt),
+          organizationArchived: Boolean(membership.organizationArchivedAt),
+        })),
+      });
+      if (authorizationFailure) throw new DeviceProvisioningError("location_unavailable");
+    }
 
     await tx.delete(deviceActivationTokens).where(or(isNotNull(deviceActivationTokens.usedAt), lt(deviceActivationTokens.expiresAt, createdAt)));
     const [created] = await tx.insert(devices).values({ locationId, label: name, credentialHash: null }).returning({ id: devices.id, label: devices.label, status: devices.status, createdAt: devices.createdAt });

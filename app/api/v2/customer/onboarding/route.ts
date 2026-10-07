@@ -22,11 +22,15 @@ export async function GET(request: Request) {
   try {
     const session = await authenticatedSession(request);
     if (!session || !session.user.emailVerifiedAt) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
-    const { getCustomerOnboarding, isPartnerSignupContext, hasCompletedPartnerOnboarding } = await import("@/db/v2/services/customerOnboarding");
+    const [{ getCustomerOnboarding, isPartnerSignupContext, hasCompletedPartnerOnboarding }, { listCustomerLocationsWithDevices }] = await Promise.all([
+      import("@/db/v2/services/customerOnboarding"),
+      import("@/db/v2/services/customerDevices"),
+    ]);
     const account = await getCustomerOnboarding(session.user.id);
     const partnerContext = await isPartnerSignupContext(session.user.email);
     const partnerCompleted = await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
-    return NextResponse.json({ account, partnerContext, partnerCompleted }, { headers: authResponseHeaders() });
+    const locations = await listCustomerLocationsWithDevices(session.user.id);
+    return NextResponse.json({ account, partnerContext, partnerCompleted, locations }, { headers: authResponseHeaders() });
   } catch {
     return NextResponse.json({ error: "unavailable" }, { status: 503, headers: authResponseHeaders() });
   }
@@ -55,10 +59,14 @@ export async function POST(request: Request) {
     const result = await (partnerRequest
       ? completePartnerCustomerOnboarding(onboardingInput)
       : completeOrdinaryCustomerOnboarding(onboardingInput));
-    const { getCustomerOnboarding, hasCompletedPartnerOnboarding } = await import("@/db/v2/services/customerOnboarding");
+    const [{ getCustomerOnboarding, hasCompletedPartnerOnboarding }, { listCustomerLocationsWithDevices }] = await Promise.all([
+      import("@/db/v2/services/customerOnboarding"),
+      import("@/db/v2/services/customerDevices"),
+    ]);
     const account = await getCustomerOnboarding(session.user.id);
     const partnerCompleted = partnerRequest || await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
-    return NextResponse.json({ ...result, account: account ?? result.account, partnerCompleted }, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
+    const locations = await listCustomerLocationsWithDevices(session.user.id);
+    return NextResponse.json({ ...result, account: account ?? result.account, partnerCompleted, locations }, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "invalid" }, { status: 400, headers: authResponseHeaders() });
     if (error && typeof error === "object" && "code" in error) {
