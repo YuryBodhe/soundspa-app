@@ -5,11 +5,14 @@ export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: text("email").notNull(),
   displayName: text("display_name"),
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  preferredLocale: text("preferred_locale"),
   disabledAt: timestamp("disabled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("users_email_nonempty", sql`length(btrim(${table.email})) > 0`),
   check("users_email_trimmed", sql`${table.email} = btrim(${table.email})`),
+  check("users_preferred_locale_supported", sql`${table.preferredLocale} IS NULL OR ${table.preferredLocale} IN ('en', 'ru', 'vi', 'th')`),
   uniqueIndex("users_email_lower_unique").on(sql`lower(${table.email})`),
 ]);
