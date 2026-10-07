@@ -17,7 +17,6 @@ import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
 import { createCustomerWithFirstLocationInTransaction, validateCustomerProvisioningInput } from "./customerProvisioning";
 import { createLocationSlug } from "@/lib/v2/customerOnboarding";
 import { claimPartnerInviteByHash, PartnerInviteClaimError } from "./partnerInviteClaims";
-import { resolveEffectiveChannelAccess } from "../queries/effectiveAccess";
 
 type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
 type TransactionRunner = <T>(operation: (tx: V2Transaction) => Promise<T>) => Promise<T>;
@@ -27,7 +26,6 @@ type OnboardingDetails = {
   organization: { id: string; name: string } | null;
   location: { id: string; name: string; slug: string; timezone: string } | null;
   trial: { status: string; startsAt: Date; endsAt: Date } | null;
-  availableChannels: string[];
 };
 
 export class CustomerOnboardingError extends Error {
@@ -55,7 +53,6 @@ async function loadExistingOnboarding(tx: V2Transaction, userId: string): Promis
     organization: { id: membership.organization.id, name: membership.organization.name },
     location: { id: location.id, name: location.name, slug: location.slug, timezone: location.timezone },
     trial: trialRow ? { status: trialRow.trial.status, startsAt: trialRow.trial.startsAt, endsAt: trialRow.trial.endsAt } : null,
-    availableChannels: [],
   };
 }
 
@@ -69,11 +66,8 @@ export async function getCustomerOnboarding(userId: string): Promise<OnboardingD
     organization: null,
     location: null,
     trial: null,
-    availableChannels: [],
   });
-  if (!account.location) return account;
-  const channels = await resolveEffectiveChannelAccess(account.location.id, new Date());
-  return { ...account, availableChannels: channels.filter((channel) => channel.playable).map((channel) => channel.displayName) };
+  return account;
 }
 
 function pendingPartnerIntentCondition() {
@@ -206,7 +200,6 @@ export async function completePartnerCustomerOnboarding(input: {
           organization,
           location,
           trial: null,
-          availableChannels: [],
         },
       };
     });

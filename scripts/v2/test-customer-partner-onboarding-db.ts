@@ -50,7 +50,6 @@ try {
     const completed = await completePartnerCustomerOnboarding(input, { runInTransaction });
     assert.equal(completed.status, "completed");
     assert.equal(completed.account.trial, null, "Partner onboarding itself does not create the ordinary Basic trial.");
-    assert.equal(completed.account.availableChannels.length, 0);
     const locationId = completed.account.location!.id;
 
     const memberships = await outer.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id));

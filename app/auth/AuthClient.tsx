@@ -9,7 +9,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   const { locale, t } = useI18n();
   const search = useSearchParams();
   const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
+  const [sentEmail, setSentEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState("");
@@ -27,7 +27,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
 
   async function requestLink(event: FormEvent) {
     event.preventDefault();
-    setLoading(true); setError(""); setMessage("");
+    setLoading(true); setError(""); setSentEmail("");
     try {
       const response = await fetch(mode === "signup" ? "/api/v2/customer-auth/signup" : "/api/v2/customer-auth/request-login", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -35,7 +35,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
       });
       const data = await response.json() as { code?: string };
       if (!response.ok) setError(data.code === "invalid_email" ? t("authInvalidEmail") : t("authInvalidLink"));
-      else { setMessage(t("authEmailSent")); setEmail(""); }
+      else setSentEmail(email.trim());
     } catch { setError(t("authInvalidLink")); }
     finally { setLoading(false); }
   }
@@ -54,15 +54,21 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   return <main className="customer-auth-page"><section className="customer-auth-card">
     <div className="customer-auth-top"><span className="customer-auth-brand">SOUND SPA</span><AuthLanguageSelector /></div>
     {token ? <><h1>{t("authContinueTitle")}</h1><p>{t("authLinkConfirmation")}</p><button className="customer-auth-submit" type="button" onClick={continueWithToken} disabled={consuming}>{consuming ? t("authSending") : t("authContinue")}</button></> : <>
-      <h1>{mode === "signup" ? t("authSignupTitle") : t("authLoginTitle")}</h1>
-      <p>{mode === "signup" ? t("authSignupDescription") : t("authLoginDescription")}</p>
-      {contextUnavailable && <p role="alert">{t("authPartnerUnavailable")}</p>}
-      <form onSubmit={requestLink}>
-        <label>{t("authEmail")}<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <button className="customer-auth-submit" type="submit" disabled={loading}>{loading ? t("authSending") : mode === "signup" ? t("authSendVerification") : t("authRequestLogin")}</button>
-      </form>
-      {message && <p role="status">{message}</p>}{error && <p role="alert">{error}</p>}
-      <Link href={mode === "signup" ? "/login" : "/signup"}>{mode === "signup" ? t("authLoginLink") : t("authSignupLink")}</Link>
+      {sentEmail ? <div className="customer-auth-email-success" role="status" aria-live="polite">
+        <h1>{t("authCheckEmailTitle")}</h1>
+        <p>{t("authCheckEmailDescription")}</p>
+        <p className="customer-auth-sent-address">{sentEmail}</p>
+      </div> : <>
+        <h1>{mode === "signup" ? t("authSignupTitle") : t("authLoginTitle")}</h1>
+        <p>{mode === "signup" ? t("authSignupDescription") : t("authLoginDescription")}</p>
+        {contextUnavailable && <p role="alert">{t("authPartnerUnavailable")}</p>}
+        <form onSubmit={requestLink}>
+          <label>{t("authEmail")}<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <button className="customer-auth-submit" type="submit" disabled={loading}>{loading ? t("authSending") : mode === "signup" ? t("authSendVerification") : t("authRequestLogin")}</button>
+        </form>
+        {error && <p role="alert">{error}</p>}
+        <Link href={mode === "signup" ? "/login" : "/signup"}>{mode === "signup" ? t("authLoginLink") : t("authSignupLink")}</Link>
+      </>}
     </>}
   </section></main>;
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { I18nProvider, useI18n } from "@/app/i18n/I18nProvider";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
-import { trialCountdown } from "@/lib/v2/customerOnboarding";
+import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
   email: string;
@@ -11,12 +11,11 @@ type Account = {
   organization: { id: string; name: string } | null;
   location: { id: string; name: string; slug: string; timezone: string } | null;
   trial: { status: string; startsAt: string; endsAt: string } | null;
-  availableChannels: string[];
 };
 type LoadResult = { account: Account | null; partnerContext: boolean; partnerCompleted?: boolean };
 
 function Content() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [result, setResult] = useState<LoadResult | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [organizationName, setOrganizationName] = useState("");
@@ -73,7 +72,8 @@ function Content() {
   const account = result?.account;
   const complete = Boolean(account?.organization && account.location);
   const trialDisplay = account?.trial ? trialCountdown(account.trial) : { key: "trialEnded" as const };
-  const trialStatus = t(trialDisplay.key).replace("{{days}}", String(trialDisplay.days ?? ""));
+  const trialKey = trialDisplay.key === "trialDays" ? trialDaysMessageKey(locale, trialDisplay.days ?? 0) : trialDisplay.key;
+  const trialStatus = t(trialKey).replace("{{days}}", String(trialDisplay.days ?? ""));
 
   return <main className="customer-auth-page"><section className="customer-auth-card customer-onboarding-card"><div className="customer-auth-top"><span className="customer-auth-brand">SOUND SPA</span><AuthLanguageSelector /></div>
     <h1>{t("authAccountTitle")}</h1>
@@ -88,8 +88,9 @@ function Content() {
           <dt>{t("accountTimezone")}</dt><dd>{account.location!.timezone}</dd>
           {account.trial && <><dt>{t("trialLabel")}</dt><dd>{trialStatus}</dd></>}
         </dl>
-        <h2>{t("partnerAccess")}</h2>
-        {account.availableChannels.length ? <ul className="customer-account-channels">{account.availableChannels.map((name) => <li key={name}>{name}</li>)}</ul> : <p>{t("noAvailableChannels")}</p>}
+        {result?.partnerCompleted && <section className="customer-account-partner-access" aria-label={t("partnerAccess")}>
+          <h2>{t("partnerAccess")}</h2><p>{t("partnerAccessActive")}</p>
+        </section>}
       </> : <>
         {result?.partnerContext && <p role="status">{t("partnerInvitePending")}</p>}
         <p>{t("onboardingIncomplete")}</p><h2>{t("onboardingTitle")}</h2><p>{t("onboardingDescription")}</p>

@@ -13,3 +13,11 @@ export function trialCountdown(input: { status: string; startsAt: Date | string;
   if (remaining < 24 * 60 * 60 * 1000) return { key: "trialLessThanDay" };
   return { key: "trialDays", days: Math.ceil(remaining / (24 * 60 * 60 * 1000)) };
 }
+
+export function trialDaysMessageKey(locale: "en" | "ru" | "vi" | "th", days: number): "trialDays" | "trialDaysOne" | "trialDaysFew" | "trialDaysMany" {
+  const category = new Intl.PluralRules(locale).select(days);
+  if (category === "one") return "trialDaysOne";
+  if (category === "few") return "trialDaysFew";
+  if (category === "many") return "trialDaysMany";
+  return "trialDays";
+}

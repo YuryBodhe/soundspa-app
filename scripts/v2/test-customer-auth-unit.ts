@@ -4,6 +4,10 @@ import {
   allowAuthRequest, authResponseHeaders, newHashedOpaqueToken, normalizeCustomerEmail, resolveAuthLocale, sha256,
 } from "../../lib/v2/customerAuthCore";
 import { renderCustomerAuthEmail } from "../../lib/v2/customerAuthEmails";
+import { en } from "../../app/i18n/dictionaries/en";
+import { ru } from "../../app/i18n/dictionaries/ru";
+import { vi } from "../../app/i18n/dictionaries/vi";
+import { th } from "../../app/i18n/dictionaries/th";
 
 assert.equal(normalizeCustomerEmail("  USER+tag@Example.COM "), "user+tag@example.com");
 assert.equal(normalizeCustomerEmail("invalid"), null);
@@ -22,6 +26,11 @@ assert.notEqual(inviteHash, invite);
 
 const expected: Record<string, string> = { en: "Verify your SoundSpa email", ru: "Подтвердите email SoundSpa", vi: "Xác minh email SoundSpa", th: "ยืนยันอีเมล SoundSpa" };
 const loginExpected: Record<string, string> = { en: "Your SoundSpa sign-in link", ru: "Ссылка для входа в SoundSpa", vi: "Liên kết đăng nhập SoundSpa", th: "ลิงก์เข้าสู่ระบบ SoundSpa" };
+for (const dictionary of [en, ru, vi, th]) {
+  assert(dictionary.authCheckEmailTitle.length > 0);
+  assert(dictionary.authCheckEmailDescription.includes("{{email}}") === false, "The generic success copy does not require account-specific server data.");
+  assert(dictionary.partnerAccessActive.length > 0);
+}
 for (const [locale, subject] of Object.entries(expected)) {
   const rendered = renderCustomerAuthEmail("verify_email", locale, `https://test.example/login#token=${auth.token}`);
   assert.equal(rendered.subject, subject);

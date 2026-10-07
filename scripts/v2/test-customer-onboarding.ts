@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createLocationSlug, trialCountdown } from "../../lib/v2/customerOnboarding";
+import { createLocationSlug, trialCountdown, trialDaysMessageKey } from "../../lib/v2/customerOnboarding";
 import { en } from "../../app/i18n/dictionaries/en";
 import { ru } from "../../app/i18n/dictionaries/ru";
 import { vi } from "../../app/i18n/dictionaries/vi";
@@ -15,6 +15,12 @@ assert.deepEqual(trialCountdown(activeTrial("2026-10-06T00:00:00.000Z", "2026-10
 assert.deepEqual(trialCountdown(activeTrial("invalid", "invalid"), Date.now()), { key: "trialEnded" });
 assert.deepEqual(trialCountdown(activeTrial("2026-10-08T00:00:00.000Z", "2026-11-07T00:00:00.000Z"), Date.parse("2026-10-07T00:00:00.000Z")), { key: "trialActive" });
 assert.deepEqual(trialCountdown({ ...activeTrial("2026-10-06T00:00:00.000Z", "2026-10-08T00:00:00.000Z"), status: "expired" }, Date.parse("2026-10-07T00:00:00.000Z")), { key: "trialEnded" });
+assert.equal(trialDaysMessageKey("en", 1), "trialDaysOne");
+assert.equal(trialDaysMessageKey("en", 30), "trialDays");
+assert.equal(trialDaysMessageKey("ru", 1), "trialDaysOne");
+assert.equal(trialDaysMessageKey("ru", 2), "trialDaysFew");
+assert.equal(trialDaysMessageKey("ru", 5), "trialDaysMany");
+assert.equal(trialDaysMessageKey("ru", 21), "trialDaysOne");
 
 const onboardingKeys = ["onboardingTitle", "onboardingDescription", "organizationName", "locationName", "timezone", "timezoneHelp", "onboardingSubmit", "onboardingSubmitting", "onboardingIncomplete", "onboardingCompleted", "onboardingInvalid", "onboardingUnavailable", "onboardingPartnerContext", "trialLabel", "trialDays", "trialLessThanDay", "trialEnded", "trialActive", "accountOrganization", "accountLocation", "accountTimezone", "timezoneRequired"] as const;
 for (const dictionary of [en, ru, vi, th]) for (const key of onboardingKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
