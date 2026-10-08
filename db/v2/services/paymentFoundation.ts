@@ -37,7 +37,7 @@ export async function resolveEnabledPaymentRoutesForLocationProduct(locationId: 
 }
 
 export class PaymentFoundationError extends Error {
-  constructor(readonly code: "provider_not_found" | "payment_route_mismatch" | "subscription_mismatch" | "payment_identity_conflict" | "payment_event_identity_conflict") {
+  constructor(readonly code: "provider_not_found" | "payment_route_mismatch" | "subscription_mismatch" | "payment_identity_conflict" | "payment_event_identity_conflict" | "provider_reference_conflict" | "subscription_reference_conflict" | "provider_paid_through_required" | "subscription_not_found") {
     super(code);
     this.name = "PaymentFoundationError";
   }
@@ -62,14 +62,22 @@ export async function recordNormalizedPayment(input: NormalizedPaymentInput, db:
       )
       : and(eq(commercialPaymentEvents.providerCode, input.providerCode), eq(commercialPaymentEvents.idempotencyKey, input.idempotencyKey));
     const [priorEvent] = await tx.select({
+      id: commercialPaymentEvents.id,
       paymentId: commercialPaymentEvents.paymentId,
       paymentKey: commercialPaymentEvents.paymentKey,
+      idempotencyKey: commercialPaymentEvents.idempotencyKey,
+      externalEventId: commercialPaymentEvents.externalEventId,
       status: commercialPaymentEvents.status,
+      occurredAt: commercialPaymentEvents.occurredAt,
     }).from(commercialPaymentEvents).where(eventCondition).limit(1);
     if (priorEvent) {
-      if (priorEvent.paymentKey !== input.paymentKey || priorEvent.status !== input.status || !priorEvent.paymentId) {
+      if (priorEvent.paymentKey !== input.paymentKey || priorEvent.idempotencyKey !== input.idempotencyKey ||
+          priorEvent.externalEventId !== input.externalEventId || priorEvent.status !== input.status ||
+          priorEvent.occurredAt?.getTime() !== input.occurredAt?.getTime() || !priorEvent.paymentId) {
         throw new PaymentFoundationError("payment_event_identity_conflict");
       }
+      const [priorPayment] = await tx.select().from(commercialPayments).where(eq(commercialPayments.id, priorEvent.paymentId)).limit(1);
+      if (!priorPayment || !samePaymentIdentity(priorPayment, input)) throw new PaymentFoundationError("payment_identity_conflict");
       return { duplicate: true as const, paymentId: priorEvent.paymentId };
     }
 
@@ -83,11 +91,15 @@ export async function recordNormalizedPayment(input: NormalizedPaymentInput, db:
       occurredAt: input.occurredAt,
     }).onConflictDoNothing().returning({ id: commercialPaymentEvents.id });
     if (!event) {
-      const [racedEvent] = await tx.select({ paymentId: commercialPaymentEvents.paymentId, paymentKey: commercialPaymentEvents.paymentKey, status: commercialPaymentEvents.status })
+      const [racedEvent] = await tx.select({ paymentId: commercialPaymentEvents.paymentId, paymentKey: commercialPaymentEvents.paymentKey, idempotencyKey: commercialPaymentEvents.idempotencyKey, externalEventId: commercialPaymentEvents.externalEventId, status: commercialPaymentEvents.status, occurredAt: commercialPaymentEvents.occurredAt })
         .from(commercialPaymentEvents).where(eventCondition).limit(1);
-      if (!racedEvent || racedEvent.paymentKey !== input.paymentKey || racedEvent.status !== input.status || !racedEvent.paymentId) {
+      if (!racedEvent || racedEvent.paymentKey !== input.paymentKey || racedEvent.idempotencyKey !== input.idempotencyKey ||
+          racedEvent.externalEventId !== input.externalEventId || racedEvent.status !== input.status ||
+          racedEvent.occurredAt?.getTime() !== input.occurredAt?.getTime() || !racedEvent.paymentId) {
         throw new PaymentFoundationError("payment_event_identity_conflict");
       }
+      const [racedPayment] = await tx.select().from(commercialPayments).where(eq(commercialPayments.id, racedEvent.paymentId)).limit(1);
+      if (!racedPayment || !samePaymentIdentity(racedPayment, input)) throw new PaymentFoundationError("payment_identity_conflict");
       return { duplicate: true as const, paymentId: racedEvent.paymentId };
     }
 
