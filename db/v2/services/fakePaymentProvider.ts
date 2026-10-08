@@ -153,7 +153,7 @@ export async function createFakeProviderCheckout(input: {
       currency: FAKE_PAYMENT_CURRENCY,
       occurredAt: now,
     }, tx);
-    const [payment] = await tx.select({ id: commercialPayments.id, createdAt: commercialPayments.createdAt })
+    const [payment] = await tx.select({ id: commercialPayments.id, createdAt: commercialPayments.createdAt, amountMinor: commercialPayments.amountMinor, currency: commercialPayments.currency })
       .from(commercialPayments).where(eq(commercialPayments.id, recorded.paymentId)).limit(1);
     if (!payment) throw new FakeProviderError("checkout_unavailable");
     const expiresAt = payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS;
@@ -163,7 +163,14 @@ export async function createFakeProviderCheckout(input: {
       actorHash: createHash("sha256").update(input.authenticatedUserId).digest("hex"),
       expiresAt,
     }, secret);
-    return { checkoutId: payment.id, confirmationToken, expiresAt: new Date(expiresAt).toISOString() };
+    return {
+      checkoutId: payment.id,
+      confirmationToken,
+      expiresAt: new Date(expiresAt).toISOString(),
+      amountMinor: Number(payment.amountMinor),
+      currency: payment.currency,
+      providerName: selectedRoute.providerName,
+    };
   });
 }
 

@@ -9,6 +9,7 @@ import {
   fakeConfirmationRequestSchema,
   fakeProviderIsConfigured,
   fakeProviderIsEnabled,
+  fakeProviderUiIsAvailable,
   issueFakeCheckoutTicket,
   verifyFakeCheckoutTicket,
   FAKE_PROVIDER_ORIGIN,
@@ -35,6 +36,9 @@ test("Fake Provider requires every explicit staging guard and exact origin", () 
   assert.equal(fakeProviderIsEnabled({ ...enabledEnv, V2_FAKE_PROVIDER_SECRET: "short" }, request()), false);
   assert.equal(fakeProviderIsEnabled(enabledEnv, request("soundspa2.bodhemusic.com")), false);
   assert.equal(fakeProviderIsEnabled(enabledEnv, request("test.soundspa.bodhemusic.com", "https://evil.example")), false);
+  const readRequest = new Request(`${FAKE_PROVIDER_ORIGIN}/api/v2/customer/billing`, { headers: { host: "test.soundspa.bodhemusic.com" } });
+  assert.equal(fakeProviderUiIsAvailable(enabledEnv, readRequest), true);
+  assert.equal(fakeProviderUiIsAvailable(enabledEnv, new Request(`${FAKE_PROVIDER_ORIGIN}/api/v2/customer/billing`, { headers: { host: "soundspa2.bodhemusic.com" } })), false);
 });
 
 test("checkout ticket binds opaque payment and customer identity, and rejects tampering", () => {

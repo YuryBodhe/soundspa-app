@@ -30,6 +30,11 @@ export function fakeProviderIsEnabled(env: FakeProviderEnvironment, request: Req
     requestOrigin === FAKE_PROVIDER_ORIGIN;
 }
 
+/** Read-only Account UI availability check; mutations still require same-origin validation. */
+export function fakeProviderUiIsAvailable(env: FakeProviderEnvironment, request: Request): boolean {
+  return fakeProviderIsConfigured(env) && request.headers.get("host")?.toLowerCase() === "test.soundspa.bodhemusic.com";
+}
+
 function signature(payload: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(payload).digest();
 }
