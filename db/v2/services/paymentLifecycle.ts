@@ -1,7 +1,10 @@
-import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { v2Db } from "../client";
 import {
+  commercialBillingOrderLines,
+  commercialBillingOrders,
+  commercialPaymentAllocations,
   commercialPaymentProviders,
   commercialPaymentEvents,
   commercialPaymentRoutes,
@@ -13,6 +16,7 @@ import {
 import { PaymentFoundationError, recordNormalizedPayment } from "./paymentFoundation";
 import type { NormalizedPaymentInput } from "./paymentFoundationModel";
 import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, validateProviderPaidThrough } from "./paymentLifecycleModel";
+import { addBillingCalendarMonths, billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 
@@ -33,6 +37,26 @@ export type PaymentSettlementResult = {
   subscriptionId: string | null;
   accessApplied: boolean;
   reason: "non_success_payment" | "duplicate_event" | "duplicate_success" | "stale_canceled_subscription" | "settled";
+};
+
+export type AggregateBillingOrderSettlementInput = {
+  orderId: string;
+  paymentId: string;
+  providerCode: string;
+  paymentKey: string;
+  externalPaymentId: string | null;
+  idempotencyKey: string;
+  externalEventId: string | null;
+  amountMinor: bigint;
+  currency: string;
+  occurredAt: Date;
+};
+
+export type AggregateBillingOrderSettlementResult = {
+  duplicate: boolean;
+  paymentId: string;
+  orderId: string;
+  allocations: Array<{ orderLineId: string; subscriptionId: string }>;
 };
 
 function sameInstant(left: Date | null, right: Date | null): boolean {
@@ -169,6 +193,185 @@ export async function settleTrustedProviderPayment(event: TrustedProviderPayment
     await tx.update(commercialPayments).set({ subscriptionId: subscription.id, updatedAt: new Date() })
       .where(eq(commercialPayments.id, payment.id));
     return { duplicate: false, paymentId: payment.id, subscriptionId: subscription.id, accessApplied: true, reason: "settled" };
+  });
+}
+
+function aggregateBillingEventCondition(event: AggregateBillingOrderSettlementInput) {
+  return event.externalEventId
+    ? or(
+      and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.idempotencyKey, event.idempotencyKey)),
+      and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.externalEventId, event.externalEventId)),
+    )
+    : and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.idempotencyKey, event.idempotencyKey));
+}
+
+/**
+ * Settles one trusted aggregate payment across all immutable Billing Order
+ * lines. Every allocation and Subscription extension is committed atomically.
+ * This internal service never accepts browser payment-status claims.
+ */
+export async function settleTrustedBillingOrderPayment(
+  event: AggregateBillingOrderSettlementInput,
+  db: LifecycleDb = v2Db,
+): Promise<AggregateBillingOrderSettlementResult> {
+  if (!event.orderId || !event.paymentId || !event.providerCode || !event.paymentKey.trim() ||
+      !event.idempotencyKey.trim() || (event.externalEventId !== null && !event.externalEventId.trim()) ||
+      typeof event.amountMinor !== "bigint" || event.amountMinor <= BigInt(0) ||
+      !/^[A-Z]{3}$/.test(event.currency) || !Number.isFinite(event.occurredAt.getTime())) {
+    throw new PaymentFoundationError("billing_order_invalid");
+  }
+
+  return db.transaction(async (tx) => {
+    const [provider] = await tx.select({ code: commercialPaymentProviders.code })
+      .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, event.providerCode)).limit(1);
+    if (!provider) throw new PaymentFoundationError("provider_not_found");
+    const [order] = await tx.select().from(commercialBillingOrders)
+      .where(eq(commercialBillingOrders.id, event.orderId)).for("update").limit(1);
+    const [payment] = await tx.select().from(commercialPayments)
+      .where(eq(commercialPayments.id, event.paymentId)).for("update").limit(1);
+    if (!order || !payment || payment.billingOrderId !== order.id ||
+        order.providerCode !== event.providerCode || payment.providerCode !== event.providerCode ||
+        order.currency !== event.currency || payment.currency !== event.currency ||
+        order.totalAmountMinor !== event.amountMinor || payment.amountMinor !== event.amountMinor ||
+        payment.paymentKey !== event.paymentKey || payment.externalPaymentId !== event.externalPaymentId ||
+        payment.locationId !== null || payment.productId !== null || payment.subscriptionId !== null || payment.routeId !== null) {
+      throw new PaymentFoundationError("payment_identity_conflict");
+    }
+
+    const lines = await tx.select().from(commercialBillingOrderLines)
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.id)).for("update");
+    if (lines.length === 0 || lines.some((line) => line.organizationId !== order.organizationId ||
+        line.providerCode !== order.providerCode || line.currency !== order.currency ||
+        line.durationMonths < 1 || line.durationMonths > 12 || line.amountMinor < BigInt(0) ||
+        line.amountMinor !== line.listAmountMinor - line.discountAmountMinor)) {
+      throw new PaymentFoundationError("billing_order_allocation_invalid");
+    }
+    const lineTotal = lines.reduce((total, line) => total + line.amountMinor, BigInt(0));
+    if (lineTotal !== event.amountMinor) throw new PaymentFoundationError("billing_order_allocation_invalid");
+    const persistedAllocations = await tx.select({
+      orderLineId: commercialPaymentAllocations.orderLineId,
+      amountMinor: commercialPaymentAllocations.amountMinor,
+    }).from(commercialPaymentAllocations).where(and(
+      eq(commercialPaymentAllocations.paymentId, payment.id),
+      eq(commercialPaymentAllocations.orderId, order.id),
+    ));
+    const allocationByLine = new Map(persistedAllocations.map((allocation) => [allocation.orderLineId, allocation.amountMinor]));
+    if (persistedAllocations.length !== lines.length || lines.some((line) => allocationByLine.get(line.id) !== line.amountMinor)) {
+      throw new PaymentFoundationError("billing_order_allocation_invalid");
+    }
+
+    const eventCondition = aggregateBillingEventCondition(event);
+    const [priorEvent] = await tx.select().from(commercialPaymentEvents).where(eventCondition).for("update").limit(1);
+    if (priorEvent) {
+      if (priorEvent.paymentId !== payment.id || priorEvent.paymentKey !== event.paymentKey ||
+          priorEvent.idempotencyKey !== event.idempotencyKey || priorEvent.externalEventId !== event.externalEventId ||
+          priorEvent.status !== "succeeded" || !sameInstant(priorEvent.occurredAt, event.occurredAt) ||
+          payment.status !== "succeeded" || order.status !== "paid") {
+        throw new PaymentFoundationError("payment_event_identity_conflict");
+      }
+      const allocations = await tx.select({ orderLineId: commercialPaymentAllocations.orderLineId, subscriptionId: commercialBillingOrderLines.subscriptionId })
+        .from(commercialPaymentAllocations)
+        .innerJoin(commercialBillingOrderLines, eq(commercialBillingOrderLines.id, commercialPaymentAllocations.orderLineId))
+        .where(and(eq(commercialPaymentAllocations.paymentId, payment.id), eq(commercialPaymentAllocations.orderId, order.id)));
+      if (allocations.length !== lines.length || allocations.some((allocation) => !allocation.subscriptionId)) {
+        throw new PaymentFoundationError("billing_order_allocation_invalid");
+      }
+      return { duplicate: true, paymentId: payment.id, orderId: order.id,
+        allocations: allocations.map((allocation) => ({ orderLineId: allocation.orderLineId, subscriptionId: allocation.subscriptionId! })) };
+    }
+
+    if (order.status !== "pending" || payment.status !== "pending") throw new PaymentFoundationError("billing_order_invalid");
+    if (!order.expiresAt || event.occurredAt.getTime() >= order.expiresAt.getTime()) throw new PaymentFoundationError("billing_order_expired");
+    const [insertedEvent] = await tx.insert(commercialPaymentEvents).values({
+      providerCode: event.providerCode,
+      paymentId: payment.id,
+      externalEventId: event.externalEventId,
+      paymentKey: event.paymentKey,
+      idempotencyKey: event.idempotencyKey,
+      status: "succeeded",
+      occurredAt: event.occurredAt,
+    }).onConflictDoNothing().returning({ id: commercialPaymentEvents.id });
+    if (!insertedEvent) throw new PaymentFoundationError("payment_event_identity_conflict");
+
+    const locationIds = [...new Set(lines.map((line) => line.locationId))].sort();
+    const lockedLocations = await tx.select({ id: locations.id, organizationId: locations.organizationId, archivedAt: locations.archivedAt })
+      .from(locations).where(inArray(locations.id, locationIds)).orderBy(asc(locations.id)).for("update");
+    if (lockedLocations.length !== locationIds.length || lockedLocations.some((location) =>
+      location.organizationId !== order.organizationId || location.archivedAt !== null)) {
+      throw new PaymentFoundationError("billing_order_invalid");
+    }
+
+    const allocations: AggregateBillingOrderSettlementResult["allocations"] = [];
+    for (const line of lines) {
+      const subscriptions = await tx.select().from(locationSubscriptions).where(and(
+        eq(locationSubscriptions.locationId, line.locationId),
+        eq(locationSubscriptions.productId, line.productId),
+        inArray(locationSubscriptions.status, ["active", "canceled"]),
+        lte(locationSubscriptions.startsAt, event.occurredAt),
+        or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, event.occurredAt)),
+      )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
+      const subscription = subscriptions[0];
+      if (subscription?.currentPeriodEndsAt === null) throw new PaymentFoundationError("billing_order_invalid");
+      const anchor = subscription && subscription.billingAnchorDay !== null && subscription.billingAnchorIsEndOfMonth !== null
+        ? { dayOfMonth: subscription.billingAnchorDay, isEndOfMonth: subscription.billingAnchorIsEndOfMonth }
+        : subscription ? billingAnchorForDate(subscription.startsAt) : {
+          dayOfMonth: line.billingAnchorDay,
+          isEndOfMonth: line.billingAnchorIsEndOfMonth,
+        };
+      let period;
+      try {
+        period = subscription
+          ? planBillingCalendarPeriod({
+            now: event.occurredAt,
+            durationMonths: line.durationMonths,
+            existingPeriod: { startsAt: subscription.startsAt, endsAt: subscription.currentPeriodEndsAt, anchor },
+          })
+          : {
+            startsAt: event.occurredAt,
+            endsAt: addBillingCalendarMonths(event.occurredAt, line.durationMonths, anchor),
+            anchor,
+          };
+      } catch {
+        throw new PaymentFoundationError("billing_order_invalid");
+      }
+
+      let appliedSubscription: typeof locationSubscriptions.$inferSelect;
+      if (subscription) {
+        // A prepaid settlement extends time without changing the provider
+        // contract or clearing an existing cancellation request.
+        const remainsCanceled = subscription.status === "canceled" || subscription.canceledAt !== null;
+        [appliedSubscription] = await tx.update(locationSubscriptions).set({
+          status: remainsCanceled ? "canceled" : "active",
+          currentPeriodEndsAt: period.endsAt,
+          billingAnchorDay: subscription.billingAnchorDay ?? period.anchor.dayOfMonth,
+          billingAnchorIsEndOfMonth: subscription.billingAnchorIsEndOfMonth ?? period.anchor.isEndOfMonth,
+          updatedAt: event.occurredAt,
+        }).where(eq(locationSubscriptions.id, subscription.id)).returning();
+      } else {
+        [appliedSubscription] = await tx.insert(locationSubscriptions).values({
+          locationId: line.locationId,
+          productId: line.productId,
+          provider: event.providerCode,
+          providerSubscriptionRef: null,
+          status: "active",
+          startsAt: period.startsAt,
+          currentPeriodEndsAt: period.endsAt,
+          billingAnchorDay: period.anchor.dayOfMonth,
+          billingAnchorIsEndOfMonth: period.anchor.isEndOfMonth,
+        }).returning();
+      }
+      if (!appliedSubscription) throw new PaymentFoundationError("billing_order_invalid");
+      await tx.update(commercialBillingOrderLines).set({ subscriptionId: appliedSubscription.id, updatedAt: event.occurredAt })
+        .where(eq(commercialBillingOrderLines.id, line.id));
+      allocations.push({ orderLineId: line.id, subscriptionId: appliedSubscription.id });
+    }
+
+    await tx.update(commercialPayments).set({ status: "succeeded", providerOccurredAt: event.occurredAt, updatedAt: event.occurredAt })
+      .where(and(eq(commercialPayments.id, payment.id), eq(commercialPayments.status, "pending")));
+    await tx.update(commercialBillingOrders).set({ status: "paid", updatedAt: event.occurredAt })
+      .where(and(eq(commercialBillingOrders.id, order.id), eq(commercialBillingOrders.status, "pending")));
+    return { duplicate: false, paymentId: payment.id, orderId: order.id, allocations };
   });
 }
 

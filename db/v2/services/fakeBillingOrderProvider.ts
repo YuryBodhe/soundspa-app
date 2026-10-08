@@ -1,0 +1,379 @@
+import "server-only";
+import { createHash } from "node:crypto";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import {
+  FAKE_CHECKOUT_TTL_MS,
+  FAKE_PAYMENT_CURRENCY,
+  FAKE_PROVIDER_CODE,
+  fakeProviderIsConfigured,
+  issueFakeCheckoutTicket,
+  verifyFakeCheckoutTicket,
+  type FakeProviderEnvironment,
+} from "@/lib/v2/fakePaymentProvider";
+import { v2Db } from "../client";
+import {
+  commercialBillingOrderLines,
+  commercialBillingOrders,
+  commercialPaymentAllocations,
+  commercialPaymentProviders,
+  commercialPaymentRoutes,
+  commercialPayments,
+  commercialPaymentEvents,
+  commercialProducts,
+  locationSubscriptions,
+  locations,
+  users,
+} from "../schema";
+import { billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
+import { quoteBillingRoute, fakeStagingBillingPricingAdapter } from "./billingOrderModel";
+import { PaymentFoundationError } from "./paymentFoundation";
+import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
+import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
+
+type FakeBillingOrderDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
+type FakeBillingOrderTx = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
+
+export type FakeBillingOrderErrorCode =
+  | "not_authorized"
+  | "checkout_unavailable"
+  | "checkout_pending"
+  | "checkout_expired"
+  | "order_stale"
+  | "route_unavailable"
+  | "provider_not_configured";
+
+export class FakeBillingOrderError extends Error {
+  constructor(readonly code: FakeBillingOrderErrorCode) {
+    super(code);
+    this.name = "FakeBillingOrderError";
+  }
+}
+
+function assertConfigured(env: FakeProviderEnvironment) {
+  if (!fakeProviderIsConfigured(env)) throw new FakeBillingOrderError("provider_not_configured");
+  const secret = env.V2_FAKE_PROVIDER_SECRET;
+  if (!secret || Buffer.byteLength(secret, "utf8") < 32) throw new FakeBillingOrderError("provider_not_configured");
+  return secret;
+}
+
+async function authorizeOrderLocations(tx: FakeBillingOrderTx, userId: string, orderId: string) {
+  const [order] = await tx.select().from(commercialBillingOrders)
+    .where(eq(commercialBillingOrders.id, orderId)).for("update").limit(1);
+  if (!order) throw new FakeBillingOrderError("checkout_unavailable");
+  const lines = await tx.select().from(commercialBillingOrderLines)
+    .where(eq(commercialBillingOrderLines.orderId, orderId))
+    .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.id)).for("update");
+  if (lines.length === 0) throw new FakeBillingOrderError("checkout_unavailable");
+  const locationIds = [...new Set(lines.map((line) => line.locationId))].sort();
+  const lockedLocations = await tx.select({ id: locations.id, organizationId: locations.organizationId })
+    .from(locations).where(and(inArray(locations.id, locationIds), isNull(locations.archivedAt)))
+    .orderBy(asc(locations.id)).for("update");
+  if (lockedLocations.length !== locationIds.length || lockedLocations.some((location) => location.organizationId !== order.organizationId)) {
+    throw new FakeBillingOrderError("not_authorized");
+  }
+  try {
+    for (const locationId of locationIds) {
+      const authority = await requireLocationBillingAuthority(tx, userId, locationId);
+      if (authority.organizationId !== order.organizationId) throw new FakeBillingOrderError("not_authorized");
+    }
+  } catch (error) {
+    if (error instanceof LocationBillingAuthorizationError) throw new FakeBillingOrderError("not_authorized");
+    throw error;
+  }
+  const [actor] = await tx.select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
+    .from(users).where(eq(users.id, userId)).limit(1);
+  if (!actor?.emailVerifiedAt || actor.disabledAt) throw new FakeBillingOrderError("not_authorized");
+  return { order, lines, locationIds };
+}
+
+function checkoutResponse(input: {
+  paymentId: string;
+  actorId: string;
+  expiresAt: Date;
+  amountMinor: bigint;
+  currency: string;
+  providerName: string;
+  secret: string;
+}) {
+  return {
+    checkoutId: input.paymentId,
+    confirmationToken: issueFakeCheckoutTicket({
+      v: 1,
+      paymentId: input.paymentId,
+      actorHash: createHash("sha256").update(input.actorId).digest("hex"),
+      expiresAt: input.expiresAt.getTime(),
+    }, input.secret),
+    expiresAt: input.expiresAt.toISOString(),
+    amountMinor: Number(input.amountMinor),
+    currency: input.currency,
+    providerName: input.providerName,
+  };
+}
+
+async function currentCheckout(tx: FakeBillingOrderTx, input: {
+  order: typeof commercialBillingOrders.$inferSelect;
+  lines: (typeof commercialBillingOrderLines.$inferSelect)[];
+  actorId: string;
+  now: Date;
+  secret: string;
+}) {
+  const { order, lines, now } = input;
+  if (order.status !== "pending" || !order.expiresAt || order.expiresAt.getTime() <= now.getTime()) {
+    throw new FakeBillingOrderError("checkout_expired");
+  }
+  const [payment] = await tx.select().from(commercialPayments).where(eq(commercialPayments.billingOrderId, order.id)).for("update").limit(1);
+  const [provider] = await tx.select({ displayName: commercialPaymentProviders.displayName, isEnabled: commercialPaymentProviders.isEnabled })
+    .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, FAKE_PROVIDER_CODE)).for("share").limit(1);
+  if (!payment || payment.status !== "pending" || payment.providerCode !== FAKE_PROVIDER_CODE || !provider?.isEnabled ||
+      payment.amountMinor !== order.totalAmountMinor || payment.currency !== FAKE_PAYMENT_CURRENCY ||
+      order.providerCode !== FAKE_PROVIDER_CODE || order.currency !== FAKE_PAYMENT_CURRENCY || lines.some((line) =>
+        line.providerCode !== order.providerCode || line.currency !== order.currency)) {
+    throw new FakeBillingOrderError("checkout_unavailable");
+  }
+  const expiresAt = new Date(payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS);
+  if (expiresAt.getTime() !== order.expiresAt.getTime()) throw new FakeBillingOrderError("checkout_unavailable");
+  return checkoutResponse({
+    paymentId: payment.id,
+    actorId: input.actorId,
+    expiresAt,
+    amountMinor: payment.amountMinor,
+    currency: payment.currency,
+    providerName: provider.displayName,
+    secret: input.secret,
+  });
+}
+
+/** Freeze a fresh authorized order and create exactly one aggregate pending payment. */
+export async function createFakeProviderBillingOrderCheckout(input: {
+  authenticatedUserId: string;
+  billingOrderId: string;
+}, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env) {
+  const secret = assertConfigured(env);
+  if (!Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    const { order, lines } = await authorizeOrderLocations(tx, input.authenticatedUserId, input.billingOrderId);
+
+    if (order.status === "pending") {
+      const active = await currentCheckout(tx, { order, lines, actorId: input.authenticatedUserId, now, secret });
+      return active;
+    }
+    if (order.status !== "draft" || lines.length === 0) throw new FakeBillingOrderError("checkout_unavailable");
+    if (order.providerCode !== FAKE_PROVIDER_CODE || order.currency !== FAKE_PAYMENT_CURRENCY) throw new FakeBillingOrderError("route_unavailable");
+
+    const [provider] = await tx.select({ displayName: commercialPaymentProviders.displayName, isEnabled: commercialPaymentProviders.isEnabled })
+      .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, order.providerCode)).for("share").limit(1);
+    if (!provider?.isEnabled) throw new FakeBillingOrderError("route_unavailable");
+
+    // Locking all Location rows in stable order makes the pending order line a
+    // reservation and serializes competing aggregate and legacy checkouts.
+    const targetPairs = or(...lines.map((line) => and(
+      eq(commercialBillingOrderLines.locationId, line.locationId),
+      eq(commercialBillingOrderLines.productId, line.productId),
+    )));
+    const activeOrders = await tx.select({ lineId: commercialBillingOrderLines.id })
+      .from(commercialBillingOrderLines)
+      .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
+      .where(and(
+        targetPairs,
+        eq(commercialBillingOrders.status, "pending"),
+        gt(commercialBillingOrders.expiresAt, now),
+      ));
+    if (activeOrders.length > 0) throw new FakeBillingOrderError("checkout_pending");
+    const cutoff = new Date(now.getTime() - FAKE_CHECKOUT_TTL_MS);
+    const pendingSinglePayments = await tx.select({ id: commercialPayments.id }).from(commercialPayments).where(and(
+      or(...lines.map((line) => and(
+        eq(commercialPayments.locationId, line.locationId),
+        eq(commercialPayments.productId, line.productId),
+      ))),
+      eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
+      eq(commercialPayments.status, "pending"),
+      gt(commercialPayments.createdAt, cutoff),
+      isNull(commercialPayments.billingOrderId),
+    ));
+    if (pendingSinglePayments.length > 0) throw new FakeBillingOrderError("checkout_pending");
+
+    const productIds = [...new Set(lines.map((line) => line.productId))].sort();
+    const products = await tx.select({ id: commercialProducts.id, isActive: commercialProducts.isActive })
+      .from(commercialProducts).where(inArray(commercialProducts.id, productIds)).orderBy(asc(commercialProducts.id)).for("share");
+    if (products.length !== productIds.length || products.some((product) => !product.isActive)) throw new FakeBillingOrderError("route_unavailable");
+
+    let total = BigInt(0);
+    for (const line of lines) {
+      const [route] = await tx.select({
+        id: commercialPaymentRoutes.id,
+        externalReference: commercialPaymentRoutes.externalReference,
+        marketCode: commercialPaymentRoutes.marketCode,
+        isEnabled: commercialPaymentRoutes.isEnabled,
+        providerEnabled: commercialPaymentProviders.isEnabled,
+        locationMarketCode: locations.marketCode,
+        productActive: commercialProducts.isActive,
+        displayOrder: commercialPaymentRoutes.displayOrder,
+      }).from(commercialPaymentRoutes)
+        .innerJoin(commercialPaymentProviders, eq(commercialPaymentProviders.code, commercialPaymentRoutes.providerCode))
+        .innerJoin(commercialProducts, eq(commercialProducts.id, commercialPaymentRoutes.productId))
+        .innerJoin(locations, eq(locations.id, line.locationId))
+        .where(and(
+          eq(commercialPaymentRoutes.id, line.routeId),
+          eq(commercialPaymentRoutes.productId, line.productId),
+          eq(commercialPaymentRoutes.providerCode, line.providerCode),
+          eq(commercialPaymentRoutes.marketCode, line.marketCode),
+          isNull(locations.archivedAt),
+        )).for("share").limit(1);
+      if (!route || !route.isEnabled || !route.providerEnabled || !route.productActive ||
+          route.externalReference !== line.routeExternalReference || route.marketCode !== route.locationMarketCode ||
+          line.providerCode !== order.providerCode || line.currency !== order.currency) {
+        throw new FakeBillingOrderError("route_unavailable");
+      }
+      const quote = quoteBillingRoute({
+        routeId: route.id,
+        providerCode: line.providerCode,
+        marketCode: route.marketCode,
+        externalReference: route.externalReference,
+        displayOrder: route.displayOrder,
+        durationMonths: line.durationMonths,
+        env,
+      }, [fakeStagingBillingPricingAdapter]);
+      const amount = quote ? quote.listAmountMinor - quote.discountAmountMinor : null;
+      if (!quote || quote.currency !== order.currency || quote.listAmountMinor !== line.listAmountMinor ||
+          quote.discountAmountMinor !== line.discountAmountMinor || amount !== line.amountMinor) {
+        throw new FakeBillingOrderError("order_stale");
+      }
+      total += line.amountMinor;
+    }
+    if (total !== order.totalAmountMinor || total <= BigInt(0)) throw new FakeBillingOrderError("order_stale");
+
+    // Refresh calendar planning at the moment the quote is accepted, then
+    // freeze these per-line anchors/periods together with the payable order.
+    for (const line of lines) {
+      const subscriptions = await tx.select({
+        id: locationSubscriptions.id,
+        startsAt: locationSubscriptions.startsAt,
+        currentPeriodEndsAt: locationSubscriptions.currentPeriodEndsAt,
+        billingAnchorDay: locationSubscriptions.billingAnchorDay,
+        billingAnchorIsEndOfMonth: locationSubscriptions.billingAnchorIsEndOfMonth,
+      }).from(locationSubscriptions).where(and(
+        eq(locationSubscriptions.locationId, line.locationId),
+        eq(locationSubscriptions.productId, line.productId),
+        inArray(locationSubscriptions.status, ["active", "canceled"]),
+        lte(locationSubscriptions.startsAt, now),
+        or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now)),
+      )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
+      const existing = subscriptions[0];
+      if (existing?.currentPeriodEndsAt === null) throw new FakeBillingOrderError("order_stale");
+      const anchor = existing && existing.billingAnchorDay !== null && existing.billingAnchorIsEndOfMonth !== null
+        ? { dayOfMonth: existing.billingAnchorDay, isEndOfMonth: existing.billingAnchorIsEndOfMonth }
+        : existing ? billingAnchorForDate(existing.startsAt) : null;
+      let period;
+      try {
+        period = planBillingCalendarPeriod({ now, durationMonths: line.durationMonths, existingPeriod: existing ? {
+          startsAt: existing.startsAt,
+          endsAt: existing.currentPeriodEndsAt,
+          anchor,
+        } : null });
+      } catch { throw new FakeBillingOrderError("order_stale"); }
+      await tx.update(commercialBillingOrderLines).set({
+        subscriptionId: existing?.id ?? null,
+        billingAnchorDay: period.anchor.dayOfMonth,
+        billingAnchorIsEndOfMonth: period.anchor.isEndOfMonth,
+        billingPeriodStartsAt: period.startsAt,
+        billingPeriodEndsAt: period.endsAt,
+        updatedAt: now,
+      }).where(eq(commercialBillingOrderLines.id, line.id));
+    }
+
+    const paymentKey = `fake-billing-order:${order.id}`;
+    const externalPaymentId = `fake-billing-payment:${order.id}`;
+    const expiresAt = new Date(now.getTime() + FAKE_CHECKOUT_TTL_MS);
+    const [payment] = await tx.insert(commercialPayments).values({
+      billingOrderId: order.id,
+      providerCode: order.providerCode,
+      paymentKey,
+      externalPaymentId,
+      status: "pending",
+      amountMinor: total,
+      currency: order.currency,
+      createdAt: now,
+      updatedAt: now,
+    }).returning();
+    if (!payment) throw new FakeBillingOrderError("checkout_unavailable");
+    // Migration 0015's deferred aggregate-payment constraint requires the
+    // exact line allocation to exist for pending as well as settled payments.
+    await tx.insert(commercialPaymentAllocations).values(lines.map((line) => ({
+      orderId: order.id,
+      paymentId: payment.id,
+      orderLineId: line.id,
+      amountMinor: line.amountMinor,
+      createdAt: now,
+    })));
+    const [frozenOrder] = await tx.update(commercialBillingOrders).set({
+      status: "pending",
+      quotedAt: now,
+      expiresAt,
+      quoteReference: `fake-staging:${order.id}`,
+      providerOrderReference: `fake-order:${order.id}`,
+      updatedAt: now,
+    }).where(and(eq(commercialBillingOrders.id, order.id), eq(commercialBillingOrders.status, "draft"))).returning({ id: commercialBillingOrders.id });
+    if (!frozenOrder) throw new FakeBillingOrderError("checkout_unavailable");
+    return checkoutResponse({
+      paymentId: payment.id,
+      actorId: input.authenticatedUserId,
+      expiresAt,
+      amountMinor: total,
+      currency: order.currency,
+      providerName: provider.displayName,
+      secret,
+    });
+  });
+}
+
+/** Confirmation is a server-generated success event; client data contains only the actor-bound ticket. */
+export async function confirmFakeProviderBillingOrderCheckout(input: {
+  authenticatedUserId: string;
+  confirmationToken: string;
+}, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env) {
+  const secret = assertConfigured(env);
+  const ticket = verifyFakeCheckoutTicket(input.confirmationToken, secret);
+  if (!ticket || ticket.actorHash !== createHash("sha256").update(input.authenticatedUserId).digest("hex")) {
+    throw new FakeBillingOrderError("checkout_unavailable");
+  }
+  if (!Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    const [payment] = await tx.select().from(commercialPayments).where(and(
+      eq(commercialPayments.id, ticket.paymentId), eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
+    )).for("update").limit(1);
+    if (!payment?.billingOrderId || payment.locationId || payment.productId || payment.subscriptionId || payment.routeId) {
+      throw new FakeBillingOrderError("checkout_unavailable");
+    }
+    const { order } = await authorizeOrderLocations(tx, input.authenticatedUserId, payment.billingOrderId);
+    const expiry = payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS;
+    const alreadySettled = order.status === "paid" && payment.status === "succeeded";
+    if (ticket.expiresAt !== expiry || order.expiresAt?.getTime() !== expiry || (!alreadySettled && now.getTime() >= expiry)) {
+      throw new FakeBillingOrderError("checkout_expired");
+    }
+    if (!alreadySettled && (order.status !== "pending" || payment.status !== "pending")) throw new FakeBillingOrderError("checkout_unavailable");
+    const [priorSuccess] = alreadySettled ? await tx.select({ occurredAt: commercialPaymentEvents.occurredAt })
+      .from(commercialPaymentEvents).where(and(
+        eq(commercialPaymentEvents.providerCode, FAKE_PROVIDER_CODE),
+        eq(commercialPaymentEvents.idempotencyKey, `fake-order-success:${order.id}`),
+      )).limit(1) : [];
+    if (alreadySettled && (!priorSuccess?.occurredAt)) throw new FakeBillingOrderError("checkout_unavailable");
+    const settlement: AggregateBillingOrderSettlementInput = {
+      orderId: order.id,
+      paymentId: payment.id,
+      providerCode: payment.providerCode,
+      paymentKey: payment.paymentKey,
+      externalPaymentId: payment.externalPaymentId,
+      idempotencyKey: `fake-order-success:${order.id}`,
+      externalEventId: `fake-order-success:${order.id}`,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      occurredAt: priorSuccess?.occurredAt ?? now,
+    };
+    try {
+      return await settleTrustedBillingOrderPayment(settlement, tx);
+    } catch (error) {
+      if (error instanceof PaymentFoundationError) throw new FakeBillingOrderError("checkout_unavailable");
+      throw error;
+    }
+  });
+}

@@ -15,6 +15,8 @@ import {
 } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
+  commercialBillingOrderLines,
+  commercialBillingOrders,
   commercialPaymentEvents,
   commercialPaymentProviders,
   commercialPaymentRoutes,
@@ -99,6 +101,17 @@ export async function createFakeProviderCheckout(input: {
     const routes = await resolveEnabledPaymentRoutesForLocationProduct(input.locationId, input.productId, tx);
     const selectedRoute = routes.find((route) => route.id === input.routeId && route.providerCode === FAKE_PROVIDER_CODE);
     if (!selectedRoute) throw new FakeProviderError("route_unavailable");
+
+    const [activeAggregateOrder] = await tx.select({ id: commercialBillingOrders.id })
+      .from(commercialBillingOrderLines)
+      .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
+      .where(and(
+        eq(commercialBillingOrderLines.locationId, input.locationId),
+        eq(commercialBillingOrderLines.productId, input.productId),
+        eq(commercialBillingOrders.status, "pending"),
+        gt(commercialBillingOrders.expiresAt, now),
+      )).limit(1);
+    if (activeAggregateOrder) throw new FakeProviderError("checkout_pending");
 
     const cutoff = new Date(now.getTime() - FAKE_CHECKOUT_TTL_MS);
     const [activeCheckout] = await tx.select({ id: commercialPayments.id })

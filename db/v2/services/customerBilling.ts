@@ -81,6 +81,7 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         currentPeriodEndsAt: locationSubscriptions.currentPeriodEndsAt,
         canceledAt: locationSubscriptions.canceledAt,
         provider: locationSubscriptions.provider,
+        providerSubscriptionRef: locationSubscriptions.providerSubscriptionRef,
       }).from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, location.id), eq(locationSubscriptions.productId, product.id)))
         .orderBy(desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id));
       const subscription = subscriptions.find((candidate) => resolveCustomerBillingStatus({ subscription: candidate }, now) === "subscription") ?? subscriptions[0] ?? null;
@@ -98,7 +99,9 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         status,
         trialEndsAt: trial?.endsAt.toISOString() ?? null,
         paidThrough: subscription?.currentPeriodEndsAt?.toISOString() ?? null,
-        subscriptionId: status === "subscription" && subscription?.provider === FAKE_PROVIDER_CODE ? subscription.id : null,
+        // A null provider reference represents prepaid coverage; it must not
+        // be presented as a cancellable recurring renewal in the Account UI.
+        subscriptionId: status === "subscription" && subscription?.provider === FAKE_PROVIDER_CODE && subscription.providerSubscriptionRef ? subscription.id : null,
         subscriptionCanceled: status === "subscription" ? Boolean(subscription?.canceledAt || subscription?.status === "canceled") : false,
         routes: routes.filter((route) => route.providerCode === FAKE_PROVIDER_CODE)
           .map((route) => ({ id: route.id, providerName: route.providerName })),

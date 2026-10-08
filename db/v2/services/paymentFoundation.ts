@@ -37,7 +37,7 @@ export async function resolveEnabledPaymentRoutesForLocationProduct(locationId: 
 }
 
 export class PaymentFoundationError extends Error {
-  constructor(readonly code: "provider_not_found" | "payment_route_mismatch" | "subscription_mismatch" | "payment_identity_conflict" | "payment_event_identity_conflict" | "provider_reference_conflict" | "subscription_reference_conflict" | "provider_paid_through_required" | "subscription_not_found") {
+  constructor(readonly code: "provider_not_found" | "payment_route_mismatch" | "subscription_mismatch" | "payment_identity_conflict" | "payment_event_identity_conflict" | "provider_reference_conflict" | "subscription_reference_conflict" | "provider_paid_through_required" | "subscription_not_found" | "billing_order_invalid" | "billing_order_expired" | "billing_order_allocation_invalid") {
     super(code);
     this.name = "PaymentFoundationError";
   }
