@@ -22,7 +22,13 @@ import {
 class Rollback extends Error {}
 const addDays = (at: Date, days: number) => new Date(at.getTime() + days * 86_400_000);
 
-async function main() {
+function channelState(access: Awaited<ReturnType<typeof resolveEffectiveChannelAccess>>, channelId: string) {
+  const state = access.find((item) => item.id === channelId);
+  assert.ok(state, `resolver should include catalog channel ${channelId}`);
+  return state;
+}
+
+async function runRollbackTest() {
   let organizationId = "";
   try {
     await v2Db.transaction(async (tx) => {
@@ -58,13 +64,16 @@ async function main() {
         amountMinor: BigInt(125_000), currency: "VND", occurredAt: now, paidThroughAt: addDays(now, 45),
       };
       const before = new Map((await resolveEffectiveChannelAccess(locationA.id, now, tx)).map((item) => [item.id, item]));
-      assert.equal(before.has(channelA.id), false, "expired Trial must not provide access");
+      assert.equal(channelState([...before.values()], channelA.id).playable, false, "expired Trial must not make the Product channel playable");
+      assert.deepEqual(channelState([...before.values()], channelA.id).accessSources, []);
       const settled = await settleTrustedProviderPayment(first, tx);
       assert.equal(settled.reason, "settled");
       assert.equal(settled.accessApplied, true);
       assert.ok(settled.subscriptionId);
       const afterFirst = new Map((await resolveEffectiveChannelAccess(locationA.id, now, tx)).map((item) => [item.id, item]));
+      assert.equal(channelState([...afterFirst.values()], channelA.id).playable, true);
       assert.deepEqual(afterFirst.get(channelA.id)?.accessSources, ["subscription"]);
+      assert.equal(channelState([...afterFirst.values()], channelB.id).playable, true);
       assert.deepEqual(afterFirst.get(channelB.id)?.accessSources, ["partner_benefit"]);
       const [subscriptionAfterFirst] = await tx.select().from(locationSubscriptions).where(eq(locationSubscriptions.id, settled.subscriptionId as string));
       assert.equal(subscriptionAfterFirst.currentPeriodEndsAt?.getTime(), addDays(now, 45).getTime());
@@ -149,8 +158,11 @@ async function main() {
       }, tx), (error: unknown) => error instanceof Error && error.message === "payment_event_identity_conflict");
       const duringPaidPeriod = new Map((await resolveEffectiveChannelAccess(locationA.id, addDays(now, 79), tx)).map((item) => [item.id, item]));
       const afterPaidPeriod = new Map((await resolveEffectiveChannelAccess(locationA.id, addDays(now, 81), tx)).map((item) => [item.id, item]));
+      assert.equal(channelState([...duringPaidPeriod.values()], channelA.id).playable, true);
       assert.deepEqual(duringPaidPeriod.get(channelA.id)?.accessSources, ["subscription"]);
-      assert.equal(afterPaidPeriod.has(channelA.id), false);
+      assert.equal(channelState([...afterPaidPeriod.values()], channelA.id).playable, false, "expired paid period must leave the Product channel locked");
+      assert.deepEqual(afterPaidPeriod.get(channelA.id)?.accessSources, []);
+      assert.equal(channelState([...afterPaidPeriod.values()], channelB.id).playable, true);
       assert.deepEqual(afterPaidPeriod.get(channelB.id)?.accessSources, ["partner_benefit"], "expired subscription must not remove independent Partner Benefit");
       const stalePayment = await settleTrustedProviderPayment({
         ...first, paymentKey: "charge-stale", idempotencyKey: "event-stale", externalEventId: "provider-event-stale", externalPaymentId: "provider-payment-stale",
@@ -174,21 +186,31 @@ async function main() {
       assert.equal(failed.subscriptionId, null);
       assert.equal((await tx.select().from(locationSubscriptions).where(eq(locationSubscriptions.locationId, locationB.id))).length, 0);
       assert.equal((await tx.select().from(commercialPayments).where(and(eq(commercialPayments.locationId, locationB.id), eq(commercialPayments.status, "failed")))).length, 1);
-      assert.equal(new Map((await resolveEffectiveChannelAccess(locationB.id, now, tx)).map((item) => [item.id, item])).has(channelA.id), false);
+      const noEntitlements = await resolveEffectiveChannelAccess(locationB.id, now, tx);
+      assert.equal(noEntitlements.some((item) => item.playable), false, "failed payment must leave a no-entitlement Location without playable channels");
 
       const paidOtherLocation = await settleTrustedProviderPayment({
         ...first, paymentKey: "charge-location-b", idempotencyKey: "event-location-b", externalEventId: "provider-event-location-b", externalPaymentId: "provider-payment-location-b",
         locationId: locationB.id, externalSubscriptionRef: "external-sub-location-b", providerCustomerRef: "customer-b", occurredAt: now, paidThroughAt: addDays(now, 20),
       }, tx);
       assert.notEqual(paidOtherLocation.subscriptionId, settled.subscriptionId, "each Location must have its own Subscription");
-      assert.deepEqual(new Map((await resolveEffectiveChannelAccess(locationB.id, now, tx)).map((item) => [item.id, item])).get(channelA.id)?.accessSources, ["subscription"]);
-      assert.deepEqual(new Map((await resolveEffectiveChannelAccess(locationB.id, now, tx)).map((item) => [item.id, item])).get(channelB.id), undefined, "Partner Benefit for Location A must not leak to Location B");
+      const locationBAccess = await resolveEffectiveChannelAccess(locationB.id, now, tx);
+      assert.equal(channelState(locationBAccess, channelA.id).playable, true);
+      assert.deepEqual(channelState(locationBAccess, channelA.id).accessSources, ["subscription"]);
+      assert.equal(channelState(locationBAccess, channelB.id).playable, false, "Partner Benefit for Location A must not leak to Location B");
       throw new Rollback();
     });
   } catch (error) { if (!(error instanceof Rollback)) throw error; }
   assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
   console.info("Payment lifecycle integration PASS: first settlement, expired-Trial recovery, recurring renewal, webhook/payment idempotency, conflicting identities, failed payment, out-of-order periods, cancellation paid-through, independent Partner Benefit, per-Location subscriptions, and rollback.");
-  await v2Pool.end();
+}
+
+async function main() {
+  try {
+    await runRollbackTest();
+  } finally {
+    await v2Pool.end();
+  }
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });
