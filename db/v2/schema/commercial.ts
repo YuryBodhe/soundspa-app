@@ -234,8 +234,10 @@ export const commercialPayments = pgTable("commercial_payments", {
 export const commercialPaymentEvents = pgTable("commercial_payment_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
+  // Null for trusted subscription lifecycle events that do not represent a charge.
   paymentId: uuid("payment_id").references(() => commercialPayments.id, { onDelete: "restrict" }),
   externalEventId: text("external_event_id"),
+  // Stable payment identity, or a namespaced subject/payload identity for a non-payment lifecycle event.
   paymentKey: text("payment_key").notNull(),
   // Required stable dedupe identity supplied by a provider adapter; it need not
   // be the provider's external event ID when that provider has none.

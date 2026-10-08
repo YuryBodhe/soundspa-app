@@ -98,11 +98,55 @@ async function main() {
       const [afterOlderPayment] = await tx.select().from(locationSubscriptions).where(eq(locationSubscriptions.id, settled.subscriptionId as string));
       assert.equal(afterOlderPayment.currentPeriodEndsAt?.getTime(), addDays(now, 75).getTime(), "out-of-order payment must not shorten the period");
 
+      const outOfOrderCancellation = await cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-event-before-latest-payment", externalEventId: "provider-cancel-before-latest-payment",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        occurredAt: addDays(now, 20), paidThroughAt: addDays(now, 25),
+      }, tx);
+      assert.equal(outOfOrderCancellation.stale, true, "cancellation older than a confirmed payment must be recorded but not applied");
+      const [afterOutOfOrderCancellation] = await tx.select().from(locationSubscriptions).where(eq(locationSubscriptions.id, settled.subscriptionId as string));
+      assert.equal(afterOutOfOrderCancellation.currentPeriodEndsAt?.getTime(), addDays(now, 75).getTime());
+      assert.equal(afterOutOfOrderCancellation.canceledAt, null);
+
+      await assert.rejects(cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-wrong-location", externalEventId: "provider-cancel-wrong-location",
+        externalSubscriptionRef: "external-sub-a", locationId: locationB.id, productId: productA.id,
+        occurredAt: addDays(now, 55), paidThroughAt: addDays(now, 80),
+      }, tx), (error: unknown) => error instanceof Error && error.message === "subscription_not_found");
+      await assert.rejects(cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-wrong-product", externalEventId: "provider-cancel-wrong-product",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productPartner.id,
+        occurredAt: addDays(now, 55), paidThroughAt: addDays(now, 80),
+      }, tx), (error: unknown) => error instanceof Error && error.message === "subscription_not_found");
+      await assert.rejects(cancelTrustedSubscription({
+        providerCode: `other-${providerCode}`, idempotencyKey: "cancel-wrong-provider", externalEventId: "provider-cancel-wrong-provider",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        occurredAt: addDays(now, 55), paidThroughAt: addDays(now, 80),
+      }, tx), (error: unknown) => error instanceof Error && error.message === "subscription_not_found");
+      const paymentCountBeforeCancellation = (await tx.select().from(commercialPayments).where(eq(commercialPayments.locationId, locationA.id))).length;
       const cancellation = await cancelTrustedSubscription({
-        providerCode, externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        providerCode, idempotencyKey: "cancel-event-1", externalEventId: "provider-cancel-1",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
         occurredAt: addDays(now, 60), paidThroughAt: addDays(now, 80),
       }, tx);
       assert.equal(cancellation.changed, true);
+      assert.equal((await tx.select().from(commercialPayments).where(eq(commercialPayments.locationId, locationA.id))).length, paymentCountBeforeCancellation, "cancellation must not create a Payment");
+      const replayedCancellation = await cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-event-1", externalEventId: "provider-cancel-1",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        occurredAt: addDays(now, 60), paidThroughAt: addDays(now, 80),
+      }, tx);
+      assert.equal(replayedCancellation.duplicate, true);
+      await assert.rejects(cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-event-1", externalEventId: "provider-cancel-1",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        occurredAt: addDays(now, 60), paidThroughAt: addDays(now, 90),
+      }, tx), (error: unknown) => error instanceof Error && error.message === "payment_event_identity_conflict");
+      await assert.rejects(cancelTrustedSubscription({
+        providerCode, idempotencyKey: "cancel-reuses-payment-event", externalEventId: "provider-event-1",
+        externalSubscriptionRef: "external-sub-a", locationId: locationA.id, productId: productA.id,
+        occurredAt: addDays(now, 60), paidThroughAt: addDays(now, 80),
+      }, tx), (error: unknown) => error instanceof Error && error.message === "payment_event_identity_conflict");
       const duringPaidPeriod = new Map((await resolveEffectiveChannelAccess(locationA.id, addDays(now, 79), tx)).map((item) => [item.id, item]));
       const afterPaidPeriod = new Map((await resolveEffectiveChannelAccess(locationA.id, addDays(now, 81), tx)).map((item) => [item.id, item]));
       assert.deepEqual(duringPaidPeriod.get(channelA.id)?.accessSources, ["subscription"]);

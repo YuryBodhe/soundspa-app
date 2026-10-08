@@ -1,7 +1,9 @@
 import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { v2Db } from "../client";
 import {
   commercialPaymentProviders,
+  commercialPaymentEvents,
   commercialPaymentRoutes,
   commercialPayments,
   commercialProducts,
@@ -172,6 +174,9 @@ export async function settleTrustedProviderPayment(event: TrustedProviderPayment
 
 export type TrustedSubscriptionCancellation = {
   providerCode: string;
+  /** Stable provider-scoped event identity; stored in the shared event ledger. */
+  idempotencyKey: string;
+  externalEventId: string | null;
   externalSubscriptionRef: string;
   locationId: string;
   productId: string;
@@ -180,10 +185,66 @@ export type TrustedSubscriptionCancellation = {
   paidThroughAt?: Date | null;
 };
 
+function cancellationEventPaymentKey(event: TrustedSubscriptionCancellation): string {
+  const payloadIdentity = JSON.stringify([
+    event.locationId,
+    event.productId,
+    event.externalSubscriptionRef,
+    event.occurredAt.toISOString(),
+    event.paidThroughAt?.toISOString() ?? null,
+  ]);
+  const digest = createHash("sha256").update(payloadIdentity).digest("hex");
+  return `subscription-cancellation:${digest}`;
+}
+
+function cancellationEventCondition(event: TrustedSubscriptionCancellation) {
+  return event.externalEventId
+    ? or(
+      and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.idempotencyKey, event.idempotencyKey)),
+      and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.externalEventId, event.externalEventId)),
+    )
+    : and(eq(commercialPaymentEvents.providerCode, event.providerCode), eq(commercialPaymentEvents.idempotencyKey, event.idempotencyKey));
+}
+
+function matchesCancellationEvent(row: {
+  paymentId: string | null;
+  paymentKey: string;
+  idempotencyKey: string;
+  externalEventId: string | null;
+  status: string;
+  occurredAt: Date | null;
+}, event: TrustedSubscriptionCancellation): boolean {
+  return row.paymentId === null &&
+    row.paymentKey === cancellationEventPaymentKey(event) &&
+    row.idempotencyKey === event.idempotencyKey &&
+    row.externalEventId === event.externalEventId &&
+    row.status === "canceled" &&
+    sameInstant(row.occurredAt, event.occurredAt);
+}
+
 /** Applies an authenticated cancellation without removing still-paid access. */
 export async function cancelTrustedSubscription(event: TrustedSubscriptionCancellation, db: LifecycleDb = v2Db) {
-  if (!event.externalSubscriptionRef.trim() || !Number.isFinite(event.occurredAt.getTime())) throw new PaymentFoundationError("provider_reference_conflict");
+  if (!event.externalSubscriptionRef.trim() || !event.idempotencyKey.trim() || event.idempotencyKey.length > 512 ||
+      (event.externalEventId !== null && (!event.externalEventId.trim() || event.externalEventId.length > 512)) ||
+      !Number.isFinite(event.occurredAt.getTime()) ||
+      (event.paidThroughAt != null && !Number.isFinite(event.paidThroughAt.getTime()))) {
+    throw new PaymentFoundationError("provider_reference_conflict");
+  }
   return db.transaction(async (tx) => {
+    const eventCondition = cancellationEventCondition(event);
+    const [priorEvent] = await tx.select({
+      paymentId: commercialPaymentEvents.paymentId,
+      paymentKey: commercialPaymentEvents.paymentKey,
+      idempotencyKey: commercialPaymentEvents.idempotencyKey,
+      externalEventId: commercialPaymentEvents.externalEventId,
+      status: commercialPaymentEvents.status,
+      occurredAt: commercialPaymentEvents.occurredAt,
+    }).from(commercialPaymentEvents).where(eventCondition).limit(1);
+    if (priorEvent) {
+      if (!matchesCancellationEvent(priorEvent, event)) throw new PaymentFoundationError("payment_event_identity_conflict");
+      return { changed: false as const, duplicate: true as const, subscriptionId: null, stale: false as const };
+    }
+
     const [subscription] = await tx.select().from(locationSubscriptions).where(and(
       eq(locationSubscriptions.provider, event.providerCode),
       eq(locationSubscriptions.providerSubscriptionRef, event.externalSubscriptionRef),
@@ -191,12 +252,33 @@ export async function cancelTrustedSubscription(event: TrustedSubscriptionCancel
       eq(locationSubscriptions.productId, event.productId),
     )).limit(1).for("update");
     if (!subscription) throw new PaymentFoundationError("subscription_not_found");
+    const [insertedEvent] = await tx.insert(commercialPaymentEvents).values({
+      providerCode: event.providerCode,
+      paymentId: null,
+      externalEventId: event.externalEventId,
+      paymentKey: cancellationEventPaymentKey(event),
+      idempotencyKey: event.idempotencyKey,
+      status: "canceled",
+      occurredAt: event.occurredAt,
+    }).onConflictDoNothing().returning({ id: commercialPaymentEvents.id });
+    if (!insertedEvent) {
+      const [racedEvent] = await tx.select({
+        paymentId: commercialPaymentEvents.paymentId,
+        paymentKey: commercialPaymentEvents.paymentKey,
+        idempotencyKey: commercialPaymentEvents.idempotencyKey,
+        externalEventId: commercialPaymentEvents.externalEventId,
+        status: commercialPaymentEvents.status,
+        occurredAt: commercialPaymentEvents.occurredAt,
+      }).from(commercialPaymentEvents).where(eventCondition).limit(1);
+      if (!racedEvent || !matchesCancellationEvent(racedEvent, event)) throw new PaymentFoundationError("payment_event_identity_conflict");
+      return { changed: false as const, duplicate: true as const, subscriptionId: subscription.id, stale: false as const };
+    }
     const [latestPayment] = await tx.select({ occurredAt: commercialPayments.providerOccurredAt }).from(commercialPayments)
       .where(and(eq(commercialPayments.subscriptionId, subscription.id), eq(commercialPayments.status, "succeeded")))
       .orderBy(desc(commercialPayments.providerOccurredAt)).limit(1);
     if ((subscription.canceledAt && event.occurredAt.getTime() <= subscription.canceledAt.getTime()) ||
-        (latestPayment?.occurredAt && event.occurredAt.getTime() < latestPayment.occurredAt.getTime())) {
-      return { changed: false as const, subscriptionId: subscription.id, stale: true as const };
+        (latestPayment?.occurredAt && event.occurredAt.getTime() <= latestPayment.occurredAt.getTime())) {
+      return { changed: false as const, duplicate: false as const, subscriptionId: subscription.id, stale: true as const };
     }
     if (!event.paidThroughAt && subscription.currentPeriodEndsAt === null) {
       throw new PaymentFoundationError("provider_paid_through_required");
@@ -215,6 +297,6 @@ export async function cancelTrustedSubscription(event: TrustedSubscriptionCancel
       currentPeriodEndsAt: periodEnd,
       updatedAt: new Date(),
     }).where(eq(locationSubscriptions.id, subscription.id)).returning({ id: locationSubscriptions.id });
-    return { changed: Boolean(updated), subscriptionId: subscription.id, stale: false as const };
+    return { changed: Boolean(updated), duplicate: false as const, subscriptionId: subscription.id, stale: false as const };
   });
 }
