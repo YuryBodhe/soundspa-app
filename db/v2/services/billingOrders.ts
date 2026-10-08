@@ -9,10 +9,10 @@ import {
   commercialProducts,
   locationSubscriptions,
   locations,
-  organizationMembers,
   organizations,
   users,
 } from "../schema";
+import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
 import {
   BillingOrderModelError,
@@ -180,13 +180,7 @@ export async function createPrepaidBillingOrder(input: {
       .from(users).where(eq(users.id, input.authenticatedUserId)).for("share").limit(1);
     const [organization] = await tx.select({ id: organizations.id })
       .from(organizations).where(and(eq(organizations.id, request.organizationId), isNull(organizations.archivedAt))).for("share").limit(1);
-    const [membership] = await tx.select({ role: organizationMembers.role })
-      .from(organizationMembers).where(and(
-        eq(organizationMembers.organizationId, request.organizationId),
-        eq(organizationMembers.userId, input.authenticatedUserId),
-      )).for("share").limit(1);
-    if (!user?.emailVerifiedAt || user.disabledAt || !organization || !membership || !["owner", "admin"].includes(membership.role)) {
-      // Manager has no verified Location-scoped billing permission model yet.
+    if (!user?.emailVerifiedAt || user.disabledAt || !organization) {
       throw new BillingOrderError("not_authorized");
     }
 
@@ -205,6 +199,15 @@ export async function createPrepaidBillingOrder(input: {
     )).orderBy(asc(locations.id)).for("update");
     if (locationRows.length !== locationIds.length) throw new BillingOrderError("not_authorized");
     const locationsById = new Map(locationRows.map((location) => [location.id, location]));
+    try {
+      for (const locationId of locationIds) {
+        const authority = await requireLocationBillingAuthority(tx, input.authenticatedUserId, locationId);
+        if (authority.organizationId !== request.organizationId) throw new BillingOrderError("not_authorized");
+      }
+    } catch (error) {
+      if (error instanceof LocationBillingAuthorizationError) throw new BillingOrderError("not_authorized");
+      throw error;
+    }
 
     const productIds = [...new Set(request.lines.map((line) => line.productId))].sort();
     const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name })

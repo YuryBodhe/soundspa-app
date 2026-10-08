@@ -58,11 +58,12 @@ async function main() {
     if (target === "staging-v2" && (!configuredLocationId || !configuredRouteId)) {
       throw new Error("Staging test requires the isolated Fake Provider Location and Route IDs from its setup step.");
     }
-    const [schema, fakeProvider, paymentHelpers, access] = await Promise.all([
+    const [schema, fakeProvider, paymentHelpers, access, billingPermissions] = await Promise.all([
       import("../../db/v2/schema"),
       import("../../db/v2/services/fakePaymentProvider"),
       import("../../lib/v2/fakePaymentProvider"),
       import("../../db/v2/queries/effectiveAccess"),
+      import("../../db/v2/services/locationBillingPermissions"),
     ]);
     try {
       await v2Db.transaction(async (tx) => {
@@ -217,14 +218,36 @@ async function main() {
         const paidThrough = renewedSubscription.currentPeriodEndsAt;
         assert.equal(paidThrough?.getTime(), paymentHelpers.addOneCalendarMonth(firstPaidThrough).getTime(), "renewal confirms one calendar month after the existing period end");
 
-        const cancellationAt = new Date(renewalAt.getTime() + 120_000);
-        const canceled = await fakeProvider.cancelFakeProviderSubscription({ authenticatedUserId: owner.id, subscriptionId: subscription.id }, cancellationAt, tx);
+        await assertFakeError(fakeProvider.createFakeProviderCheckout({
+          authenticatedUserId: manager.id, locationId: ownerLocation.id, productId: product.id, routeId: route.id,
+        }, new Date(renewalAt.getTime() + 90_000), tx), "not_authorized");
+        const grant = await billingPermissions.grantLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: ownerLocation.id, managerUserId: manager.id,
+        }, tx);
+        assert.equal(grant.granted, true);
+        const managerCheckoutAt = new Date(renewalAt.getTime() + 120_000);
+        const managerCheckout = await fakeProvider.createFakeProviderCheckout({
+          authenticatedUserId: manager.id, locationId: ownerLocation.id, productId: product.id, routeId: route.id,
+        }, managerCheckoutAt, tx);
+        const managerSettlement = await fakeProvider.confirmFakeProviderCheckout({
+          authenticatedUserId: manager.id, confirmationToken: managerCheckout.confirmationToken,
+        }, new Date(managerCheckoutAt.getTime() + 1000), tx);
+        assert.equal(managerSettlement.accessApplied, true, "explicitly authorized manager can use single-Location billing flow");
+
+        const cancellationAt = new Date(managerCheckoutAt.getTime() + 120_000);
+        const canceled = await fakeProvider.cancelFakeProviderSubscription({ authenticatedUserId: manager.id, subscriptionId: subscription.id }, cancellationAt, tx);
         assert.equal(canceled.changed, true);
         const canceledAccess = await access.resolveEffectiveChannelAccess(ownerLocation.id, cancellationAt, tx);
         assert.equal(canceledAccess.find((entry) => entry.id === channel.id)?.playable, true, "cancellation preserves confirmed paid-through access");
         assert.deepEqual(canceledAccess.find((entry) => entry.id === partnerChannel.id)?.accessSources, ["partner_benefit"]);
         const repeatedCancellation = await fakeProvider.cancelFakeProviderSubscription({ authenticatedUserId: owner.id, subscriptionId: subscription.id }, new Date(cancellationAt.getTime() + 60_000), tx);
         assert.equal(repeatedCancellation.duplicate, true);
+        await billingPermissions.revokeLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: ownerLocation.id, managerUserId: manager.id,
+        }, tx);
+        await assertFakeError(fakeProvider.cancelFakeProviderSubscription({
+          authenticatedUserId: manager.id, subscriptionId: subscription.id,
+        }, new Date(cancellationAt.getTime() + 120_000), tx), "not_authorized");
 
         await assertFakeError(fakeProvider.confirmFakeProviderCheckout({ authenticatedUserId: foreignUser.id, confirmationToken: checkout.confirmationToken }, confirmationAt, tx), "checkout_unavailable");
         throw new Rollback();

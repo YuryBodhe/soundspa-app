@@ -25,10 +25,12 @@ async function main() {
   process.env.V2_PUBLIC_ORIGIN = "https://test.soundspa.bodhemusic.com";
   process.env.V2_FAKE_PROVIDER_SECRET = "rollback-only-billing-order-test-secret-32-bytes";
 
-  const [{ v2Db, v2Pool }, schema, service] = await Promise.all([
+  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling] = await Promise.all([
     import("../../db/v2/client"),
     import("../../db/v2/schema"),
     import("../../db/v2/services/billingOrders"),
+    import("../../db/v2/services/locationBillingPermissions"),
+    import("../../db/v2/services/customerBilling"),
   ]);
   try {
     const identity = await v2Pool.query<{ database: string; role: string; address: string | null; port: number; migrationCount: string; latestMigration: string }>(
@@ -40,11 +42,11 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole === "soundspa_v2" || dbIdentity.role !== expectedLocalRole ||
-        Number(dbIdentity.migrationCount) !== 16 || dbIdentity.latestMigration !== "1791451239186") {
-      throw new Error("Database is not the expected disposable local database at Gate 6.3B migration 0015.");
+        Number(dbIdentity.migrationCount) !== 17 || dbIdentity.latestMigration !== "1791461497519") {
+      throw new Error("Database is not the expected disposable local database at Gate 6.3C.1 migration 0016.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
     );
     if (baseline.rows[0]?.count !== "0") throw new Error("Disposable integration database must contain no customer or commercial fixtures before the test.");
 
@@ -62,9 +64,13 @@ async function main() {
         const [manager] = await tx.insert(schema.users).values({
           email: `billing-order-manager-${suffix}@example.test`, emailVerifiedAt: now,
         }).returning();
+        const [admin] = await tx.insert(schema.users).values({
+          email: `billing-order-admin-${suffix}@example.test`, emailVerifiedAt: now,
+        }).returning();
         await tx.insert(schema.organizationMembers).values([
           { organizationId: organization.id, userId: owner.id, role: "owner" },
           { organizationId: organization.id, userId: manager.id, role: "manager" },
+          { organizationId: organization.id, userId: admin.id, role: "admin" },
         ]);
 
         const locations = await tx.insert(schema.locations).values([1, 2, 3, 4].map((number) => ({
@@ -129,6 +135,66 @@ async function main() {
             { locationId: locations[3].id, productId: products[1].id, durationMonths: 12 },
           ],
         };
+        const grant = await permissionService.grantLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        assert.equal(grant.granted, true, "owner can grant one manager one Location's billing authority");
+        const repeatedGrant = await permissionService.grantLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        assert.equal(repeatedGrant.granted, false, "permission grants are idempotent");
+        await assert.rejects(permissionService.grantLocationBillingPermission({
+          authenticatedUserId: admin.id, locationId: locations[1].id, managerUserId: manager.id,
+        }, tx), (error: unknown) => error instanceof permissionService.LocationBillingAuthorizationError && error.code === "not_authorized",
+        "granting delegation must not silently expand the admin role");
+        const managerOrder = await service.createPrepaidBillingOrder({
+          ...input, authenticatedUserId: manager.id, lines: [input.lines[0]],
+        }, { db: tx, now, env: process.env });
+        assert.equal(managerOrder.lines[0].locationId, locations[0].id);
+        const managerBillingView = await customerBilling.listCustomerBilling(manager.id, now, tx);
+        assert.deepEqual(managerBillingView.locations.map((location) => location.id), [locations[0].id],
+          "billing view exposes only explicitly delegated Locations to a manager");
+        await assert.rejects(service.createPrepaidBillingOrder({
+          ...input, authenticatedUserId: manager.id, lines: [input.lines[1]],
+        }, { db: tx, now, env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
+        const draftsBeforeMixedAttempt = await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders);
+        await assert.rejects(service.createPrepaidBillingOrder({
+          ...input, authenticatedUserId: manager.id, lines: [input.lines[0], input.lines[1]],
+        }, { db: tx, now, env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
+        assert.equal((await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders)).length,
+          draftsBeforeMixedAttempt.length, "mixed authorized/unauthorized order creates no partial draft");
+        const adminOrder = await service.createPrepaidBillingOrder({
+          ...input, authenticatedUserId: admin.id, lines: [input.lines[1]],
+        }, { db: tx, now, env: process.env });
+        assert.equal(adminOrder.lines[0].locationId, locations[1].id, "existing admin billing authority remains intact");
+        const revoked = await permissionService.revokeLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        assert.equal(revoked.revoked, true);
+        const repeatedRevoke = await permissionService.revokeLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        assert.equal(repeatedRevoke.revoked, false, "permission revocation is idempotent");
+        await assert.rejects(service.createPrepaidBillingOrder({
+          ...input, authenticatedUserId: manager.id, lines: [input.lines[0]],
+        }, { db: tx, now, env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized",
+        "revoked manager permission must be effective immediately");
+        assert.deepEqual((await customerBilling.listCustomerBilling(manager.id, now, tx)).locations, [],
+          "revoked manager permission removes the Location from billing view");
+        await assert.rejects(permissionService.grantLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: outsideLocation.id, managerUserId: manager.id,
+        }, tx), (error: unknown) => error instanceof permissionService.LocationBillingAuthorizationError && error.code === "not_authorized",
+        "a grant cannot cross the owner's Organization boundary");
+        await assert.rejects(service.createPrepaidBillingOrder({
+          ...input, lines: [{ locationId: outsideLocation.id, productId: products[0].id, durationMonths: 1 }],
+        }, { db: tx, now, env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized",
+        "an order cannot cross into another Organization");
+        assertionCount += 14;
+
         const order = await service.createPrepaidBillingOrder(input, { db: tx, now, env: process.env });
         assertionCount += 1;
         assert.equal(order.status, "draft");
@@ -160,8 +226,6 @@ async function main() {
         await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [{ ...input.lines[0], durationMonths: 13 }] }, { db: tx, now, env: process.env }),
           (error: unknown) => error instanceof service.BillingOrderError && error.code === "invalid_request");
         await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [{ ...input.lines[0], locationId: outsideLocation.id }] }, { db: tx, now, env: process.env }),
-          (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
-        await assert.rejects(service.createPrepaidBillingOrder({ ...input, authenticatedUserId: manager.id }, { db: tx, now, env: process.env }),
           (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
         await assert.rejects(service.createPrepaidBillingOrder({ ...input, organizationId: outsideOrganization.id }, { db: tx, now, env: process.env }),
           (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
@@ -207,7 +271,7 @@ async function main() {
       : [];
     assert.equal(rollbackOrganization, undefined, "fixture Organization must not remain after rollback");
     const afterRollback = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
     );
     assert.equal(afterRollback.rows[0]?.count, "0", "all customer and commercial fixtures must be absent after rollback");
     assertionCount += 2;

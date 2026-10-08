@@ -5,6 +5,7 @@ export * from "./core/organizations";
 export * from "./core/users";
 export * from "./core/customerAuth";
 export * from "./core/organizationMembers";
+export * from "./core/locationBillingPermissions";
 export * from "./core/locations";
 export * from "./core/relations";
 export * from "./product/channels";

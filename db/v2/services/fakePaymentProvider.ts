@@ -1,7 +1,6 @@
 import "server-only";
 import { randomUUID, createHash } from "node:crypto";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
-import { customerDeviceAuthorizationFailure } from "@/lib/v2/customerDeviceAuthorization";
 import {
   fakeConfirmedPaidThrough,
   FAKE_CHECKOUT_TTL_MS,
@@ -23,12 +22,10 @@ import {
   commercialProducts,
   locationSubscriptions,
   locations,
-  organizationMembers,
-  organizations,
-  users,
 } from "../schema";
 import { resolveEnabledPaymentRoutesForLocationProduct, recordNormalizedPayment } from "./paymentFoundation";
 import { cancelTrustedSubscription, settleTrustedProviderPayment } from "./paymentLifecycle";
+import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 
 type FakeProviderDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 type FakeProviderTransaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
@@ -62,32 +59,19 @@ function providerSecret(): string {
 }
 
 async function authorizeCustomerLocation(tx: FakeProviderTransaction, userId: string, locationId: string) {
-  const [user] = await tx.select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
-    .from(users).where(eq(users.id, userId)).limit(1);
-  const [membership] = await tx.select({
-    location: locations,
-    organizationId: organizations.id,
-    role: organizationMembers.role,
-    organizationArchivedAt: organizations.archivedAt,
-  }).from(organizationMembers)
-    .innerJoin(locations, eq(locations.organizationId, organizationMembers.organizationId))
-    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
-    .where(and(eq(organizationMembers.userId, userId), eq(locations.id, locationId)))
-    .limit(1);
-  const failure = customerDeviceAuthorizationFailure({
-    userFound: Boolean(user),
-    emailVerified: Boolean(user?.emailVerifiedAt),
-    userDisabled: Boolean(user?.disabledAt),
-    locationId,
-    memberships: membership ? [{
-      locationId: membership.location.id,
-      role: membership.role,
-      locationArchived: Boolean(membership.location.archivedAt),
-      organizationArchived: Boolean(membership.organizationArchivedAt),
-    }] : [],
-  });
-  if (failure) throw new FakeProviderError("not_authorized");
-  return { location: membership!.location, organizationId: membership!.organizationId };
+  let authority: { organizationId: string };
+  try {
+    authority = await requireLocationBillingAuthority(tx, userId, locationId);
+  } catch (error) {
+    if (error instanceof LocationBillingAuthorizationError) throw new FakeProviderError("not_authorized");
+    throw error;
+  }
+  const [location] = await tx.select().from(locations).where(and(
+    eq(locations.id, locationId),
+    eq(locations.organizationId, authority.organizationId),
+  )).limit(1);
+  if (!location) throw new FakeProviderError("not_authorized");
+  return { location, organizationId: authority.organizationId };
 }
 
 export async function createFakeProviderCheckout(input: {

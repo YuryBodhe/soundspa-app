@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "@/lib/v2/customerBillingModel";
 import { FAKE_PROVIDER_CODE } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
@@ -9,6 +9,7 @@ import {
   commercialProducts,
   locationCoreTrials,
   locationSubscriptions,
+  locationBillingPermissions,
   locations,
   organizationMembers,
   organizations,
@@ -23,8 +24,8 @@ export class CustomerBillingError extends Error {
   }
 }
 
-export async function listCustomerBilling(userId: string, now = new Date()) {
-  const authorizedLocations = await v2Db.select({
+export async function listCustomerBilling(userId: string, now = new Date(), db: Pick<typeof v2Db, "select" | "selectDistinct"> = v2Db) {
+  const authorizedLocations = await db.select({
     id: locations.id,
     organizationName: organizations.name,
     organizationId: organizations.id,
@@ -36,19 +37,27 @@ export async function listCustomerBilling(userId: string, now = new Date()) {
     .innerJoin(users, eq(users.id, organizationMembers.userId))
     .innerJoin(organizations, eq(organizations.id, organizationMembers.organizationId))
     .innerJoin(locations, eq(locations.organizationId, organizations.id))
+    .leftJoin(locationBillingPermissions, and(
+      eq(locationBillingPermissions.locationId, locations.id),
+      eq(locationBillingPermissions.organizationId, organizations.id),
+      eq(locationBillingPermissions.userId, userId),
+    ))
     .where(and(
       eq(organizationMembers.userId, userId),
-      inArray(organizationMembers.role, ["owner", "admin"]),
+      or(
+        inArray(organizationMembers.role, ["owner", "admin"]),
+        and(eq(organizationMembers.role, "manager"), isNotNull(locationBillingPermissions.userId)),
+      ),
       isNull(users.disabledAt),
       isNull(organizations.archivedAt),
       isNull(locations.archivedAt),
     )).orderBy(asc(organizations.name), asc(locations.name), asc(locations.id));
 
-  const products = await v2Db.select({ id: commercialProducts.id, name: commercialProducts.name })
+  const products = await db.select({ id: commercialProducts.id, name: commercialProducts.name })
     .from(commercialProducts).where(eq(commercialProducts.isActive, true))
     .orderBy(asc(commercialProducts.name), asc(commercialProducts.id));
 
-  const marketRows = await v2Db.selectDistinct({ marketCode: commercialPaymentRoutes.marketCode })
+  const marketRows = await db.selectDistinct({ marketCode: commercialPaymentRoutes.marketCode })
     .from(commercialPaymentRoutes)
     .innerJoin(commercialPaymentProviders, eq(commercialPaymentProviders.code, commercialPaymentRoutes.providerCode))
     .innerJoin(commercialProducts, eq(commercialProducts.id, commercialPaymentRoutes.productId))
@@ -63,9 +72,9 @@ export async function listCustomerBilling(userId: string, now = new Date()) {
   for (const location of authorizedLocations) {
     const cards = [];
     for (const product of products) {
-      const [trial] = await v2Db.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
+      const [trial] = await db.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
         .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, location.id), eq(locationCoreTrials.productId, product.id))).limit(1);
-      const subscriptions = await v2Db.select({
+      const subscriptions = await db.select({
         id: locationSubscriptions.id,
         status: locationSubscriptions.status,
         startsAt: locationSubscriptions.startsAt,
@@ -75,13 +84,13 @@ export async function listCustomerBilling(userId: string, now = new Date()) {
       }).from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, location.id), eq(locationSubscriptions.productId, product.id)))
         .orderBy(desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id));
       const subscription = subscriptions.find((candidate) => resolveCustomerBillingStatus({ subscription: candidate }, now) === "subscription") ?? subscriptions[0] ?? null;
-      const benefits = await v2Db.select({ startsAt: commercialPartnerBenefits.startsAt, endsAt: commercialPartnerBenefits.endsAt })
+      const benefits = await db.select({ startsAt: commercialPartnerBenefits.startsAt, endsAt: commercialPartnerBenefits.endsAt })
         .from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, location.id), eq(commercialPartnerBenefits.productId, product.id))).orderBy(desc(commercialPartnerBenefits.startsAt));
       const benefit = benefits.find((candidate) => resolveCustomerBillingStatus({ partnerBenefit: candidate }, now) === "partner") ?? benefits[0] ?? null;
       const status = resolveCustomerBillingStatus({ trial, subscription, partnerBenefit: benefit }, now);
       if (!shouldShowCustomerBillingProduct(status)) continue;
       const routes = location.marketCode
-        ? await resolveEnabledPaymentRoutesForLocationProduct(location.id, product.id)
+        ? await resolveEnabledPaymentRoutesForLocationProduct(location.id, product.id, db)
         : [];
       cards.push({
         productId: product.id,
