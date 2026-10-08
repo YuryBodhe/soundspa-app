@@ -42,8 +42,9 @@ async function main() {
         "SELECT current_database() AS database, inet_server_addr()::text AS address, inet_server_port() AS port, current_user AS role, to_regclass('drizzle_v2.__drizzle_migrations') IS NOT NULL AS journal, to_regclass('public.commercial_payment_events') IS NOT NULL AS payment_events",
       );
       const db = identity.rows[0];
-      const address = db?.address?.split(".").map(Number);
-      const privateAddress = isIP(db?.address ?? "") === 4 && address?.length === 4 && (
+      const addressText = db?.address?.split("/")[0] ?? "";
+      const address = addressText.split(".").map(Number);
+      const privateAddress = isIP(addressText) === 4 && address.length === 4 && (
         address[0] === 10 || (address[0] === 172 && address[1] >= 16 && address[1] <= 31) ||
         (address[0] === 192 && address[1] === 168)
       );

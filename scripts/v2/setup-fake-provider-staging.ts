@@ -21,8 +21,9 @@ async function main() {
       "SELECT current_database() AS database, inet_server_addr()::text AS address, inet_server_port() AS port, current_user AS role",
     );
     const db = identity.rows[0];
-    const octets = db?.address?.split(".").map(Number);
-    const privateAddress = isIP(db?.address ?? "") === 4 && octets?.length === 4 && (
+    const address = db?.address?.split("/")[0] ?? "";
+    const octets = address.split(".").map(Number);
+    const privateAddress = isIP(address) === 4 && octets.length === 4 && (
       octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
       (octets[0] === 192 && octets[1] === 168)
     );
