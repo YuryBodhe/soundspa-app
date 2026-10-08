@@ -295,6 +295,28 @@ async function main() {
         }, new Date(now.getTime() + 1000), tx);
         assert.equal(repeatedCheckout.checkoutId, aggregateCheckout.checkoutId, "repeated checkout reuses the same pending aggregate payment");
         assert.equal(repeatedCheckout.confirmationToken, aggregateCheckout.confirmationToken, "same actor receives the same stable ticket");
+        assert.equal(repeatedCheckout.checkoutUrl, aggregateCheckout.checkoutUrl, "repeated checkout returns the same transferable payer URL");
+        assert.equal(new Date(aggregateCheckout.expiresAt).getTime() - now.getTime(), 7 * 24 * 60 * 60_000, "aggregate payer link expires after seven days");
+        assert.match(aggregateCheckout.checkoutUrl, /^https:\/\/test\.soundspa\.bodhemusic\.com\/fake-checkout\//);
+        const payerCapability = aggregateCheckout.checkoutUrl.split("/").pop()!;
+        const retrievedLink = await aggregateFake.getFakeProviderBillingOrderCheckoutLink({
+          authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id,
+        }, new Date(now.getTime() + 1500), tx);
+        assert.equal(retrievedLink.checkoutUrl, aggregateCheckout.checkoutUrl, "authorized user can retrieve the valid deterministic link");
+        const payerPreview = await aggregateFake.getFakeBillingOrderPayerView({ capability: payerCapability }, new Date(now.getTime() + 1500), tx);
+        assert.equal(payerPreview.state, "pending");
+        assert.equal(payerPreview.organizationName, organization.name);
+        assert.equal(payerPreview.totalAmountMinor, "1728000");
+        assert.equal(payerPreview.lines?.length, 3, "external payer sees only this frozen order's lines");
+        assert.deepEqual(payerPreview.lines?.map((line) => line.amountMinor).sort(), ["108000", "1296000", "324000"]);
+        const [lineToTamper] = await tx.select().from(schema.commercialBillingOrderLines)
+          .where(eq(schema.commercialBillingOrderLines.orderId, prepaidOrder.id)).limit(1);
+        await tx.update(schema.commercialBillingOrderLines).set({ durationMonths: lineToTamper.durationMonths === 12 ? 11 : lineToTamper.durationMonths + 1 })
+          .where(eq(schema.commercialBillingOrderLines.id, lineToTamper.id));
+        await assertAggregateError(aggregateFake.confirmFakeBillingOrderAsPayer({ capability: payerCapability }, new Date(now.getTime() + 1700), tx), "checkout_unavailable");
+        await assertAggregateError(aggregateFake.getFakeBillingOrderPayerView({ capability: payerCapability }, new Date(now.getTime() + 1700), tx), "checkout_unavailable");
+        await tx.update(schema.commercialBillingOrderLines).set({ durationMonths: lineToTamper.durationMonths })
+          .where(eq(schema.commercialBillingOrderLines.id, lineToTamper.id));
         assert.equal(aggregateCheckout.amountMinor, 1_728_000);
         assert.equal(aggregateCheckout.currency, "RUB");
         const [pendingAggregate] = await tx.select().from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
@@ -364,6 +386,28 @@ async function main() {
         assert.equal(paidOrder.status, "paid");
         assert.equal(paidPayment.status, "succeeded");
 
+        await permissionService.grantLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        const managerCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: manager.id, billingOrderId: managerOrder.id,
+        }, new Date(now.getTime() + 4000), tx);
+        await permissionService.revokeLocationBillingPermission({
+          authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
+        }, tx);
+        await assertAggregateError(aggregateFake.getFakeProviderBillingOrderCheckoutLink({
+          authenticatedUserId: manager.id, billingOrderId: managerOrder.id,
+        }, new Date(now.getTime() + 4500), tx), "not_authorized");
+        await assertAggregateError(aggregateFake.cancelFakeProviderBillingOrderCheckout({
+          authenticatedUserId: manager.id, billingOrderId: managerOrder.id,
+        }, new Date(now.getTime() + 4500), tx), "not_authorized");
+        await aggregateFake.cancelFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: managerOrder.id,
+        }, new Date(now.getTime() + 5000), tx);
+        assert.ok(managerCheckout.checkoutUrl.includes("/fake-checkout/"), "delegated manager can receive a link before revocation");
+        assert.equal((await customerBilling.listCustomerBilling(manager.id, now, tx)).locations.length, 0,
+          "revoked billing permission is not retained for subsequent authenticated actions");
+
         const conflictInput = {
           orderId: prepaidOrder.id,
           paymentId: pendingAggregate.id,
@@ -381,12 +425,36 @@ async function main() {
         await assert.rejects(lifecycle.settleTrustedBillingOrderPayment(conflictInput, tx),
           (error: unknown) => error instanceof paymentFoundation.PaymentFoundationError && error.code === "payment_identity_conflict");
 
+        const externalOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
+          { locationId: locations[2].id, productId: products[1].id, durationMonths: 1 },
+        ] }, { db: tx, now, env: process.env });
+        const externalCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: externalOrder.id,
+        }, now, tx);
+        const externalCapability = externalCheckout.checkoutUrl.split("/").pop()!;
+        const externalResult = await aggregateFake.confirmFakeBillingOrderAsPayer({ capability: externalCapability }, new Date(now.getTime() + 6000), tx);
+        assert.equal(externalResult.state, "paid", "external payer settles without a SoundSpa user session");
+        const externalReplay = await aggregateFake.confirmFakeBillingOrderAsPayer({ capability: externalCapability }, new Date(now.getTime() + 7000), tx);
+        assert.equal(externalReplay.state, "already_paid", "payer capability replay cannot settle a second time");
+        const externalViewAfterPay = await aggregateFake.getFakeBillingOrderPayerView({ capability: externalCapability }, new Date(now.getTime() + 7000), tx);
+        assert.equal(externalViewAfterPay.state, "already_paid");
+        const externalLine = await tx.select({ subscriptionId: schema.commercialBillingOrderLines.subscriptionId })
+          .from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, externalOrder.id));
+        assert.equal(externalLine.length, 1);
+        assert.ok(externalLine[0].subscriptionId);
+        assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)
+          .where(and(eq(schema.locationSubscriptions.locationId, locations[2].id), eq(schema.locationSubscriptions.productId, products[1].id)))).length, 1,
+        "external payer's replay creates no duplicate Subscription");
+
         const canceledOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
           { locationId: locations[3].id, productId: products[1].id, durationMonths: 1 },
         ] }, { db: tx, now, env: process.env });
         const canceledCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({ authenticatedUserId: owner.id, billingOrderId: canceledOrder.id }, now, tx);
-        await tx.update(schema.commercialBillingOrders).set({ status: "canceled" }).where(eq(schema.commercialBillingOrders.id, canceledOrder.id));
-        await tx.update(schema.commercialPayments).set({ status: "canceled" }).where(eq(schema.commercialPayments.billingOrderId, canceledOrder.id));
+        await aggregateFake.cancelFakeProviderBillingOrderCheckout({ authenticatedUserId: owner.id, billingOrderId: canceledOrder.id }, new Date(now.getTime() + 1000), tx);
+        const canceledCapability = canceledCheckout.checkoutUrl.split("/").pop()!;
+        assert.equal((await aggregateFake.getFakeBillingOrderPayerView({ capability: canceledCapability }, new Date(now.getTime() + 1000), tx)).state, "canceled");
+        assert.equal((await aggregateFake.confirmFakeBillingOrderAsPayer({ capability: canceledCapability }, new Date(now.getTime() + 1000), tx)).state, "canceled",
+          "authorized cancellation revokes the external payment capability immediately");
         await assertAggregateError(aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: canceledCheckout.confirmationToken,
         }, new Date(now.getTime() + 1000), tx), "checkout_unavailable");
@@ -394,10 +462,23 @@ async function main() {
           { locationId: locations[3].id, productId: products[1].id, durationMonths: 1 },
         ] }, { db: tx, now, env: process.env });
         const expiredCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({ authenticatedUserId: owner.id, billingOrderId: expiredOrder.id }, now, tx);
+        const expiredCapability = expiredCheckout.checkoutUrl.split("/").pop()!;
+        const afterSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60_000 + 1);
+        assert.equal((await aggregateFake.getFakeBillingOrderPayerView({ capability: expiredCapability }, afterSevenDays, tx)).state, "expired");
         await assertAggregateError(aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: expiredCheckout.confirmationToken,
-        }, new Date(now.getTime() + 15 * 60_000 + 1), tx), "checkout_expired");
-        assertionCount += 25;
+        }, afterSevenDays, tx), "checkout_expired");
+        await assertAggregateError(aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: expiredOrder.id,
+        }, afterSevenDays, tx), "checkout_expired");
+        const replacementOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
+          { locationId: locations[3].id, productId: products[1].id, durationMonths: 1 },
+        ] }, { db: tx, now: afterSevenDays, env: process.env });
+        const replacementCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: replacementOrder.id,
+        }, afterSevenDays, tx);
+        assert.notEqual(replacementCheckout.checkoutId, expiredCheckout.checkoutId, "expired checkout retries use a fresh validated Order and Payment");
+        assertionCount += 38;
 
         const atomicLocations = [locations[0], locations[1], locations[3]].sort((left, right) => left.id.localeCompare(right.id));
         const atomicOrder = await service.createPrepaidBillingOrder({ ...input, lines: atomicLocations.map((location, index) => ({
@@ -437,8 +518,8 @@ async function main() {
           "prepaid settlement preserves and extends the existing paid-through date");
         assert.deepEqual(await tx.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials), beforeTrials);
         assert.deepEqual(await tx.select({ id: schema.commercialPartnerBenefits.id }).from(schema.commercialPartnerBenefits), beforeBenefits);
-        assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 3);
-        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 4);
+        assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 4);
+        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 7);
         assertionCount += 5;
 
         const routeSnapshot = await tx.select({ id: schema.commercialPaymentRoutes.id }).from(schema.commercialPaymentRoutes).where(and(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addOneCalendarMonth,
+  FAKE_AGGREGATE_CHECKOUT_TTL_MS,
   fakeConfirmedPaidThrough,
   fakeCancellationIdentity,
   fakeCancellationRequestSchema,
@@ -9,8 +10,11 @@ import {
   fakeConfirmationRequestSchema,
   fakeProviderIsConfigured,
   fakeProviderIsEnabled,
+  fakeProviderPageIsEnabled,
   fakeProviderUiIsAvailable,
   issueFakeCheckoutTicket,
+  issueAggregateFakeCheckoutCapability,
+  verifyAggregateFakeCheckoutCapability,
   verifyFakeCheckoutTicket,
   FAKE_PROVIDER_ORIGIN,
 } from "./fakePaymentProvider";
@@ -47,6 +51,26 @@ test("checkout ticket binds opaque payment and customer identity, and rejects ta
   assert.deepEqual(verifyFakeCheckoutTicket(encoded, secret), ticket);
   assert.equal(verifyFakeCheckoutTicket(`${encoded}x`, secret), null);
   assert.equal(verifyFakeCheckoutTicket(encoded, "a-different-secret-with-32-bytes-or-more"), null);
+});
+
+test("external aggregate payer capability is separately scoped, staging-only, and expires within seven days", () => {
+  const now = Date.now();
+  const capability = {
+    v: 1 as const,
+    purpose: "aggregate_fake_checkout_pay" as const,
+    orderId: "a8b2e99e-21d1-47cf-8f42-57b93fdd33d3",
+    paymentId: "b8b2e99e-21d1-47cf-8f42-57b93fdd33d4",
+    providerCode: "fake-staging" as const,
+    expiresAt: now + FAKE_AGGREGATE_CHECKOUT_TTL_MS,
+  };
+  const encoded = issueAggregateFakeCheckoutCapability(capability, secret);
+  assert.deepEqual(verifyAggregateFakeCheckoutCapability(encoded, secret), capability);
+  assert.equal(verifyAggregateFakeCheckoutCapability(`${encoded}x`, secret), null);
+  assert.equal(verifyAggregateFakeCheckoutCapability(encoded, "a-different-secret-with-32-bytes-or-more"), null);
+  assert.equal(FAKE_AGGREGATE_CHECKOUT_TTL_MS, 7 * 24 * 60 * 60_000);
+  assert.equal(fakeProviderPageIsEnabled(enabledEnv, "test.soundspa.bodhemusic.com"), true);
+  assert.equal(fakeProviderPageIsEnabled(enabledEnv, "soundspa2.bodhemusic.com"), false);
+  assert.equal(fakeProviderPageIsEnabled({ ...enabledEnv, V2_DEPLOYMENT_ENV: "production" }, "test.soundspa.bodhemusic.com"), false);
 });
 
 test("one-calendar-month period clamps month end without using a fixed day count", () => {

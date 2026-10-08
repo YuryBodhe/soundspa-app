@@ -17,6 +17,7 @@ import { PaymentFoundationError, recordNormalizedPayment } from "./paymentFounda
 import type { NormalizedPaymentInput } from "./paymentFoundationModel";
 import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, validateProviderPaidThrough } from "./paymentLifecycleModel";
 import { addBillingCalendarMonths, billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
+import { billingOrderSnapshotReference } from "./billingOrderModel";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 
@@ -248,7 +249,9 @@ export async function settleTrustedBillingOrderPayment(
       throw new PaymentFoundationError("billing_order_allocation_invalid");
     }
     const lineTotal = lines.reduce((total, line) => total + line.amountMinor, BigInt(0));
-    if (lineTotal !== event.amountMinor) throw new PaymentFoundationError("billing_order_allocation_invalid");
+    if (lineTotal !== event.amountMinor || order.quoteReference !== billingOrderSnapshotReference(order, lines)) {
+      throw new PaymentFoundationError("billing_order_allocation_invalid");
+    }
     const persistedAllocations = await tx.select({
       orderLineId: commercialPaymentAllocations.orderLineId,
       amountMinor: commercialPaymentAllocations.amountMinor,

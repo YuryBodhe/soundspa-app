@@ -2,11 +2,15 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import {
+  FAKE_AGGREGATE_CHECKOUT_TTL_MS,
   FAKE_CHECKOUT_TTL_MS,
   FAKE_PAYMENT_CURRENCY,
   FAKE_PROVIDER_CODE,
+  FAKE_PROVIDER_ORIGIN,
   fakeProviderIsConfigured,
+  issueAggregateFakeCheckoutCapability,
   issueFakeCheckoutTicket,
+  verifyAggregateFakeCheckoutCapability,
   verifyFakeCheckoutTicket,
   type FakeProviderEnvironment,
 } from "@/lib/v2/fakePaymentProvider";
@@ -22,10 +26,11 @@ import {
   commercialProducts,
   locationSubscriptions,
   locations,
+  organizations,
   users,
 } from "../schema";
 import { billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
-import { quoteBillingRoute, fakeStagingBillingPricingAdapter } from "./billingOrderModel";
+import { billingOrderSnapshotReference, quoteBillingRoute, fakeStagingBillingPricingAdapter } from "./billingOrderModel";
 import { PaymentFoundationError } from "./paymentFoundation";
 import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
@@ -87,6 +92,7 @@ async function authorizeOrderLocations(tx: FakeBillingOrderTx, userId: string, o
 }
 
 function checkoutResponse(input: {
+  orderId: string;
   paymentId: string;
   actorId: string;
   expiresAt: Date;
@@ -95,6 +101,14 @@ function checkoutResponse(input: {
   providerName: string;
   secret: string;
 }) {
+  const payerCapability = issueAggregateFakeCheckoutCapability({
+    v: 1,
+    purpose: "aggregate_fake_checkout_pay",
+    orderId: input.orderId,
+    paymentId: input.paymentId,
+    providerCode: FAKE_PROVIDER_CODE,
+    expiresAt: input.expiresAt.getTime(),
+  }, input.secret);
   return {
     checkoutId: input.paymentId,
     confirmationToken: issueFakeCheckoutTicket({
@@ -107,6 +121,7 @@ function checkoutResponse(input: {
     amountMinor: Number(input.amountMinor),
     currency: input.currency,
     providerName: input.providerName,
+    checkoutUrl: `${FAKE_PROVIDER_ORIGIN}/fake-checkout/${payerCapability}`,
   };
 }
 
@@ -130,9 +145,11 @@ async function currentCheckout(tx: FakeBillingOrderTx, input: {
         line.providerCode !== order.providerCode || line.currency !== order.currency)) {
     throw new FakeBillingOrderError("checkout_unavailable");
   }
-  const expiresAt = new Date(payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS);
+  if (order.quoteReference !== billingOrderSnapshotReference(order, lines)) throw new FakeBillingOrderError("checkout_unavailable");
+  const expiresAt = new Date(payment.createdAt.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS);
   if (expiresAt.getTime() !== order.expiresAt.getTime()) throw new FakeBillingOrderError("checkout_unavailable");
   return checkoutResponse({
+    orderId: order.id,
     paymentId: payment.id,
     actorId: input.actorId,
     expiresAt,
@@ -283,7 +300,7 @@ export async function createFakeProviderBillingOrderCheckout(input: {
 
     const paymentKey = `fake-billing-order:${order.id}`;
     const externalPaymentId = `fake-billing-payment:${order.id}`;
-    const expiresAt = new Date(now.getTime() + FAKE_CHECKOUT_TTL_MS);
+    const expiresAt = new Date(now.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS);
     const [payment] = await tx.insert(commercialPayments).values({
       billingOrderId: order.id,
       providerCode: order.providerCode,
@@ -305,16 +322,21 @@ export async function createFakeProviderBillingOrderCheckout(input: {
       amountMinor: line.amountMinor,
       createdAt: now,
     })));
+    const frozenLines = await tx.select().from(commercialBillingOrderLines)
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.id));
+    const quoteReference = billingOrderSnapshotReference(order, frozenLines);
     const [frozenOrder] = await tx.update(commercialBillingOrders).set({
       status: "pending",
       quotedAt: now,
       expiresAt,
-      quoteReference: `fake-staging:${order.id}`,
+      quoteReference,
       providerOrderReference: `fake-order:${order.id}`,
       updatedAt: now,
     }).where(and(eq(commercialBillingOrders.id, order.id), eq(commercialBillingOrders.status, "draft"))).returning({ id: commercialBillingOrders.id });
     if (!frozenOrder) throw new FakeBillingOrderError("checkout_unavailable");
     return checkoutResponse({
+      orderId: order.id,
       paymentId: payment.id,
       actorId: input.authenticatedUserId,
       expiresAt,
@@ -323,6 +345,169 @@ export async function createFakeProviderBillingOrderCheckout(input: {
       providerName: provider.displayName,
       secret,
     });
+  });
+}
+
+/** Reissues the deterministic URL only to a currently authorized order manager. */
+export async function getFakeProviderBillingOrderCheckoutLink(input: {
+  authenticatedUserId: string;
+  billingOrderId: string;
+}, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env) {
+  const secret = assertConfigured(env);
+  if (!Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    const { order, lines } = await authorizeOrderLocations(tx, input.authenticatedUserId, input.billingOrderId);
+    return currentCheckout(tx, { order, lines, actorId: input.authenticatedUserId, now, secret });
+  });
+}
+
+/** Cancel an unpaid order capability; paid/expired Payments are never reactivated. */
+export async function cancelFakeProviderBillingOrderCheckout(input: {
+  authenticatedUserId: string;
+  billingOrderId: string;
+}, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env) {
+  assertConfigured(env);
+  if (!Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    const { order } = await authorizeOrderLocations(tx, input.authenticatedUserId, input.billingOrderId);
+    const [payment] = await tx.select().from(commercialPayments)
+      .where(eq(commercialPayments.billingOrderId, order.id)).for("update").limit(1);
+    if (!payment || payment.status !== "pending" || order.status !== "pending") {
+      throw new FakeBillingOrderError("checkout_unavailable");
+    }
+    if (!order.expiresAt || order.expiresAt.getTime() <= now.getTime() ||
+        payment.createdAt.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS !== order.expiresAt.getTime()) {
+      throw new FakeBillingOrderError("checkout_expired");
+    }
+    await tx.update(commercialPayments).set({ status: "canceled", updatedAt: now })
+      .where(and(eq(commercialPayments.id, payment.id), eq(commercialPayments.status, "pending")));
+    await tx.update(commercialBillingOrders).set({ status: "canceled", updatedAt: now })
+      .where(and(eq(commercialBillingOrders.id, order.id), eq(commercialBillingOrders.status, "pending")));
+    return { canceled: true, billingOrderId: order.id };
+  });
+}
+
+export type FakeAggregatePayerView = {
+  state: "pending" | "already_paid" | "expired" | "canceled";
+  organizationName?: string;
+  currency?: string;
+  totalAmountMinor?: string;
+  expiresAt?: string;
+  lines?: Array<{ locationName: string; productName: string; durationMonths: number; amountMinor: string }>;
+};
+
+/** Public view is intentionally limited to the exact frozen order named by a valid payer capability. */
+export async function getFakeBillingOrderPayerView(input: {
+  capability: string;
+}, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env): Promise<FakeAggregatePayerView> {
+  const secret = assertConfigured(env);
+  const capability = verifyAggregateFakeCheckoutCapability(input.capability, secret);
+  if (!capability || !Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    const [order] = await tx.select().from(commercialBillingOrders).where(eq(commercialBillingOrders.id, capability.orderId)).for("share").limit(1);
+    const [payment] = await tx.select().from(commercialPayments).where(eq(commercialPayments.id, capability.paymentId)).for("share").limit(1);
+    if (!order || !payment || payment.billingOrderId !== order.id || payment.providerCode !== FAKE_PROVIDER_CODE ||
+        order.providerCode !== FAKE_PROVIDER_CODE || payment.locationId || payment.productId || payment.subscriptionId || payment.routeId ||
+        capability.providerCode !== order.providerCode || payment.currency !== order.currency || payment.amountMinor !== order.totalAmountMinor ||
+        !order.expiresAt || order.expiresAt.getTime() !== capability.expiresAt ||
+        payment.createdAt.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS !== capability.expiresAt) {
+      throw new FakeBillingOrderError("checkout_unavailable");
+    }
+    const lines = await tx.select({
+      id: commercialBillingOrderLines.id,
+      locationName: locations.name,
+      productName: commercialProducts.name,
+      durationMonths: commercialBillingOrderLines.durationMonths,
+      amountMinor: commercialBillingOrderLines.amountMinor,
+      providerCode: commercialBillingOrderLines.providerCode,
+      currency: commercialBillingOrderLines.currency,
+      listAmountMinor: commercialBillingOrderLines.listAmountMinor,
+      discountAmountMinor: commercialBillingOrderLines.discountAmountMinor,
+    }).from(commercialBillingOrderLines)
+      .innerJoin(locations, eq(locations.id, commercialBillingOrderLines.locationId))
+      .innerJoin(commercialProducts, eq(commercialProducts.id, commercialBillingOrderLines.productId))
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.id));
+    const frozenLines = await tx.select().from(commercialBillingOrderLines)
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.id));
+    const allocations = await tx.select({ orderLineId: commercialPaymentAllocations.orderLineId, amountMinor: commercialPaymentAllocations.amountMinor })
+      .from(commercialPaymentAllocations).where(and(
+        eq(commercialPaymentAllocations.orderId, order.id), eq(commercialPaymentAllocations.paymentId, payment.id),
+      ));
+    const allocated = new Map(allocations.map((allocation) => [allocation.orderLineId, allocation.amountMinor]));
+    if (lines.length === 0 || lines.some((line) => line.providerCode !== order.providerCode || line.currency !== order.currency ||
+        line.amountMinor !== line.listAmountMinor - line.discountAmountMinor || allocated.get(line.id) !== line.amountMinor) ||
+        allocations.length !== lines.length || lines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)) !== order.totalAmountMinor ||
+        order.quoteReference !== billingOrderSnapshotReference(order, frozenLines)) {
+      throw new FakeBillingOrderError("checkout_unavailable");
+    }
+    if (order.status === "paid" && payment.status === "succeeded") return { state: "already_paid" };
+    if (order.status === "canceled" || payment.status === "canceled") return { state: "canceled" };
+    if (order.status === "expired" || order.status !== "pending" || payment.status !== "pending" || order.expiresAt.getTime() <= now.getTime()) {
+      return { state: "expired" };
+    }
+    const [organization] = await tx.select({ name: organizations.name }).from(organizations)
+      .where(eq(organizations.id, order.organizationId)).limit(1);
+    if (!organization) throw new FakeBillingOrderError("checkout_unavailable");
+    return {
+      state: "pending",
+      organizationName: organization.name,
+      currency: order.currency,
+      totalAmountMinor: order.totalAmountMinor.toString(),
+      expiresAt: order.expiresAt.toISOString(),
+      lines: lines.map((line) => ({
+        locationName: line.locationName,
+        productName: line.productName,
+        durationMonths: line.durationMonths,
+        amountMinor: line.amountMinor.toString(),
+      })),
+    };
+  });
+}
+
+/** Anonymous payer operation: the scoped capability authorizes only one fake aggregate payment. */
+export async function confirmFakeBillingOrderAsPayer(input: { capability: string }, now = new Date(), db: FakeBillingOrderDb = v2Db, env: FakeProviderEnvironment = process.env) {
+  const secret = assertConfigured(env);
+  const capability = verifyAggregateFakeCheckoutCapability(input.capability, secret);
+  if (!capability || !Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
+  return db.transaction(async (tx) => {
+    // Keep the global lock order consistent with checkout creation/cancellation: Order, then Payment.
+    const [order] = await tx.select().from(commercialBillingOrders)
+      .where(eq(commercialBillingOrders.id, capability.orderId)).for("update").limit(1);
+    const [payment] = await tx.select().from(commercialPayments)
+      .where(eq(commercialPayments.id, capability.paymentId)).for("update").limit(1);
+    if (!order || !payment || payment.billingOrderId !== order.id || payment.providerCode !== FAKE_PROVIDER_CODE ||
+        order.providerCode !== FAKE_PROVIDER_CODE || payment.locationId || payment.productId || payment.subscriptionId || payment.routeId ||
+        capability.providerCode !== order.providerCode || payment.currency !== order.currency || payment.amountMinor !== order.totalAmountMinor ||
+        !order.expiresAt || order.expiresAt.getTime() !== capability.expiresAt ||
+        payment.createdAt.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS !== capability.expiresAt) {
+      throw new FakeBillingOrderError("checkout_unavailable");
+    }
+    if (order.status === "paid" && payment.status === "succeeded") return { state: "already_paid" as const };
+    if (order.status === "canceled" || payment.status === "canceled") return { state: "canceled" as const };
+    if (order.status !== "pending" || payment.status !== "pending" || now.getTime() >= capability.expiresAt) {
+      return { state: "expired" as const };
+    }
+    const settlement: AggregateBillingOrderSettlementInput = {
+      orderId: order.id,
+      paymentId: payment.id,
+      providerCode: payment.providerCode,
+      paymentKey: payment.paymentKey,
+      externalPaymentId: payment.externalPaymentId,
+      idempotencyKey: `fake-order-success:${order.id}`,
+      externalEventId: `fake-order-success:${order.id}`,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      occurredAt: now,
+    };
+    try {
+      await settleTrustedBillingOrderPayment(settlement, tx);
+      return { state: "paid" as const };
+    } catch (error) {
+      if (error instanceof PaymentFoundationError) throw new FakeBillingOrderError("checkout_unavailable");
+      throw error;
+    }
   });
 }
 
@@ -338,6 +523,14 @@ export async function confirmFakeProviderBillingOrderCheckout(input: {
   }
   if (!Number.isFinite(now.getTime())) throw new FakeBillingOrderError("checkout_unavailable");
   return db.transaction(async (tx) => {
+    const [identity] = await tx.select({ billingOrderId: commercialPayments.billingOrderId }).from(commercialPayments).where(and(
+      eq(commercialPayments.id, ticket.paymentId), eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
+    )).limit(1);
+    if (!identity?.billingOrderId) throw new FakeBillingOrderError("checkout_unavailable");
+    // Lock order before payment, matching creation, cancellation, and external payer settlement.
+    const [lockedOrder] = await tx.select({ id: commercialBillingOrders.id }).from(commercialBillingOrders)
+      .where(eq(commercialBillingOrders.id, identity.billingOrderId)).for("update").limit(1);
+    if (!lockedOrder) throw new FakeBillingOrderError("checkout_unavailable");
     const [payment] = await tx.select().from(commercialPayments).where(and(
       eq(commercialPayments.id, ticket.paymentId), eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
     )).for("update").limit(1);
@@ -345,7 +538,7 @@ export async function confirmFakeProviderBillingOrderCheckout(input: {
       throw new FakeBillingOrderError("checkout_unavailable");
     }
     const { order } = await authorizeOrderLocations(tx, input.authenticatedUserId, payment.billingOrderId);
-    const expiry = payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS;
+    const expiry = payment.createdAt.getTime() + FAKE_AGGREGATE_CHECKOUT_TTL_MS;
     const alreadySettled = order.status === "paid" && payment.status === "succeeded";
     if (ticket.expiresAt !== expiry || order.expiresAt?.getTime() !== expiry || (!alreadySettled && now.getTime() >= expiry)) {
       throw new FakeBillingOrderError("checkout_expired");

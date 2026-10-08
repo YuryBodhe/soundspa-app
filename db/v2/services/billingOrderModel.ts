@@ -1,4 +1,5 @@
 import { FAKE_PAYMENT_AMOUNT_MINOR, FAKE_PAYMENT_CURRENCY, FAKE_PROVIDER_CODE, FAKE_PROVIDER_MARKET, fakeProviderIsConfigured, type FakeProviderEnvironment } from "@/lib/v2/fakePaymentProvider";
+import { createHash } from "node:crypto";
 
 export type RequestedBillingOrderLine = {
   locationId: string;
@@ -38,6 +39,47 @@ export type BillingPricingAdapter = {
   providerCode: string;
   quote(input: BillingPricingInput): BillingPricingResult | null;
 };
+
+type BillingOrderSnapshotLine = {
+  id: string;
+  locationId: string;
+  productId: string;
+  providerCode: string;
+  currency: string;
+  marketCode: string;
+  routeId: string;
+  routeExternalReference: string;
+  durationMonths: number;
+  listAmountMinor: bigint;
+  discountAmountMinor: bigint;
+  amountMinor: bigint;
+  billingAnchorDay: number;
+  billingAnchorIsEndOfMonth: boolean;
+  billingPeriodStartsAt: Date | null;
+  billingPeriodEndsAt: Date | null;
+  subscriptionId: string | null;
+};
+
+/** Stable integrity reference for the immutable Order/Line terms accepted at checkout. */
+export function billingOrderSnapshotReference(order: {
+  id: string;
+  organizationId: string;
+  providerCode: string;
+  currency: string;
+  totalAmountMinor: bigint;
+}, lines: readonly BillingOrderSnapshotLine[]): string {
+  const canonical = {
+    order: [order.id, order.organizationId, order.providerCode, order.currency, order.totalAmountMinor.toString()],
+    lines: [...lines].sort((left, right) => left.id.localeCompare(right.id)).map((line) => [
+      line.id, line.locationId, line.productId, line.providerCode, line.currency, line.marketCode,
+      line.routeId, line.routeExternalReference, line.durationMonths, line.listAmountMinor.toString(),
+      line.discountAmountMinor.toString(), line.amountMinor.toString(), line.billingAnchorDay,
+      line.billingAnchorIsEndOfMonth, line.billingPeriodStartsAt?.toISOString() ?? null,
+      line.billingPeriodEndsAt?.toISOString() ?? null,
+    ]),
+  };
+  return `snapshot-v1:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
+}
 
 export class BillingOrderModelError extends Error {
   constructor(readonly code: "invalid_request" | "duplicate_line" | "unsupported_pricing" | "incompatible_routes") {
