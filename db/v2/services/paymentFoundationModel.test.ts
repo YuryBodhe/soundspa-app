@@ -5,6 +5,7 @@ import {
   incomingEventIsNewer,
   paymentEventIdentity,
   paymentTransactionIdentity,
+  samePaymentIdentity,
   selectEnabledPaymentRoutes,
   validateNormalizedPaymentInput,
   type PaymentRouteChoice,
@@ -57,6 +58,22 @@ test("event retries dedupe by provider plus adapter identity while recurring tra
   assert.equal(paymentEventIdentity("provider", "evt-1"), paymentEventIdentity("provider", "evt-1"));
   assert.notEqual(paymentEventIdentity("provider-a", "evt-1"), paymentEventIdentity("provider-b", "evt-1"));
   assert.notEqual(paymentTransactionIdentity("prodamus", "charge-1"), paymentTransactionIdentity("prodamus", "charge-2"));
+});
+
+test("legacy payment identity remains Location-scoped and cannot alias an aggregate order payment", () => {
+  const input = {
+    providerCode: "provider", paymentKey: "legacy-1", idempotencyKey: "event-1",
+    externalEventId: null, externalPaymentId: null, locationId: "location-1", productId: "product-1",
+    subscriptionId: null, routeId: null, externalSubscriptionRef: null, status: "pending" as const,
+    amountMinor: BigInt(100), currency: "RUB", occurredAt: null,
+  };
+  const identity = {
+    locationId: "location-1", productId: "product-1", subscriptionId: null, routeId: null,
+    paymentKey: "legacy-1", externalPaymentId: null, externalSubscriptionRef: null,
+    amountMinor: BigInt(100), currency: "RUB",
+  };
+  assert.equal(samePaymentIdentity(identity, input), true);
+  assert.equal(samePaymentIdentity({ ...identity, locationId: null, productId: null }, input), false);
 });
 
 test("out-of-order provider events do not move transaction status backwards", () => {

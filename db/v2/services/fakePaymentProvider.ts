@@ -189,6 +189,9 @@ export async function confirmFakeProviderCheckout(input: {
       eq(commercialPayments.id, ticket.paymentId), eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
     )).for("update").limit(1);
     if (!payment) throw new FakeProviderError("checkout_unavailable");
+    // Aggregate billing-order payments are not Fake Provider single-location
+    // checkouts and must never enter this accepted compatibility flow.
+    if (!payment.locationId || !payment.productId || payment.billingOrderId) throw new FakeProviderError("checkout_unavailable");
     const { organizationId } = await authorizeCustomerLocation(tx, input.authenticatedUserId, payment.locationId);
     const hardExpiry = payment.createdAt.getTime() + FAKE_CHECKOUT_TTL_MS;
     if (ticket.expiresAt !== hardExpiry || now.getTime() >= hardExpiry) throw new FakeProviderError("checkout_expired");

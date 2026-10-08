@@ -61,7 +61,7 @@ export function validateNormalizedPaymentInput(input: NormalizedPaymentInput): N
 }
 
 export function samePaymentIdentity(existing: {
-  locationId: string; productId: string; subscriptionId: string | null; routeId: string | null;
+  locationId: string | null; productId: string | null; subscriptionId: string | null; routeId: string | null;
   paymentKey: string; externalPaymentId: string | null; externalSubscriptionRef: string | null; amountMinor: bigint; currency: string;
 }, incoming: NormalizedPaymentInput): boolean {
   return existing.locationId === incoming.locationId &&
