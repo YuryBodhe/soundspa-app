@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeMarketCode, resolveCustomerBillingStatus } from "./customerBillingModel";
+import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "./customerBillingModel";
 
 const now = new Date("2026-10-08T00:00:00.000Z");
 
@@ -17,6 +17,13 @@ test("billing status follows active trial and paid-through windows", () => {
 test("an independent active partner benefit remains available without paid subscription", () => {
   assert.equal(resolveCustomerBillingStatus({ partnerBenefit: { startsAt: "2026-01-01", endsAt: null } }, now), "partner");
   assert.equal(resolveCustomerBillingStatus({}, now), "available");
+});
+
+test("billing choices include current and expired entitlements but hide unrelated products", () => {
+  for (const status of ["trial", "subscription", "partner", "expired"] as const) {
+    assert.equal(shouldShowCustomerBillingProduct(status), true, `${status} remains visible`);
+  }
+  assert.equal(shouldShowCustomerBillingProduct("available"), false);
 });
 
 test("market values must be explicit two-letter codes", () => {

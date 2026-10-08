@@ -311,7 +311,7 @@ function Content() {
                   </select></label>
                   {marketChoices[location.id] && marketChoices[location.id] !== billingLocation.marketCode && <button type="button" className="customer-auth-submit customer-billing-market-save" disabled={marketSavingId === location.id} onClick={() => void saveMarket(location.id)}>{marketSavingId === location.id ? t("billingCanceling") : t("billingMarketSave")}</button>}
                 </div>
-                {billingLocation.products.length === 0 ? <p>{t("billingNoRoutes")}</p> : <div className="customer-billing-plans">
+                {billingLocation.products.length > 0 && <div className="customer-billing-plans">
                   {billingLocation.products.map((plan) => <article className="customer-billing-plan" key={plan.productId}>
                     <div><strong>{plan.productName}</strong><p>{billingStatusText(plan)}</p></div>
                     <button type="button" className="customer-auth-submit customer-billing-action" disabled={!billingLocation.marketCode || plan.routes.length === 0} onClick={() => openBilling(billingLocation, plan)}>{actionText(plan)}</button>

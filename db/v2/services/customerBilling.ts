@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { normalizeMarketCode, resolveCustomerBillingStatus } from "@/lib/v2/customerBillingModel";
+import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "@/lib/v2/customerBillingModel";
 import { FAKE_PROVIDER_CODE } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
@@ -79,6 +79,7 @@ export async function listCustomerBilling(userId: string, now = new Date()) {
         .from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, location.id), eq(commercialPartnerBenefits.productId, product.id))).orderBy(desc(commercialPartnerBenefits.startsAt));
       const benefit = benefits.find((candidate) => resolveCustomerBillingStatus({ partnerBenefit: candidate }, now) === "partner") ?? benefits[0] ?? null;
       const status = resolveCustomerBillingStatus({ trial, subscription, partnerBenefit: benefit }, now);
+      if (!shouldShowCustomerBillingProduct(status)) continue;
       const routes = location.marketCode
         ? await resolveEnabledPaymentRoutesForLocationProduct(location.id, product.id)
         : [];

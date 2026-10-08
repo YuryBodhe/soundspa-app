@@ -12,6 +12,11 @@ function date(value: Date | string | null | undefined): number | null {
 
 export type CustomerBillingStatus = "trial" | "subscription" | "partner" | "expired" | "available";
 
+/** Keep billing choices tied to an existing or previously recorded entitlement. */
+export function shouldShowCustomerBillingProduct(status: CustomerBillingStatus): boolean {
+  return status !== "available";
+}
+
 /** Mirrors commercial access windows for customer-facing status only. */
 export function resolveCustomerBillingStatus(entitlement: BillingEntitlement, now: Date): CustomerBillingStatus {
   const nowMs = now.getTime();

@@ -56,7 +56,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
     {token ? <><h1>{t("authContinueTitle")}</h1><p>{t("authLinkConfirmation")}</p><button className="customer-auth-submit" type="button" onClick={continueWithToken} disabled={consuming}>{consuming ? t("authSending") : t("authContinue")}</button></> : <>
       {sentEmail ? <div className="customer-auth-email-success" role="status" aria-live="polite">
         <h1>{t("authCheckEmailTitle")}</h1>
-        <p>{t("authCheckEmailDescription")}</p>
+        <p>{t(mode === "signup" ? "authSignupCheckEmailDescription" : "authCheckEmailDescription")}</p>
         <p className="customer-auth-sent-address">{sentEmail}</p>
       </div> : <>
         <h1>{mode === "signup" ? t("authSignupTitle") : t("authLoginTitle")}</h1>
