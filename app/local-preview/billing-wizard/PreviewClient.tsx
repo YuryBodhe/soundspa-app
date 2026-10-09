@@ -45,11 +45,11 @@ export default function BillingWizardPreviewClient() {
       <h1>{t("billingWizardTitle")}</h1>
       <section className="customer-account-organization">
         <h2>{organizationName}</h2>
-        <AccountBillingWizard organizationId={organizationId} organizationName={organizationName} locations={previewLocations} />
+        <AccountBillingWizard organizationId={organizationId} organizationName={organizationName} locations={previewLocations} previewOnly />
       </section>
       <section className="customer-account-organization">
         <h2>{t("billingWizardEmptyPreviewLabel")}</h2>
-        <AccountBillingWizard organizationId={emptyOrganizationId} organizationName={t("billingWizardEmptyPreviewLabel")} locations={[]} />
+        <AccountBillingWizard organizationId={emptyOrganizationId} organizationName={t("billingWizardEmptyPreviewLabel")} locations={[]} previewOnly />
       </section>
     </section>
   </main>;

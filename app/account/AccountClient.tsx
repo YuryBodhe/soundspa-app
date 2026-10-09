@@ -301,6 +301,7 @@ function Content() {
             organizationId={organizationId}
             organizationName={group.organizationName}
             locations={billing.locations.filter((location) => location.organizationId === organizationId)}
+            onPaymentConfirmed={load}
           />}
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
             <h3>{location.name}</h3><p>{location.timezone}</p>
