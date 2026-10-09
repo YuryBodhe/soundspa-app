@@ -231,10 +231,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
   return <>
     <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
-    <details className="customer-billing-orders">
-      <summary>{t("billingOrdersTitle")} <span>{orders.length}</span></summary>
+    <details className="customer-billing-orders customer-account-bottom-disclosure">
+      <summary>{t("billingOrdersTitle")}</summary>
       <div className="customer-billing-orders-content">
-        <div className="customer-billing-orders-heading"><span>{t("billingOrdersTitle")}</span><button type="button" className="customer-billing-secondary" disabled={busy} onClick={() => void onRefreshOrders?.()}>{t("billingOrdersRefresh")}</button></div>
+        <div className="customer-billing-orders-heading"><button type="button" className="customer-billing-secondary" disabled={busy} onClick={() => void onRefreshOrders?.()}>{t("billingOrdersRefresh")}</button></div>
         {ordersUnavailable ? <p role="alert">{t("billingOrdersUnavailable")}</p> : orders.length === 0 ? <p>{t("billingOrdersEmpty")}</p> : <ul className="customer-billing-orders-list">{orders.map((item) => <li key={item.id}>
           <div><strong>{item.lines.map((line) => `${line.locationName} · ${line.productName}`).join(", ")}</strong><span>{orderStatusLabel(item.status)} · {formatAmount(item.totalAmountMinor, item.currency)}</span><small>{t("billingOrdersCreated").replace("{{date}}", displayOrderDate(item.createdAt))}</small>
             {item.status === "paid" && item.lines.map((line) => line.billingPeriodStartsAt && line.billingPeriodEndsAt ? <small key={line.id}>{line.locationName}: {t("billingPurchasedPeriod").replace("{{start}}", displayOrderDate(line.billingPeriodStartsAt)).replace("{{end}}", displayOrderDate(line.billingPeriodEndsAt))}</small> : null)}

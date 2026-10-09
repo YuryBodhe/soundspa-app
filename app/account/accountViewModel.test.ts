@@ -83,7 +83,7 @@ test("Account presents one organization-level billing action and compact Locatio
   const wizard = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
   const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../globals.css", import.meta.url), "utf8");
-  assert.match(wizard, /<details className="customer-billing-orders">/);
+  assert.match(wizard, /<details className="customer-billing-orders customer-account-bottom-disclosure">/);
   assert.match(wizard, /billingPurchasedPeriod/);
   assert.match(wizard, /canResumeBillingOrder\(item\.status\)/);
   assert.match(wizard, /className="customer-auth-submit customer-billing-wizard-open"/);
@@ -92,24 +92,33 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(account, /className="customer-account-locations"/);
   assert.match(account, /group\.locations\.map/);
   assert.match(account, /accountLocationPresentation\(billingLocation\.products, billingLocation\.partnerBenefits\)/);
-  assert.match(account, /accountMultipleAccessStates/);
+  assert.match(account, /<details className="customer-account-location-details">/);
+  assert.match(account, /customer-account-device-disclosure/);
+  assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
+  assert.match(account, /overview\.activeProductCount === 1 \? overview\.products\.find/);
+  assert.doesNotMatch(account, /customer-account-location-details" open/);
+  assert.doesNotMatch(account, /customer-account-device-disclosure" open/);
+  assert.doesNotMatch(account, /accountMultipleAccessStates/);
+  assert.doesNotMatch(account, /customer-account-devices-details/);
   assert.match(account, /customer-account-cancel-renewal/);
   assert.doesNotMatch(account, /customer-billing-action/);
   assert.doesNotMatch(account, /billingMarketHelp/);
   assert.match(css, /customer-account-shell \{ width: min\(100%, 920px\)/);
   assert.match(css, /customer-account-locations \{ display: grid/);
+  assert.match(css, /customer-account-location-summary:focus-visible/);
+  assert.match(css, /customer-account-product-row/);
   assert.match(css, /@media \(max-width: 520px\)/);
+  assert.match(css, /@media \(max-width: 600px\)/);
   assert.doesNotMatch(account, /billingLocation\.partnerBenefits\.map/);
 });
 
-test("the organization billing action and summary messages are localized in English and Russian", async () => {
-  const en = await readFile(new URL("../i18n/dictionaries/en.ts", import.meta.url), "utf8");
-  const ru = await readFile(new URL("../i18n/dictionaries/ru.ts", import.meta.url), "utf8");
-  for (const dictionary of [en, ru]) {
+test("compact Account labels and organization billing action are localized in every supported language", async () => {
+  const dictionaries = await Promise.all(["en", "ru", "vi", "th"].map((locale) => readFile(new URL(`../i18n/dictionaries/${locale}.ts`, import.meta.url), "utf8")));
+  for (const dictionary of dictionaries) {
     assert.match(dictionary, /billingWizardOpen:/);
-    assert.match(dictionary, /accountMultipleProductAccess:/);
-    assert.match(dictionary, /accountMultipleAccessStates:/);
-    assert.match(dictionary, /accountProductPeriodsDiffer:/);
-    assert.match(dictionary, /accountProductDetails:/);
+    assert.match(dictionary, /accountAccessActive:/);
+    assert.match(dictionary, /accountNoActiveAccess:/);
+    assert.match(dictionary, /accountTrialUntil:/);
+    assert.match(dictionary, /billingOrdersTitle: 'Order history'|billingOrdersTitle: 'История заказов'|billingOrdersTitle: 'Lịch sử đơn hàng'|billingOrdersTitle: 'ประวัติคำสั่งซื้อ'/);
   }
 });
