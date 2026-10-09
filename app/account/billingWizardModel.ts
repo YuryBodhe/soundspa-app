@@ -26,12 +26,12 @@ export function billingMarketSelectionState(input: {
 }): BillingMarketSelectionState {
   if (input.saving) return "saving";
   if (input.error) return "error";
-  if (input.persistedMarket) return "saved";
+  if (input.persistedMarket && (!input.selectedMarket || input.selectedMarket === input.persistedMarket)) return "saved";
   return input.selectedMarket ? "unsaved" : "missing";
 }
 
-export function canPreviewBillingLines(lines: readonly { marketCode: string | null }[]): boolean {
-  return lines.length > 0 && lines.every((line) => Boolean(line.marketCode));
+export function canPreviewBillingLines(lines: readonly { marketCode: string | null; selectedMarket?: string }[]): boolean {
+  return lines.length > 0 && lines.every((line) => Boolean(line.marketCode) && (!line.selectedMarket || line.selectedMarket === line.marketCode));
 }
 
 export async function saveBillingMarketAndRefresh<T extends { id: string; marketCode: string | null }>(input: {

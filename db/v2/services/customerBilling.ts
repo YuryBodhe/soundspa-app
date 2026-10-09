@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "@/lib/v2/customerBillingModel";
 import { FAKE_PROVIDER_CODE } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
   commercialPartnerBenefits,
+  commercialPartners,
   commercialPaymentProviders,
   commercialPaymentRoutes,
   commercialProducts,
@@ -71,6 +72,20 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
   const result = [];
   for (const location of authorizedLocations) {
     const cards = [];
+    const partnerBenefitRows = await db.select({
+      id: commercialPartnerBenefits.id,
+      partnerName: commercialPartners.name,
+      productId: commercialPartnerBenefits.productId,
+      productName: commercialProducts.name,
+      startsAt: commercialPartnerBenefits.startsAt,
+      endsAt: commercialPartnerBenefits.endsAt,
+    }).from(commercialPartnerBenefits)
+      .innerJoin(commercialPartners, and(eq(commercialPartners.id, commercialPartnerBenefits.partnerId), eq(commercialPartners.isActive, true)))
+      .innerJoin(commercialProducts, and(eq(commercialProducts.id, commercialPartnerBenefits.productId), eq(commercialProducts.isActive, true)))
+      .where(and(
+        eq(commercialPartnerBenefits.locationId, location.id),
+        or(isNull(commercialPartnerBenefits.endsAt), gt(commercialPartnerBenefits.endsAt, now)),
+      )).orderBy(asc(commercialPartnerBenefits.startsAt), asc(commercialPartnerBenefits.id));
     for (const product of products) {
       const [trial] = await db.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
         .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, location.id), eq(locationCoreTrials.productId, product.id), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
@@ -124,6 +139,14 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
       timezone: location.timezone,
       marketCode: location.marketCode,
       products: cards,
+      partnerBenefits: partnerBenefitRows.map((benefit) => ({
+        id: benefit.id,
+        partnerName: benefit.partnerName,
+        productId: benefit.productId,
+        productName: benefit.productName,
+        startsAt: benefit.startsAt.toISOString(),
+        endsAt: benefit.endsAt?.toISOString() ?? null,
+      })),
     });
   }
   return { locations: result, supportedMarkets };

@@ -98,6 +98,8 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   }
   statusRefreshRef.current = refreshPaymentStatus;
 
+  useEffect(() => { setRefreshedLocations({}); }, [locations]);
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -156,7 +158,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   }
   async function requestQuote() {
     if (selectedLines.length === 0) { setSelectionError(true); return; }
-    if (!canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode })))) {
+    if (!canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode, selectedMarket: marketSelections[location.id] })))) {
       setError(t("billingWizardMarketsMustBeSaved")); return;
     }
     setBusy(true); setError("");
@@ -173,7 +175,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   }
   async function createOrderAndCheckout() {
     if (mutationLock.current || busy) return;
-    if (!canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode })))) {
+    if (!canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode, selectedMarket: marketSelections[location.id] })))) {
       setError(t("billingWizardMarketsMustBeSaved")); setStep(1); return;
     }
     mutationLock.current = true; setBusy(true); setError(""); setPendingCheckoutConflict(false); setOrderStatus(t("billingWizardCreatingOrder"));
@@ -226,18 +228,21 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const statusLabel = (product: BillingWizardPlan) => product.status === "trial" ? t("billingTrial") : product.status === "subscription" ? (product.subscriptionCanceled ? t("billingCanceled") : t("billingSubscription")) : product.status === "partner" ? t("billingPartnerStatus") : product.status === "expired" ? t("billingExpired") : t("billingAvailable");
   const orderStatusLabel = (status: string) => t(billingOrderStatusKey(status) as import("@/app/i18n/types").TranslationKey);
   const displayOrderDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-  const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
+  const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
   return <>
-    <section className="customer-billing-orders" aria-label={t("billingOrdersTitle")}>
-      <div className="customer-billing-orders-heading"><h3>{t("billingOrdersTitle")}</h3><button type="button" className="customer-billing-secondary" onClick={() => void onRefreshOrders?.()}>{t("billingOrdersRefresh")}</button></div>
-      {ordersUnavailable ? <p role="alert">{t("billingOrdersUnavailable")}</p> : orders.length === 0 ? <p>{t("billingOrdersEmpty")}</p> : <ul className="customer-billing-orders-list">{orders.map((item) => <li key={item.id}>
-        <div><strong>{item.lines.map((line) => `${line.locationName} · ${line.productName}`).join(", ")}</strong><span>{orderStatusLabel(item.status)} · {formatAmount(item.totalAmountMinor, item.currency)}</span><small>{t("billingOrdersCreated").replace("{{date}}", displayOrderDate(item.createdAt))}</small>
-          {item.status === "paid" && item.lines.map((line) => line.billingPeriodStartsAt && line.billingPeriodEndsAt ? <small key={line.id}>{line.locationName}: {t("billingPaidStarts").replace("{{date}}", displayOrderDate(line.billingPeriodStartsAt))} · {t("billingPaidThrough").replace("{{date}}", displayOrderDate(line.billingPeriodEndsAt))}</small> : null)}
-        </div>
-        {canResumeBillingOrder(item.status) && <button type="button" className="customer-auth-submit" disabled={busy} onClick={() => void resumeOrder(item)}>{t("billingOrdersContinue")}</button>}
-      </li>)}</ul>}
-    </section>
-    <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
+    <details className="customer-billing-orders">
+      <summary>{t("billingOrdersTitle")} <span>{orders.length}</span></summary>
+      <div className="customer-billing-orders-content">
+        <div className="customer-billing-orders-heading"><span>{t("billingOrdersTitle")}</span><button type="button" className="customer-billing-secondary" disabled={busy} onClick={() => void onRefreshOrders?.()}>{t("billingOrdersRefresh")}</button></div>
+        {ordersUnavailable ? <p role="alert">{t("billingOrdersUnavailable")}</p> : orders.length === 0 ? <p>{t("billingOrdersEmpty")}</p> : <ul className="customer-billing-orders-list">{orders.map((item) => <li key={item.id}>
+          <div><strong>{item.lines.map((line) => `${line.locationName} · ${line.productName}`).join(", ")}</strong><span>{orderStatusLabel(item.status)} · {formatAmount(item.totalAmountMinor, item.currency)}</span><small>{t("billingOrdersCreated").replace("{{date}}", displayOrderDate(item.createdAt))}</small>
+            {item.status === "paid" && item.lines.map((line) => line.billingPeriodStartsAt && line.billingPeriodEndsAt ? <small key={line.id}>{line.locationName}: {t("billingPurchasedPeriod").replace("{{start}}", displayOrderDate(line.billingPeriodStartsAt)).replace("{{end}}", displayOrderDate(line.billingPeriodEndsAt))}</small> : null)}
+          </div>
+          {canResumeBillingOrder(item.status) && <button type="button" className="customer-auth-submit" disabled={busy} onClick={() => void resumeOrder(item)}>{t("billingOrdersContinue")}</button>}
+        </li>)}</ul>}
+      </div>
+    </details>
+    <button type="button" className="customer-billing-secondary customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
     <dialog ref={dialogRef} className="customer-billing-wizard-dialog customer-auth-card" aria-labelledby={`billing-wizard-title-${organizationId}`} onCancel={(event) => { event.preventDefault(); close(); }} onClose={() => setOpen(false)} onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
       <div className="customer-billing-wizard-header"><div><p className="customer-billing-wizard-eyebrow">{t("billingWizardOrganization")}</p><h2 id={`billing-wizard-title-${organizationId}`}>{t("billingWizardTitle")}</h2><p>{organizationName}</p></div><button data-wizard-initial-focus type="button" className="customer-billing-secondary" onClick={close} aria-label={t("billingWizardClose")}>×</button></div>
       <ol className="customer-billing-wizard-steps" aria-label={t("billingWizardProgress")}>{[1, 2, 3].map((item) => <li key={item} aria-current={step === item ? "step" : undefined} className={step === item ? "is-current" : step > item ? "is-complete" : ""}><span>{item}</span><span>{t(item === 1 ? "billingWizardStepSelect" : item === 2 ? "billingWizardStepReview" : "billingWizardStepLink")}</span></li>)}</ol>
@@ -249,14 +254,12 @@ export default function AccountBillingWizard({ organizationId, organizationName,
             {checked && product && <div className="customer-billing-wizard-line-controls">{location.products.length > 1 && <label>{t("billingWizardProduct")}<select disabled={busy} value={product.productId} onChange={(event) => updateSelection(() => setSelectedProducts((current) => ({ ...current, [location.id]: event.target.value })))}>{location.products.map((item) => <option key={item.productId} value={item.productId}>{item.productName}</option>)}</select></label>}
               <label>{t("billingWizardDuration")}<select disabled={busy} value={durations[location.id] ?? 1} onChange={(event) => updateSelection(() => setDurations((current) => ({ ...current, [location.id]: Number(event.target.value) })))}>{Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{durationText(months, locale, t)}</option>)}</select></label>
               <p className="customer-billing-wizard-detail">{t("billingWizardPersistedMarket")}: <strong>{location.marketCode ?? t("billingWizardMarketNotSaved")}</strong></p>
-              {!location.marketCode && <>
-                <label>{t("billingMarketLabel")}<select aria-label={`${t("billingMarketLabel")} · ${location.name}`} disabled={busy || Boolean(marketSaving[location.id]) || !onSaveMarket} value={marketSelections[location.id] ?? ""} onChange={(event) => { setMarketSelections((current) => ({ ...current, [location.id]: event.target.value })); setMarketSaveErrors((current) => ({ ...current, [location.id]: "" })); setSavedMarketIds((current) => ({ ...current, [location.id]: false })); setError(""); }}><option value="">—</option>{supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}</select></label>
-                <button type="button" className="customer-billing-secondary" disabled={busy || Boolean(marketSaving[location.id]) || !marketSelections[location.id] || !onSaveMarket} onClick={() => void saveLocationMarket(location)}>{marketSaving[location.id] ? t("billingWizardMarketSaving") : t("billingWizardMarketSave")}</button>
-                {selectionState === "unsaved" && <p className="customer-billing-wizard-warning" role="status">{t("billingWizardMarketUnsaved")}</p>}
-                {selectionState === "saving" && <p className="customer-billing-wizard-detail" role="status">{t("billingWizardMarketSaving")}</p>}
-                {selectionState === "error" && <p className="customer-onboarding-error" role="alert">{marketSaveErrors[location.id]}</p>}
-                {!supportedMarkets.length && <p className="customer-billing-wizard-warning" role="status">{t("billingMarketUnavailable")}</p>}
-              </>}
+              <label>{t("billingMarketLabel")}<select aria-label={`${t("billingMarketLabel")} · ${location.name}`} disabled={busy || Boolean(marketSaving[location.id]) || !onSaveMarket} value={marketSelections[location.id] ?? location.marketCode ?? ""} onChange={(event) => updateSelection(() => { setMarketSelections((current) => ({ ...current, [location.id]: event.target.value })); setMarketSaveErrors((current) => ({ ...current, [location.id]: "" })); setSavedMarketIds((current) => ({ ...current, [location.id]: false })); })}><option value="">—</option>{supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}</select></label>
+              {selectionState === "unsaved" && <button type="button" className="customer-billing-secondary" disabled={busy || Boolean(marketSaving[location.id]) || !marketSelections[location.id] || !onSaveMarket} onClick={() => void saveLocationMarket(location)}>{marketSaving[location.id] ? t("billingWizardMarketSaving") : t("billingWizardMarketSave")}</button>}
+              {selectionState === "unsaved" && <p className="customer-billing-wizard-warning" role="status">{t("billingWizardMarketUnsaved")}</p>}
+              {selectionState === "saving" && <p className="customer-billing-wizard-detail" role="status">{t("billingWizardMarketSaving")}</p>}
+              {selectionState === "error" && <p className="customer-onboarding-error" role="alert">{marketSaveErrors[location.id]}</p>}
+              {!supportedMarkets.length && <p className="customer-billing-wizard-warning" role="status">{t("billingMarketUnavailable")}</p>}
               {savedMarketIds[location.id] && selectionState === "saved" && <p className="customer-billing-wizard-detail" role="status">{t("billingWizardMarketSaved")}</p>}
               {issue && <p className="customer-billing-wizard-warning" role="status">{issue}</p>}</div>}
           </article>;
@@ -281,7 +284,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       {error && <p className="customer-onboarding-error" role="alert">{error}</p>}
       {pendingCheckoutConflict && matchingPendingOrder && <button type="button" className="customer-auth-submit" disabled={busy} onClick={() => void resumeOrder(matchingPendingOrder)}>{t("billingOrdersContinue")}</button>}
       <div className="customer-billing-wizard-actions">{step === 2 && <button type="button" className="customer-billing-secondary" disabled={busy} onClick={() => { setStep(1); setError(""); }}>{t("billingWizardBack")}</button>}
-        {step === 1 && !previewOnly && <button type="button" className="customer-auth-submit" disabled={busy || selectedLines.length === 0 || !canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode })))} onClick={() => void requestQuote()}>{busy ? t("billingLoading") : t("billingWizardGetQuote")}</button>}
+        {step === 1 && !previewOnly && <button type="button" className="customer-auth-submit" disabled={busy || selectedLines.length === 0 || !canPreviewBillingLines(selectedLines.map(({ location }) => ({ marketCode: location.marketCode, selectedMarket: marketSelections[location.id] })))} onClick={() => void requestQuote()}>{busy ? t("billingLoading") : t("billingWizardGetQuote")}</button>}
         {step === 1 && previewOnly && <button type="button" className="customer-auth-submit" disabled={selectedLines.length === 0} onClick={() => { setSelectionError(selectedLines.length === 0); if (selectedLines.length) { setQuote({ currency: "USD", totalAmountMinor: "0", lines: selectedLines.map(({ location, product, months }) => ({ locationId: location.id, locationName: location.name, productId: product.productId, productName: product.productName, durationMonths: months, amountMinor: "0" })) }); setStep(2); } }}>{t("billingWizardContinue")}</button>}
         {step === 2 && !previewOnly && <button type="button" className="customer-auth-submit" disabled={busy || !quote} onClick={() => void createOrderAndCheckout()}>{busy ? t("billingLoading") : t("billingWizardConfirmOrder")}</button>}
         {step === 2 && previewOnly && <button type="button" className="customer-auth-submit" onClick={() => setStep(3)}>{t("billingWizardContinue")}</button>}

@@ -6,6 +6,7 @@ import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
+import { accountPlanPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
@@ -37,9 +38,10 @@ type BillingPlan = {
   scheduledPaidPeriods: { startsAt: string; endsAt: string }[]; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
 };
+type PartnerBenefit = { id: string; partnerName: string; productId: string; productName: string; startsAt: string; endsAt: string | null };
 type BillingLocation = {
   id: string; organizationId: string; organizationName: string; name: string; timezone: string;
-  marketCode: string | null; products: BillingPlan[];
+  marketCode: string | null; products: BillingPlan[]; partnerBenefits: PartnerBenefit[];
 };
 type BillingSummary = { locations: BillingLocation[]; supportedMarkets: string[] };
 type BillingOrderHistoryItem = {
@@ -57,6 +59,7 @@ function Content() {
   const { locale, t } = useI18n();
   const [result, setResult] = useState<LoadResult | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [organizationName, setOrganizationName] = useState("");
   const [locationName, setLocationName] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -82,38 +85,66 @@ function Content() {
   const [marketChoices, setMarketChoices] = useState<Record<string, string>>({});
   const [marketSavingId, setMarketSavingId] = useState<string | null>(null);
   const billingCloseRef = useRef<HTMLButtonElement>(null);
+  const loadVersion = useRef(0);
+  const loadInFlight = useRef<Promise<void> | null>(null);
+  const loadController = useRef<AbortController | null>(null);
 
-  async function load() {
-    try {
-      const [response, billingResponse, ordersResponse] = await Promise.all([
-        fetch("/api/v2/customer/onboarding", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/v2/customer/billing", { cache: "no-store", credentials: "same-origin" }),
-        fetch("/api/v2/customer/billing/orders?limit=50", { cache: "no-store", credentials: "same-origin" }).catch(() => null),
-      ]);
-      if (response.ok) setResult(await response.json() as LoadResult);
-      else setResult(null);
-      if (billingResponse.ok) {
-        setBilling(await billingResponse.json() as BillingSummary);
-        setBillingUnavailable(false);
-      } else {
-        setBilling(null);
-        setBillingUnavailable(billingResponse.status !== 404 && billingResponse.status !== 401);
+  async function load(force = false) {
+    if (loadInFlight.current && !force) return loadInFlight.current;
+    if (force) loadController.current?.abort();
+    const version = ++loadVersion.current;
+    const controller = new AbortController();
+    loadController.current = controller;
+    setRefreshing(true);
+    const request = (async () => {
+      try {
+        const options = { cache: "no-store", credentials: "same-origin", signal: controller.signal } as const;
+        const [response, billingResponse, ordersResponse] = await Promise.all([
+          fetch("/api/v2/customer/onboarding", options),
+          fetch("/api/v2/customer/billing", options),
+          fetch("/api/v2/customer/billing/orders?limit=50", options).catch(() => null),
+        ]);
+        if (version !== loadVersion.current) return;
+        const [accountBody, billingBody, ordersBody] = await Promise.all([
+          response.ok ? response.json() as Promise<LoadResult> : Promise.resolve(null),
+          billingResponse.ok ? billingResponse.json() as Promise<BillingSummary> : Promise.resolve(null),
+          ordersResponse?.ok ? ordersResponse.json() as Promise<{ items?: BillingOrderHistoryItem[] }> : Promise.resolve(null),
+        ]);
+        if (version !== loadVersion.current) return;
+        setResult(accountBody);
+        setBilling(billingBody);
+        if (billingBody) setSelectedBilling((current) => {
+          if (!current) return current;
+          const refreshedLocation = billingBody.locations.find((item) => item.id === current.location.id);
+          const refreshedPlan = refreshedLocation?.products.find((item) => item.productId === current.plan.productId);
+          return refreshedLocation && refreshedPlan ? { location: refreshedLocation, plan: refreshedPlan } : current;
+        });
+        setBillingUnavailable(!billingBody && billingResponse.status !== 404 && billingResponse.status !== 401);
+        setBillingOrders(Array.isArray(ordersBody?.items) ? ordersBody.items : []);
+        setBillingOrdersUnavailable(!ordersBody && (!ordersResponse || (ordersResponse.status !== 404 && ordersResponse.status !== 401)));
+      } catch {
+        if (version === loadVersion.current && !controller.signal.aborted) {
+          setResult(null);
+          setBillingUnavailable(true);
+          setBillingOrdersUnavailable(true);
+        }
+      } finally {
+        if (version === loadVersion.current) {
+          setLoaded(true);
+          setRefreshing(false);
+          loadInFlight.current = null;
+          loadController.current = null;
+        }
       }
-      if (ordersResponse?.ok) {
-        const history = await ordersResponse.json() as { items?: BillingOrderHistoryItem[] };
-        setBillingOrders(Array.isArray(history.items) ? history.items : []);
-        setBillingOrdersUnavailable(false);
-      } else {
-        setBillingOrders([]);
-        setBillingOrdersUnavailable(!ordersResponse || (ordersResponse.status !== 404 && ordersResponse.status !== 401));
-      }
-    } catch { setResult(null); setBillingOrdersUnavailable(true); }
-    finally { setLoaded(true); }
+    })();
+    loadInFlight.current = request;
+    return request;
   }
 
   function openBilling(location: BillingLocation, plan: BillingPlan) {
     setSelectedBilling({ location, plan });
     setSelectedRouteId(plan.routes[0]?.id ?? "");
+    setMarketChoices((current) => ({ ...current, [location.id]: location.marketCode ?? "" }));
     setFakeCheckout(null);
     setBillingError("");
     setBillingNotice("");
@@ -160,7 +191,14 @@ function Content() {
     if (!marketCode) return;
     setBillingError(""); setBillingNotice(""); setMarketSavingId(locationId);
     try {
-      await persistMarket(locationId, marketCode);
+      const refreshedLocation = await persistMarket(locationId, marketCode);
+      if (selectedBilling?.location.id === locationId) {
+        const refreshedPlan = refreshedLocation.products.find((plan) => plan.productId === selectedBilling.plan.productId);
+        if (refreshedPlan) {
+          setSelectedBilling({ location: refreshedLocation, plan: refreshedPlan });
+          setSelectedRouteId(refreshedPlan.routes[0]?.id ?? "");
+        }
+      }
       setBillingNotice(t("billingMarketSaved"));
     } catch (error) {
       const code = error instanceof Error ? error.message : "unavailable";
@@ -220,11 +258,30 @@ function Content() {
   }
   useEffect(() => {
     void load();
+    let lastReturnRefreshAt = Date.now();
+    const refreshOnReturn = () => {
+      const now = Date.now();
+      if (!shouldRefreshAccountOnReturn(now, lastReturnRefreshAt, document.visibilityState !== "hidden")) return;
+      lastReturnRefreshAt = now;
+      void load(true);
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") refreshOnReturn(); };
+    window.addEventListener("focus", refreshOnReturn);
+    window.addEventListener("pageshow", refreshOnReturn);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     try {
       const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
       new Intl.DateTimeFormat("en-US", { timeZone: detected }).format(0);
       setTimezone(detected);
     } catch { setTimezone(""); }
+    return () => {
+      loadVersion.current += 1;
+      loadController.current?.abort();
+      loadInFlight.current = null;
+      window.removeEventListener("focus", refreshOnReturn);
+      window.removeEventListener("pageshow", refreshOnReturn);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, []);
   useEffect(() => {
     if (!selectedBilling) return;
@@ -300,9 +357,6 @@ function Content() {
   async function logout() { await fetch("/api/v2/customer-auth/logout", { method: "POST" }); window.location.assign("/login"); }
   const account = result?.account;
   const complete = Boolean(account?.organization && account.location);
-  const trialDisplay = account?.trial ? trialCountdown(account.trial) : { key: "trialEnded" as const };
-  const trialKey = trialDisplay.key === "trialDays" ? trialDaysMessageKey(locale, trialDisplay.days ?? 0) : trialDisplay.key;
-  const trialStatus = t(trialKey).replace("{{days}}", String(trialDisplay.days ?? ""));
   const displayDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
   const futurePaidPeriodText = (plan: BillingPlan) => plan.scheduledPaidPeriods
     .map((period) => `${t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · ${t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}`)
@@ -324,24 +378,18 @@ function Content() {
       ? t("billingTrialEnds").replace("{{date}}", displayDate(plan.trialEndsAt)) : "";
     return [statusText, activeTrialText, futurePaidPeriodText(plan)].filter(Boolean).join(" · ");
   };
-  const actionText = (plan: BillingPlan) => plan.status === "trial" || plan.status === "available" || plan.status === "partner"
-    ? t("billingSubscribe") : plan.status === "subscription" ? t("billingManage") : t("billingRenew");
+  const trialRemainingText = (days: number) => t(days === 0 ? "trialLessThanDay" : trialDaysMessageKey(locale, days)).replace("{{days}}", String(days));
   const locationGroups = new Map<string, { organizationName: string; locations: CustomerLocation[] }>();
   for (const location of result?.locations ?? []) {
     const group = locationGroups.get(location.organizationId) ?? { organizationName: location.organizationName, locations: [] };
     group.locations.push(location); locationGroups.set(location.organizationId, group);
   }
 
-  return <main className="customer-auth-page"><section className="customer-auth-card customer-onboarding-card"><div className="customer-auth-top"><span className="customer-auth-brand">SOUND SPA</span><AuthLanguageSelector /></div>
+  return <main className="customer-auth-page"><section className="customer-auth-card customer-onboarding-card"><header className="customer-account-header"><span className="customer-auth-brand">SOUND SPA</span>{account && <strong>{account.email}</strong>}<AuthLanguageSelector />{account && <><button type="button" className="customer-billing-secondary" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? t("accountRefreshing") : t("accountRefresh")}</button><button type="button" className="customer-billing-secondary" onClick={logout}>{t("authLogout")}</button></>}</header>
     <h1>{t("authAccountTitle")}</h1>
     {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href="/login">{t("authLoginLink")}</Link></> : <>
-      <p>{t("authEmailVerified")}: <strong>{account.email}</strong></p>
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
-        <p>{result?.partnerCompleted ? t("partnerSetupCompleted") : t("onboardingCompleted")}</p>
-        <dl className="customer-account-details">
-          {account.trial && <><dt>{t("trialLabel")}</dt><dd>{trialStatus}</dd></>}
-        </dl>
         {[...locationGroups.entries()].map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
           <h2>{group.organizationName}</h2>
           {billing && <AccountBillingWizard
@@ -352,35 +400,32 @@ function Content() {
             onSaveMarket={persistMarket}
             orders={billingOrders.filter((order) => order.organizationId === organizationId)}
             ordersUnavailable={billingOrdersUnavailable}
-            onRefreshOrders={load}
-            onPaymentConfirmed={load}
+            onRefreshOrders={() => load(true)}
+            onPaymentConfirmed={() => load(true)}
           />}
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
-            <h3>{location.name}</h3><p>{location.timezone}</p>
+            <div className="customer-account-location-heading"><h3>{location.name}</h3><small>{location.timezone}</small></div>
             {billing && (() => {
               const billingLocation = billing.locations.find((item) => item.id === location.id);
               if (!billingLocation) return null;
               return <section className="customer-billing-location" aria-label={t("billingTitle")}>
-                <h4>{t("billingTitle")}</h4>
-                <p className="customer-billing-market-help">{t("billingMarketHelp")}</p>
-                <div className="customer-billing-market">
-                  <label>{t("billingMarketLabel")}<select value={marketChoices[location.id] ?? billingLocation.marketCode ?? ""} onChange={(event) => setMarketChoices((current) => ({ ...current, [location.id]: event.target.value }))}>
-                    <option value="">—</option>
-                    {billing.supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}
-                  </select></label>
-                  {marketChoices[location.id] && marketChoices[location.id] !== billingLocation.marketCode && <button type="button" className="customer-auth-submit customer-billing-market-save" disabled={marketSavingId === location.id} onClick={() => void saveMarket(location.id)}>{marketSavingId === location.id ? t("billingCanceling") : t("billingMarketSave")}</button>}
-                </div>
                 {billingLocation.products.length > 0 && <div className="customer-billing-plans">
-                  {billingLocation.products.map((plan) => <article className="customer-billing-plan" key={plan.productId}>
-                    <div><strong>{plan.productName}</strong><p>{billingStatusText(plan)}</p></div>
-                    <button type="button" className="customer-auth-submit customer-billing-action" disabled={!billingLocation.marketCode || plan.routes.length === 0} onClick={() => openBilling(billingLocation, plan)}>{actionText(plan)}</button>
-                    {!billingLocation.marketCode && <p className="customer-billing-inline-help">{t("billingMarketMissing")}</p>}
-                    {billingLocation.marketCode && plan.routes.length === 0 && <p className="customer-billing-inline-help">{t("billingNoRoute")}</p>}
-                  </article>)}
+                  {billingLocation.products.map((plan) => {
+                    const presentation = accountPlanPresentation(plan, billingLocation.partnerBenefits);
+                    return <article className="customer-billing-plan" key={plan.productId}>
+                      <div className="customer-billing-plan-info"><strong>{plan.productName}</strong><span className="customer-billing-access-status">{t(plan.status === "trial" ? "billingTrial" : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription") : plan.status === "partner" ? "billingPartnerStatus" : plan.status === "expired" ? "billingExpired" : "billingAvailable")}</span>
+                        {plan.trialActive && presentation.trialRemainingDays !== null && <small>{trialRemainingText(presentation.trialRemainingDays)}</small>}
+                        {presentation.accessExpiresAt && <small>{t("billingAccessExpires").replace("{{date}}", displayDate(presentation.accessExpiresAt))}</small>}
+                        {plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}
+                      </div>
+                      <button type="button" className="customer-auth-submit customer-billing-action" onClick={() => openBilling(billingLocation, plan)}>{t("billingManage")}</button>
+                    </article>;
+                  })}
                 </div>}
+                {billingLocation.partnerBenefits.length > 0 && <section className="customer-account-partner-benefits" aria-label={t("partnerAccess")}><h4>{t("partnerAccess")}</h4><ul>{billingLocation.partnerBenefits.map((benefit) => <li key={benefit.id}><span><strong>{benefit.partnerName}</strong><small>{benefit.productName}</small></span><small>{new Date(benefit.startsAt).getTime() > Date.now() ? t("billingBenefitStarts").replace("{{date}}", displayDate(benefit.startsAt)) : benefit.endsAt ? t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt)) : t("partnerAccessActive")}</small></li>)}</ul></section>}
               </section>;
             })()}
-            <h4>{t("customerDevices")}</h4>
+            <details className="customer-account-devices-details"><summary>{t("customerDevices")}</summary>
             {location.devices.length ? <ul className="customer-account-devices">{location.devices.map((device, index) => <li key={`${device.createdAt}-${index}`}>
               <span>{device.label || t("deviceUnnamed")}</span>
               {device.state === "revoked" ? <span>{t("deviceRevoked")}</span> : <><span>{t("deviceActive")}</span><span>{t(device.activationState === "activated" ? "deviceActivated" : device.activationState === "awaiting" ? "deviceAwaitingActivation" : "deviceActivationExpired")}</span></>}
@@ -396,14 +441,12 @@ function Content() {
               <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString())}</p>
               <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button>
             </div>}
+            </details>
           </section>)}
         </section>)}
         {result?.locations?.length === 0 && <p role="status">{t("deviceNoAuthorizedLocations")}</p>}
         {billingNotice && !selectedBilling && <p role="status" className="customer-billing-notice">{billingNotice}</p>}
         {billingError && !selectedBilling && <p role="alert" className="customer-onboarding-error">{billingError}</p>}
-        {result?.partnerCompleted && <section className="customer-account-partner-access" aria-label={t("partnerAccess")}>
-          <h2>{t("partnerAccess")}</h2><p>{t("partnerAccessActive")}</p>
-        </section>}
       </> : <>
         {result?.partnerContext && <p role="status">{t("partnerInvitePending")}</p>}
         <p>{t("onboardingIncomplete")}</p><h2>{t("onboardingTitle")}</h2><p>{t("onboardingDescription")}</p>
@@ -423,6 +466,9 @@ function Content() {
           <p><strong>{selectedBilling.location.organizationName}</strong> · {selectedBilling.location.name}</p>
           <p>{selectedBilling.plan.productName}</p>
           <p>{billingStatusText(selectedBilling.plan)}</p>
+          {!fakeCheckout && <section className="customer-billing-market-flow"><label>{t("billingMarketLabel")}<select value={marketChoices[selectedBilling.location.id] ?? selectedBilling.location.marketCode ?? ""} onChange={(event) => setMarketChoices((current) => ({ ...current, [selectedBilling.location.id]: event.target.value }))}><option value="">—</option>{billing?.supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}</select></label>{marketChoices[selectedBilling.location.id] && marketChoices[selectedBilling.location.id] !== selectedBilling.location.marketCode && <button type="button" className="customer-billing-secondary" disabled={billingBusy || marketSavingId === selectedBilling.location.id} onClick={() => void saveMarket(selectedBilling.location.id)}>{marketSavingId === selectedBilling.location.id ? t("billingCanceling") : t("billingMarketSave")}</button>}</section>}
+          {!fakeCheckout && !selectedBilling.location.marketCode && <p className="customer-billing-inline-help">{t("billingMarketMissing")}</p>}
+          {!fakeCheckout && selectedBilling.location.marketCode && selectedBilling.plan.routes.length === 0 && <p className="customer-billing-inline-help">{t("billingNoRoute")}</p>}
           {!fakeCheckout && selectedBilling.plan.routes.length === 1 && <p>{selectedBilling.plan.routes[0].providerName}</p>}
           {!fakeCheckout && selectedBilling.plan.routes.length > 1 && <label className="customer-billing-route">{t("billingChooseRoute")}<select value={selectedRouteId} onChange={(event) => setSelectedRouteId(event.target.value)}>
             {selectedBilling.plan.routes.map((route) => <option key={route.id} value={route.id}>{route.providerName}</option>)}
@@ -436,14 +482,13 @@ function Content() {
           </> : <>
             <p className="customer-billing-test-notice">{t("billingTestNotice")}</p>
             {selectedBilling.plan.status === "subscription" && selectedBilling.plan.subscriptionId && !selectedBilling.plan.subscriptionCanceled && <button type="button" className="customer-billing-secondary" disabled={billingBusy} onClick={() => void cancelSubscription(selectedBilling.plan.subscriptionId!)}>{billingBusy ? t("billingCanceling") : t("billingCancelSubscription")}</button>}
-            {selectedBilling.plan.status !== "subscription" && <button type="button" className="customer-auth-submit" disabled={billingBusy || !selectedRouteId || !selectedBilling.location.marketCode} onClick={() => void beginCheckout()}>{billingBusy ? t("billingLoading") : t("billingContinue")}</button>}
+            {selectedBilling.plan.status !== "subscription" && <button type="button" className="customer-auth-submit" disabled={billingBusy || !selectedRouteId || !selectedBilling.location.marketCode || selectedBilling.plan.routes.length === 0} onClick={() => void beginCheckout()}>{billingBusy ? t("billingLoading") : t("billingContinue")}</button>}
           </>}
           {billingError && <p role="alert" className="customer-onboarding-error">{billingError}</p>}
           {billingNotice && <p role="status" className="customer-billing-notice">{billingNotice}</p>}
           <button ref={billingCloseRef} type="button" className="customer-billing-secondary" disabled={billingBusy} onClick={() => { setSelectedBilling(null); setFakeCheckout(null); }}>{t("billingClose")}</button>
         </section>
       </div>}
-      <button className="customer-auth-submit customer-account-logout" onClick={logout}>{t("authLogout")}</button>
     </>}
   </section></main>;
 }

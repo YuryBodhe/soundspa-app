@@ -12,7 +12,10 @@ import {
 
 test("a persisted RU market is immediately treated as saved", () => {
   assert.equal(billingMarketSelectionState({ persistedMarket: "RU", selectedMarket: "", saving: false, error: "" }), "saved");
+  assert.equal(billingMarketSelectionState({ persistedMarket: "RU", selectedMarket: "RU", saving: false, error: "" }), "saved");
+  assert.equal(billingMarketSelectionState({ persistedMarket: "RU", selectedMarket: "VN", saving: false, error: "" }), "unsaved");
   assert.equal(canPreviewBillingLines([{ marketCode: "RU" }]), true);
+  assert.equal(canPreviewBillingLines([{ marketCode: "RU", selectedMarket: "VN" }]), false);
 });
 
 test("a missing market requires selection, save, and authoritative refresh before preview", async () => {
@@ -89,7 +92,7 @@ test("recovery UI reads Account history, resumes through the authorized checkout
   assert.match(source, /billingWizardRefreshStatus/);
   assert.match(source, /billingWizardStatusRefreshFailed/);
   assert.match(source, /billingOrdersContinue/);
-  assert.match(source, /billingPaidStarts/);
+  assert.match(source, /billingPurchasedPeriod/);
   assert.doesNotMatch(source, /localStorage|sessionStorage/);
 });
 

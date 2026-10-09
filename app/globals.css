@@ -365,6 +365,27 @@ input[type="button"]:active {
 .customer-account-location h3 { margin: 0; font-size: 16px; font-weight: 500; }
 .customer-account-location > p { margin: 4px 0 14px; color: rgba(245,240,230,.62); font-size: 13px; }
 .customer-account-location h4 { margin: 14px 0 8px; font-size: 14px; font-weight: 500; }
+.customer-account-header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 18px; }
+.customer-account-header > strong { flex: 1 1 220px; min-width: 0; color: rgba(245,240,230,.78); font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.customer-account-header .customer-auth-brand { margin-right: auto; }
+.customer-account-header button, .customer-account-header select { min-height: 40px; }
+.customer-account-location-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.customer-account-location-heading small { color: rgba(245,240,230,.55); font-size: 12px; }
+.customer-account-devices-details { margin-top: 14px; border-top: 1px solid rgba(245,240,230,.08); padding-top: 10px; }
+.customer-account-devices-details > summary { min-height: 36px; color: rgba(245,240,230,.78); cursor: pointer; }
+.customer-account-partner-benefits { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(245,240,230,.08); }
+.customer-account-partner-benefits h4 { margin: 0 0 6px !important; }
+.customer-account-partner-benefits ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.customer-account-partner-benefits li, .customer-account-partner-benefits li > span { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.customer-account-partner-benefits li > span { justify-content: flex-start; }
+.customer-account-partner-benefits li strong { font-size: 13px; font-weight: 500; }
+.customer-account-partner-benefits li small { color: rgba(245,240,230,.62); font-size: 12px; }
+.customer-billing-plan-info { display: grid; gap: 4px; min-width: 0; }
+.customer-billing-access-status { color: #e4d3a6; font-size: 13px; }
+.customer-billing-plan-info small { color: rgba(245,240,230,.68); font-size: 12px; }
+.customer-billing-market-flow { display: grid; gap: 8px; }
+.customer-billing-market-flow label { display: grid; gap: 7px; }
+.customer-billing-market-flow select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; color: #f5f0e6; background: #111115; font: inherit; }
 .customer-account-location form { margin-top: 14px; }
 .customer-account-location form label { display: grid; gap: 7px; margin: 12px 0; color: rgba(245,240,230,.78); }
 .customer-account-location form input { min-width: 0; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; background: #111115; color: #f5f0e6; font: inherit; }
@@ -398,10 +419,13 @@ input[type="button"]:active {
 .customer-billing-test-notice { padding: 11px 12px; border: 1px solid rgba(195,168,108,.34); border-radius: 8px; color: #e4d3a6 !important; background: rgba(195,168,108,.08); font-size: 13px; }
 .customer-billing-secondary { min-height: 44px; padding: 9px 14px; border: 1px solid rgba(195,168,108,.42); border-radius: 8px; color: #d5bd84; background: transparent; font: inherit; cursor: pointer; }
 .customer-billing-secondary:disabled { opacity: .55; cursor: wait; }
-.customer-billing-wizard-open { min-height: 44px; margin: 8px 0 14px; }
+.customer-billing-wizard-open { min-height: 40px; margin: 0 0 12px; }
 .customer-billing-orders { margin: 10px 0 14px; padding: 14px; border: 1px solid rgba(245,240,230,.1); border-radius: 10px; background: rgba(245,240,230,.025); }
+.customer-billing-orders > summary { display: flex; align-items: center; justify-content: space-between; min-height: 40px; color: rgba(245,240,230,.86); cursor: pointer; }
+.customer-billing-orders > summary span { color: rgba(245,240,230,.58); font-size: 12px; }
+.customer-billing-orders-content { padding-top: 8px; }
 .customer-billing-orders-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.customer-billing-orders-heading h3 { margin: 0; }
+.customer-billing-orders-heading > span { font-size: 14px; }
 .customer-billing-orders-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
 .customer-billing-orders-list > li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid rgba(245,240,230,.08); }
 .customer-billing-orders-list > li > div { display: grid; gap: 4px; min-width: 0; }
@@ -450,6 +474,11 @@ input[type="button"]:active {
 .customer-billing-wizard-link-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .customer-billing-wizard-link-actions > a, .customer-billing-wizard-link-actions > button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid rgba(195,168,108,.45); border-radius: 8px; text-decoration: none; }
 @media (max-width: 520px) {
+  .customer-account-header { align-items: stretch; }
+  .customer-account-header > strong { order: 3; flex-basis: 100%; }
+  .customer-account-header .customer-auth-brand { margin-right: auto; }
+  .customer-account-header button { flex: 1 1 auto; }
+  .customer-account-partner-benefits li { align-items: flex-start; flex-direction: column; gap: 2px; }
   .customer-billing-wizard-dialog { position: fixed; inset: auto 0 0; width: 100%; max-width: none; max-height: 92dvh; margin: 0; padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
   .customer-billing-wizard-steps { gap: 5px; }
   .customer-billing-wizard-steps li { display: grid; justify-items: center; gap: 5px; text-align: center; font-size: 11px; }
