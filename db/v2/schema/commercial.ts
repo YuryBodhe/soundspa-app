@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, check, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { commercialOfferGrantType, commercialProductKind, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
 import { organizations } from "./core/organizations";
 import { users } from "./core/users";
@@ -22,6 +22,33 @@ export const commercialProducts = pgTable("commercial_products", {
   check("commercial_products_price_pair", sql`(${table.priceMinor} IS NULL AND ${table.currency} IS NULL) OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL AND length(btrim(${table.currency})) = 3)`),
   check("commercial_products_interval_positive", sql`${table.billingIntervalMonths} IS NULL OR ${table.billingIntervalMonths} > 0`),
   uniqueIndex("commercial_products_code_unique").on(table.code),
+]);
+
+export type BillingResetAffectedRecords = {
+  subscriptions: string[];
+  trials: string[];
+  ordersCanceled: string[];
+  paymentsCanceled: string[];
+  legacyLocationAccess: { trialEndsAt: string | null; paidThrough: string | null } | null;
+};
+
+/** Durable operator audit record for a staging billing reset. */
+export const commercialBillingResets = pgTable("commercial_billing_resets", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  locationId: uuid("location_id").notNull().references(() => locations.id, { onDelete: "restrict" }),
+  productIds: uuid("product_ids").array().notNull(),
+  operator: text("operator").notNull(),
+  reason: text("reason").notNull(),
+  trialDurationDays: integer("trial_duration_days").notNull(),
+  affectedRecords: jsonb("affected_records").$type<BillingResetAffectedRecords>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("commercial_billing_resets_location_created_idx").on(table.locationId, table.createdAt),
+  check("commercial_billing_resets_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
+  check("commercial_billing_resets_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 12 AND 500`),
+  check("commercial_billing_resets_trial_duration", sql`${table.trialDurationDays} BETWEEN 1 AND 365`),
+  check("commercial_billing_resets_products_nonempty", sql`cardinality(${table.productIds}) > 0`),
 ]);
 
 export const commercialProductChannels = pgTable("commercial_product_channels", {
@@ -83,8 +110,10 @@ export const locationCoreTrials = pgTable("location_core_trials", {
   endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  invalidatedByResetId: uuid("invalidated_by_reset_id").references(() => commercialBillingResets.id, { onDelete: "restrict" }),
 }, (table) => [
-  uniqueIndex("location_core_trials_location_product_unique").on(table.locationId, table.productId),
+  uniqueIndex("location_core_trials_location_product_unique").on(table.locationId, table.productId).where(sql`${table.invalidatedByResetId} IS NULL`),
+  index("location_core_trials_reset_idx").on(table.invalidatedByResetId),
   foreignKey({ name: "location_core_trials_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
   foreignKey({ name: "location_core_trials_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
   check("location_core_trials_window", sql`${table.endsAt} > ${table.startsAt}`),
@@ -109,6 +138,7 @@ export const locationSubscriptions = pgTable("location_subscriptions", {
   currency: text("currency"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  invalidatedByResetId: uuid("invalidated_by_reset_id").references(() => commercialBillingResets.id, { onDelete: "restrict" }),
 }, (table) => [
   uniqueIndex("location_subscriptions_provider_ref_unique").on(table.provider, table.providerSubscriptionRef),
   foreignKey({ name: "location_subscriptions_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
@@ -116,6 +146,7 @@ export const locationSubscriptions = pgTable("location_subscriptions", {
   check("location_subscriptions_price_pair", sql`(${table.priceMinor} IS NULL AND ${table.currency} IS NULL) OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL AND length(btrim(${table.currency})) = 3)`),
   check("location_subscriptions_period_after_start", sql`${table.currentPeriodEndsAt} IS NULL OR ${table.currentPeriodEndsAt} > ${table.startsAt}`),
   check("location_subscriptions_billing_anchor_pair", sql`(${table.billingAnchorDay} IS NULL AND ${table.billingAnchorIsEndOfMonth} IS NULL) OR (${table.billingAnchorDay} BETWEEN 1 AND 31 AND ${table.billingAnchorIsEndOfMonth} IS NOT NULL)`),
+  index("location_subscriptions_reset_idx").on(table.invalidatedByResetId),
 ]);
 
 export const commercialOrganizationPayerReference = pgTable("commercial_organization_payer_references", {

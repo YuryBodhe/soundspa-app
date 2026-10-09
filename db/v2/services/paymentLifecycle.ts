@@ -122,6 +122,7 @@ export async function settleTrustedProviderPayment(event: TrustedProviderPayment
       [subscription] = await tx.select().from(locationSubscriptions).where(and(
         eq(locationSubscriptions.provider, event.providerCode),
         eq(locationSubscriptions.providerSubscriptionRef, event.externalSubscriptionRef),
+        isNull(locationSubscriptions.invalidatedByResetId),
       )).limit(1).for("update");
     }
     const requestedSubscriptionId = event.subscriptionId ?? existingPayment?.subscriptionId ?? null;
@@ -131,6 +132,7 @@ export async function settleTrustedProviderPayment(event: TrustedProviderPayment
         eq(locationSubscriptions.provider, event.providerCode),
         eq(locationSubscriptions.locationId, event.locationId),
         eq(locationSubscriptions.productId, event.productId),
+        isNull(locationSubscriptions.invalidatedByResetId),
       )).limit(1).for("update");
       if (!requested || (subscription && requested.id !== subscription.id) ||
           (requested.providerSubscriptionRef && requested.providerSubscriptionRef !== event.externalSubscriptionRef)) {
@@ -314,10 +316,11 @@ export async function settleTrustedBillingOrderPayment(
       const subscriptions = await tx.select().from(locationSubscriptions).where(and(
         eq(locationSubscriptions.locationId, line.locationId),
         eq(locationSubscriptions.productId, line.productId),
+        isNull(locationSubscriptions.invalidatedByResetId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
       const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId))).limit(1);
+        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
       let period;
       try {
         period = planNextSubscriptionPeriod({

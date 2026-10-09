@@ -73,7 +73,7 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
     const cards = [];
     for (const product of products) {
       const [trial] = await db.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, location.id), eq(locationCoreTrials.productId, product.id))).limit(1);
+        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, location.id), eq(locationCoreTrials.productId, product.id), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
       const subscriptions = await db.select({
         id: locationSubscriptions.id,
         status: locationSubscriptions.status,
@@ -82,7 +82,7 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         canceledAt: locationSubscriptions.canceledAt,
         provider: locationSubscriptions.provider,
         providerSubscriptionRef: locationSubscriptions.providerSubscriptionRef,
-      }).from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, location.id), eq(locationSubscriptions.productId, product.id)))
+      }).from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, location.id), eq(locationSubscriptions.productId, product.id), isNull(locationSubscriptions.invalidatedByResetId)))
         .orderBy(desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id));
       const subscription = subscriptions.find((candidate) => resolveCustomerBillingStatus({ subscription: candidate }, now) === "subscription") ??
         subscriptions.find((candidate) => (candidate.status === "active" || candidate.status === "canceled") &&

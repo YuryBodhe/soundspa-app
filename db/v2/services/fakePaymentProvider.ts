@@ -129,6 +129,7 @@ export async function createFakeProviderCheckout(input: {
         eq(locationSubscriptions.locationId, input.locationId),
         eq(locationSubscriptions.productId, input.productId),
         eq(locationSubscriptions.provider, FAKE_PROVIDER_CODE),
+        isNull(locationSubscriptions.invalidatedByResetId),
       )).orderBy(desc(locationSubscriptions.createdAt)).limit(1).for("update");
     const identity = randomUUID();
     const paymentKey = `fake-checkout:${identity}`;
@@ -232,6 +233,7 @@ export async function confirmFakeProviderCheckout(input: {
           eq(locationSubscriptions.locationId, payment.locationId),
           eq(locationSubscriptions.productId, payment.productId),
           eq(locationSubscriptions.provider, FAKE_PROVIDER_CODE),
+          isNull(locationSubscriptions.invalidatedByResetId),
         )).limit(1).for("update")
       : [];
     const result = await settleTrustedProviderPayment({

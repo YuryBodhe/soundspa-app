@@ -153,7 +153,7 @@ async function claimPartnerInviteWithLookup(
       }
 
       const [existingTrial] = await tx.select().from(locationCoreTrials)
-        .where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, product.id)));
+        .where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, product.id), isNull(locationCoreTrials.invalidatedByResetId)));
       if (existingTrial) {
         const active = existingTrial.status === "active" && existingTrial.startsAt <= now && existingTrial.endsAt > now;
         trials.push({ productId: product.id, result: active ? "skipped_active" : "skipped_already_used" });
@@ -166,6 +166,7 @@ async function claimPartnerInviteWithLookup(
         .where(and(
           eq(locationSubscriptions.locationId, locationId),
           eq(locationSubscriptions.productId, product.id),
+          isNull(locationSubscriptions.invalidatedByResetId),
           or(eq(locationSubscriptions.status, "active"), eq(locationSubscriptions.status, "canceled")),
           lte(locationSubscriptions.startsAt, now),
           or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now)),

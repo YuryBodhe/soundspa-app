@@ -20,12 +20,12 @@ export async function resolveCommercialProductAccess(locationId: string, now: Da
       .from(locationCoreTrials)
       .innerJoin(commercialProducts, and(eq(commercialProducts.id, locationCoreTrials.productId), eq(commercialProducts.isActive, true)))
       .innerJoin(commercialProductChannels, eq(commercialProductChannels.productId, commercialProducts.id))
-      .where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.status, "active"), lte(locationCoreTrials.startsAt, now), gt(locationCoreTrials.endsAt, now)));
+      .where(and(eq(locationCoreTrials.locationId, locationId), isNull(locationCoreTrials.invalidatedByResetId), eq(locationCoreTrials.status, "active"), lte(locationCoreTrials.startsAt, now), gt(locationCoreTrials.endsAt, now)));
   const subscriptions = await db.select({ channelId: commercialProductChannels.channelId })
       .from(locationSubscriptions)
       .innerJoin(commercialProducts, and(eq(commercialProducts.id, locationSubscriptions.productId), eq(commercialProducts.isActive, true)))
       .innerJoin(commercialProductChannels, eq(commercialProductChannels.productId, commercialProducts.id))
-      .where(and(eq(locationSubscriptions.locationId, locationId), or(eq(locationSubscriptions.status, "active"), eq(locationSubscriptions.status, "canceled")), lte(locationSubscriptions.startsAt, now), or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now))));
+      .where(and(eq(locationSubscriptions.locationId, locationId), isNull(locationSubscriptions.invalidatedByResetId), or(eq(locationSubscriptions.status, "active"), eq(locationSubscriptions.status, "canceled")), lte(locationSubscriptions.startsAt, now), or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now))));
   const benefits = await db.select({ channelId: commercialProductChannels.channelId })
       .from(commercialPartnerBenefits)
       .innerJoin(commercialPartners, and(eq(commercialPartners.id, commercialPartnerBenefits.partnerId), eq(commercialPartners.isActive, true)))

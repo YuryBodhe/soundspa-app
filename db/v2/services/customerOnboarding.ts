@@ -46,7 +46,7 @@ async function loadExistingOnboarding(tx: V2Transaction, userId: string): Promis
   if (!location) throw new Error("Customer membership exists without a Location.");
   const [trialRow] = await tx.select({ trial: locationCoreTrials })
     .from(locationCoreTrials).innerJoin(commercialProducts, eq(commercialProducts.id, locationCoreTrials.productId))
-    .where(and(eq(locationCoreTrials.locationId, location.id), eq(commercialProducts.code, SOUNDSPA_PRODUCT_CODE))).limit(1);
+    .where(and(eq(locationCoreTrials.locationId, location.id), isNull(locationCoreTrials.invalidatedByResetId), eq(commercialProducts.code, SOUNDSPA_PRODUCT_CODE))).limit(1);
   return {
     email: membership.user.email,
     emailVerifiedAt: membership.user.emailVerifiedAt!,

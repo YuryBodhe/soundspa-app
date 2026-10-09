@@ -137,12 +137,13 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
     .where(and(
       eq(locationSubscriptions.locationId, locationId),
       eq(locationSubscriptions.productId, productId),
+      isNull(locationSubscriptions.invalidatedByResetId),
       inArray(locationSubscriptions.status, ["active", "canceled"]),
     ))
     .orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id))
     .for(lockForOrder ? "update" : "share");
   const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-    .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, productId))).limit(1);
+    .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
   try {
     return planNextSubscriptionPeriod({
       now,

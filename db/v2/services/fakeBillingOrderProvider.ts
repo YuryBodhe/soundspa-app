@@ -273,10 +273,11 @@ export async function createFakeProviderBillingOrderCheckout(input: {
       }).from(locationSubscriptions).where(and(
         eq(locationSubscriptions.locationId, line.locationId),
         eq(locationSubscriptions.productId, line.productId),
+        isNull(locationSubscriptions.invalidatedByResetId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
       const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId))).limit(1);
+        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
       const period = planNextSubscriptionPeriod({
         now, durationMonths: line.durationMonths,
         subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
