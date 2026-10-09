@@ -95,7 +95,10 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(account, /<details className="customer-account-location-details">/);
   assert.match(account, /customer-account-device-disclosure/);
   assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
-  assert.match(account, /overview\.activeProductCount === 1 \? overview\.products\.find/);
+  assert.match(account, /locationPlanSummary\(plan, overview\.activeProductCount > 1\)/);
+  assert.match(account, /plan\.status === "trial" && plan\.trialEndsAt \? trialSummaryText\(plan\)/);
+  assert.match(account, /plan\.status !== "partner" && billingLocation\.partnerBenefits/);
+  assert.match(account, /plan\.accessExpiresAt && !\(plan\.status === "trial" && plan\.trialEndsAt\)/);
   assert.doesNotMatch(account, /customer-account-location-details" open/);
   assert.doesNotMatch(account, /customer-account-device-disclosure" open/);
   assert.doesNotMatch(account, /accountMultipleAccessStates/);
@@ -107,6 +110,8 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(css, /customer-account-locations \{ display: grid/);
   assert.match(css, /customer-account-location-summary:focus-visible/);
   assert.match(css, /customer-account-product-row/);
+  assert.match(css, /background: var\(--accent\)/);
+  assert.match(css, /customer-billing-wizard-check \{\s*display: grid;\s*grid-template-columns: 21px/);
   assert.match(css, /@media \(max-width: 520px\)/);
   assert.match(css, /@media \(max-width: 600px\)/);
   assert.doesNotMatch(account, /billingLocation\.partnerBenefits\.map/);

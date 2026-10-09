@@ -599,3 +599,41 @@ input[type="button"]:active {
 @media (prefers-reduced-motion: reduce) {
   .customer-account-chevron, .customer-account-bottom-disclosure > summary::after { transition: none; }
 }
+
+/* Final compact Account polish */
+.customer-account-shell .customer-billing-wizard-open {
+  color: #101010;
+  background: var(--accent);
+  cursor: pointer;
+}
+.customer-account-shell .customer-billing-wizard-open:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+}
+.customer-account-shell .customer-billing-wizard-open:focus-visible {
+  outline: 2px solid #f3e6c6;
+  outline-offset: 3px;
+}
+.customer-account-shell .customer-billing-wizard-open:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.customer-billing-wizard-check {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 11px;
+}
+.customer-billing-wizard-check input {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  margin: 2px 0 0;
+}
+.customer-billing-wizard-check > span {
+  grid-column: 2;
+  grid-row: 1;
+}
+.customer-billing-wizard-check input:focus-visible {
+  outline: 2px solid #d5bd84;
+  outline-offset: 3px;
+}

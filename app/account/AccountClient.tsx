@@ -38,6 +38,7 @@ type BillingPlan = {
   scheduledPaidPeriods: { startsAt: string; endsAt: string }[]; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
 };
+type AccountDisplayPlan = BillingPlan & { trialRemainingDays: number | null; accessExpiresAt: string | null };
 type PartnerBenefit = { id: string; partnerName: string; productId: string; productName: string; startsAt: string; endsAt: string | null };
 type BillingLocation = {
   id: string; organizationId: string; organizationName: string; name: string; timezone: string;
@@ -379,6 +380,17 @@ function Content() {
     return [statusText, activeTrialText, futurePaidPeriodText(plan)].filter(Boolean).join(" · ");
   };
   const trialRemainingText = (days: number) => t(days === 0 ? "trialLessThanDay" : trialDaysMessageKey(locale, days)).replace("{{days}}", String(days));
+  const trialSummaryText = (plan: AccountDisplayPlan) => plan.trialEndsAt
+    ? `${t("accountTrialUntil").replace("{{date}}", displayDate(plan.trialEndsAt))}${plan.trialActive && plan.trialRemainingDays !== null ? ` · ${trialRemainingText(plan.trialRemainingDays)}` : ""}`
+    : t("billingTrial");
+  const locationPlanSummary = (plan: AccountDisplayPlan, includeProductName: boolean) => {
+    const prefix = includeProductName ? `${plan.productName}: ` : "";
+    const summary: string[] = [];
+    if (plan.trialActive || plan.status === "trial") summary.push(`${prefix}${trialSummaryText(plan)}`);
+    if (plan.status === "subscription" && plan.paidThrough) summary.push(`${prefix}${t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough))}`);
+    if (plan.status === "partner") summary.push(`${prefix}${plan.accessExpiresAt ? `${t("billingPartnerStatus")} · ${t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}` : t("billingPartnerStatus")}`);
+    return summary;
+  };
   const planStatusKey = (plan: Pick<BillingPlan, "status" | "subscriptionCanceled">) => plan.status === "trial" ? "billingTrial"
     : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription")
       : plan.status === "partner" ? "billingPartnerStatus"
@@ -421,8 +433,7 @@ function Content() {
               <div className="customer-account-location-summary"><span className="customer-account-location-name">{location.name}</span></div>
             </section>;
             const overview = accountLocationPresentation(billingLocation.products, billingLocation.partnerBenefits);
-            const trialPlan = overview.activeProductCount === 1 ? overview.products.find((plan) => plan.trialActive && plan.trialEndsAt) : null;
-            const onlyActivePlan = overview.activeProducts.length === 1 ? overview.activeProducts[0] : null;
+            const locationSummary = overview.activeProducts.flatMap((plan) => locationPlanSummary(plan, overview.activeProductCount > 1));
             const orphanBenefits = billingLocation.partnerBenefits.filter((benefit) =>
               !billingLocation.products.some((plan) => plan.productId === benefit.productId),
             );
@@ -433,14 +444,14 @@ function Content() {
                   <span className="customer-account-location-name">{location.name}</span>
                   <span className={`customer-account-access-pill${overview.activeProductCount > 0 ? " is-active" : ""}`}>{t(displayedStatus)}</span>
                   <span className="customer-account-location-meta">
-                    {trialPlan ? <><span>{t("accountTrialUntil").replace("{{date}}", displayDate(trialPlan.trialEndsAt!))}</span><small>{trialRemainingText(trialPlan.trialRemainingDays ?? 0)}</small></> : onlyActivePlan?.status === "subscription" && onlyActivePlan.paidThrough ? <span>{t("billingPaidThrough").replace("{{date}}", displayDate(onlyActivePlan.paidThrough))}</span> : overview.activeProductCount === 1 && onlyActivePlan?.accessExpiresAt ? <span>{t("billingAccessExpires").replace("{{date}}", displayDate(onlyActivePlan.accessExpiresAt))}</span> : null}
+                    {locationSummary.map((summary, index) => <span key={`${location.id}-summary-${index}`}>{summary}</span>)}
                   </span>
                   <span className="customer-account-chevron" aria-hidden="true" />
                 </summary>
                 <div className="customer-account-product-details">
                   {overview.products.map((plan) => <article className="customer-account-product-row" key={plan.productId}>
-                    <div><strong>{plan.productName}</strong><span>{t(planStatusKey(plan) as TranslationKey)}</span></div>
-                    <div>{plan.trialActive && plan.trialEndsAt ? <small>{t("accountTrialUntil").replace("{{date}}", displayDate(plan.trialEndsAt))} · {trialRemainingText(plan.trialRemainingDays ?? 0)}</small> : null}{plan.accessExpiresAt ? <small>{plan.status === "subscription" ? t("billingPaidThrough").replace("{{date}}", displayDate(plan.accessExpiresAt)) : t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}</small> : null}{billingLocation.partnerBenefits.filter((benefit) => benefit.productId === plan.productId).map((benefit) => <small key={benefit.id}>{benefit.partnerName}</small>)}{plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}{plan.status === "subscription" && plan.subscriptionId && !plan.subscriptionCanceled && <button type="button" className="customer-billing-secondary customer-account-cancel-renewal" onClick={() => openBilling(billingLocation, plan)}>{t("billingCancelSubscription")}</button>}</div>
+                    <div><strong>{plan.productName}</strong><span>{plan.status === "trial" && plan.trialEndsAt ? trialSummaryText(plan) : t(planStatusKey(plan) as TranslationKey)}</span></div>
+                    <div>{plan.status !== "trial" && plan.trialActive && plan.trialEndsAt ? <small>{trialSummaryText(plan)}</small> : null}{plan.accessExpiresAt && !(plan.status === "trial" && plan.trialEndsAt) ? <small>{plan.status === "subscription" ? t("billingPaidThrough").replace("{{date}}", displayDate(plan.accessExpiresAt)) : t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}</small> : null}{plan.status !== "partner" && billingLocation.partnerBenefits.filter((benefit) => benefit.productId === plan.productId).map((benefit) => <small key={benefit.id}>{benefit.partnerName}</small>)}{plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}{plan.status === "subscription" && plan.subscriptionId && !plan.subscriptionCanceled && <button type="button" className="customer-billing-secondary customer-account-cancel-renewal" onClick={() => openBilling(billingLocation, plan)}>{t("billingCancelSubscription")}</button>}</div>
                   </article>)}
                   {orphanBenefits.map((benefit) => <article className="customer-account-product-row" key={benefit.id}><div><strong>{benefit.productName}</strong><span>{benefit.partnerName} · {t("billingPartnerStatus")}</span></div><div>{benefit.endsAt ? <small>{t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt))}</small> : <small>{t("partnerAccessActive")}</small>}</div></article>)}
                 </div>
