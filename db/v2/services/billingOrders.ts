@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { FAKE_PROVIDER_CODE, fakeProviderIsConfigured, type FakeProviderEnvironment } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
@@ -7,13 +7,14 @@ import {
   commercialPaymentProviders,
   commercialPaymentRoutes,
   commercialProducts,
+  locationCoreTrials,
   locationSubscriptions,
   locations,
   organizations,
   users,
 } from "../schema";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
-import { billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
+import { planNextSubscriptionPeriod } from "./billingCalendar";
 import {
   BillingOrderModelError,
   fakeStagingBillingPricingAdapter,
@@ -125,6 +126,7 @@ async function loadLocationQuotes(input: {
 async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId: string, durationMonths: number, now: Date, lockForOrder: boolean) {
   const subscriptions = await tx.select({
     id: locationSubscriptions.id,
+    status: locationSubscriptions.status,
     startsAt: locationSubscriptions.startsAt,
     currentPeriodEndsAt: locationSubscriptions.currentPeriodEndsAt,
     billingAnchorDay: locationSubscriptions.billingAnchorDay,
@@ -134,28 +136,21 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
       eq(locationSubscriptions.locationId, locationId),
       eq(locationSubscriptions.productId, productId),
       inArray(locationSubscriptions.status, ["active", "canceled"]),
-      lte(locationSubscriptions.startsAt, now),
-      or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now)),
     ))
     .orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id))
     .for(lockForOrder ? "update" : "share");
-
-  const existing = subscriptions[0];
-  if (existing?.currentPeriodEndsAt === null) throw new BillingOrderError("unbounded_subscription_requires_policy");
-  const anchor = existing && existing.billingAnchorDay !== null && existing.billingAnchorIsEndOfMonth !== null
-    ? { dayOfMonth: existing.billingAnchorDay, isEndOfMonth: existing.billingAnchorIsEndOfMonth }
-    : existing ? billingAnchorForDate(existing.startsAt) : null;
+  const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
+    .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, productId))).limit(1);
   try {
-    const period = planBillingCalendarPeriod({
+    return planNextSubscriptionPeriod({
       now,
       durationMonths,
-      existingPeriod: existing ? {
-        startsAt: existing.startsAt,
-        endsAt: existing.currentPeriodEndsAt,
-        anchor,
-      } : null,
+      subscriptions: subscriptions.map((row) => ({
+        id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
+        billingAnchorDay: row.billingAnchorDay, billingAnchorIsEndOfMonth: row.billingAnchorIsEndOfMonth,
+      })),
+      trial,
     });
-    return { ...period, subscriptionId: existing?.id ?? null };
   } catch (error) {
     if (error instanceof RangeError && error.message === "unbounded_subscription_requires_policy") {
       throw new BillingOrderError("unbounded_subscription_requires_policy");

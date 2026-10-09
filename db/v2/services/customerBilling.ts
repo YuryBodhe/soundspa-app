@@ -84,7 +84,10 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         providerSubscriptionRef: locationSubscriptions.providerSubscriptionRef,
       }).from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, location.id), eq(locationSubscriptions.productId, product.id)))
         .orderBy(desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id));
-      const subscription = subscriptions.find((candidate) => resolveCustomerBillingStatus({ subscription: candidate }, now) === "subscription") ?? subscriptions[0] ?? null;
+      const subscription = subscriptions.find((candidate) => resolveCustomerBillingStatus({ subscription: candidate }, now) === "subscription") ??
+        subscriptions.find((candidate) => (candidate.status === "active" || candidate.status === "canceled") &&
+          candidate.startsAt > now && candidate.currentPeriodEndsAt !== null && candidate.currentPeriodEndsAt > candidate.startsAt) ??
+        subscriptions[0] ?? null;
       const benefits = await db.select({ startsAt: commercialPartnerBenefits.startsAt, endsAt: commercialPartnerBenefits.endsAt })
         .from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, location.id), eq(commercialPartnerBenefits.productId, product.id))).orderBy(desc(commercialPartnerBenefits.startsAt));
       const benefit = benefits.find((candidate) => resolveCustomerBillingStatus({ partnerBenefit: candidate }, now) === "partner") ?? benefits[0] ?? null;
@@ -98,7 +101,13 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         productName: product.name,
         status,
         trialEndsAt: trial?.endsAt.toISOString() ?? null,
+        paidStartsAt: subscription?.startsAt.toISOString() ?? null,
         paidThrough: subscription?.currentPeriodEndsAt?.toISOString() ?? null,
+        trialActive: Boolean(trial?.status === "active" && trial.startsAt <= now && trial.endsAt > now),
+        scheduledPaidPeriods: subscriptions.filter((candidate) =>
+          (candidate.status === "active" || candidate.status === "canceled") && candidate.startsAt > now &&
+          candidate.currentPeriodEndsAt !== null && candidate.currentPeriodEndsAt > candidate.startsAt,
+        ).map((candidate) => ({ startsAt: candidate.startsAt.toISOString(), endsAt: candidate.currentPeriodEndsAt!.toISOString() })),
         // A null provider reference represents prepaid coverage; it must not
         // be presented as a cancellable recurring renewal in the Account UI.
         subscriptionId: status === "subscription" && subscription?.provider === FAKE_PROVIDER_CODE && subscription.providerSubscriptionRef ? subscription.id : null,

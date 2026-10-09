@@ -25,7 +25,7 @@ async function main() {
   process.env.V2_PUBLIC_ORIGIN = "https://test.soundspa.bodhemusic.com";
   process.env.V2_FAKE_PROVIDER_SECRET = "rollback-only-billing-order-test-secret-32-bytes";
 
-  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle] = await Promise.all([
+  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle, paymentLifecycle, billingOrderModel] = await Promise.all([
     import("../../db/v2/client"),
     import("../../db/v2/schema"),
     import("../../db/v2/services/billingOrders"),
@@ -35,6 +35,8 @@ async function main() {
     import("../../db/v2/services/fakePaymentProvider"),
     import("../../db/v2/services/billingOrderRead"),
     import("../../db/v2/services/billingOrderLifecycle"),
+    import("../../db/v2/services/paymentLifecycle"),
+    import("../../db/v2/services/billingOrderModel"),
   ]);
   const assertAggregateError = async (operation: Promise<unknown>, code: string) => {
     await assert.rejects(operation, (error: unknown) => error instanceof aggregateFake.FakeBillingOrderError && error.code === code);
@@ -49,11 +51,11 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole === "soundspa_v2" || dbIdentity.role !== expectedLocalRole ||
-        Number(dbIdentity.migrationCount) !== 17 || dbIdentity.latestMigration !== "1791461497519") {
-      throw new Error("Database is not the expected disposable local database at Gate 6.3C.1 migration 0016.");
+        Number(dbIdentity.migrationCount) !== 18 || dbIdentity.latestMigration !== "1791526957000") {
+      throw new Error("Database is not the expected disposable local database at Gate 6.3I migration 0017.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     if (baseline.rows[0]?.count !== "0") throw new Error("Disposable integration database must contain no customer or commercial fixtures before the test.");
 
@@ -128,10 +130,17 @@ async function main() {
           startsAt: new Date("2026-09-01T10:00:00.000Z"),
           currentPeriodEndsAt: null,
         });
+        const [trialLocationTrial] = await tx.insert(schema.locationCoreTrials).values({
+          locationId: locations[1].id, productId: products[0].id, status: "active",
+          startsAt: new Date("2026-10-01T10:00:00.000Z"), endsAt: new Date("2026-11-08T10:00:00.000Z"),
+        }).returning();
 
         const beforeSubscriptions = await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions);
         const beforeTrials = await tx.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials);
         const beforeBenefits = await tx.select({ id: schema.commercialPartnerBenefits.id }).from(schema.commercialPartnerBenefits);
+        const beforeAdminGrants = await tx.select({ id: schema.locationChannelGrants.id, enabled: schema.locationChannelGrants.enabled,
+          startsAt: schema.locationChannelGrants.startsAt, endsAt: schema.locationChannelGrants.endsAt, updatedAt: schema.locationChannelGrants.updatedAt,
+        }).from(schema.locationChannelGrants);
         const input = {
           authenticatedUserId: owner.id,
           organizationId: organization.id,
@@ -244,8 +253,8 @@ async function main() {
         assert.equal(order.lines[0].subscriptionId, existingSubscription.id);
         assert.equal(order.lines[0].billingPeriodStartsAt, "2026-10-31T10:00:00.000Z");
         assert.equal(order.lines[0].billingPeriodEndsAt, "2026-11-30T10:00:00.000Z");
-        assert.equal(order.lines[1].billingPeriodStartsAt, now.toISOString());
-        assert.equal(order.lines[1].billingPeriodEndsAt, "2026-12-08T10:00:00.000Z");
+        assert.equal(order.lines[1].billingPeriodStartsAt, trialLocationTrial.endsAt.toISOString(), "trial-covered time is not consumed by the purchase");
+        assert.equal(order.lines[1].billingPeriodEndsAt, "2027-01-08T10:00:00.000Z", "the full two-month duration starts at trial end");
         assertionCount += 8;
 
         const persistedLines = await tx.select().from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, order.id));
@@ -394,6 +403,14 @@ async function main() {
         }, new Date(now.getTime() + 2000), tx), (error: unknown) => error instanceof singleFake.FakeProviderError && error.code === "checkout_pending",
         "single-Location checkout cannot overlap an active prepaid reservation");
 
+        // A separate paid period is recorded after checkout is frozen. Final
+        // settlement must move this purchase behind it without losing months.
+        await tx.insert(schema.locationSubscriptions).values({
+          locationId: locations[1].id, productId: products[0].id, provider: provider.code,
+          status: "active", startsAt: new Date("2026-11-08T10:00:00.000Z"), currentPeriodEndsAt: new Date("2026-12-08T10:00:00.000Z"),
+          billingAnchorDay: 8, billingAnchorIsEndOfMonth: false,
+        });
+
         const confirmationAt = new Date(now.getTime() + 3000);
         const settledAggregate = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: aggregateCheckout.confirmationToken,
@@ -423,17 +440,25 @@ async function main() {
         assert.equal(paidLines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)), BigInt(1_728_000));
         const paidByLocation = new Map(paidLines.map((line) => [line.locationId, line]));
         assert.equal(paidByLocation.get(locations[0].id)?.periodEnd?.toISOString(), "2026-11-30T10:00:00.000Z", "existing month-end anchor is retained");
-        assert.equal(paidByLocation.get(locations[1].id)?.periodEnd?.toISOString(), "2027-01-08T10:00:03.000Z", "three months follow the second Location's calendar anchor");
+        assert.equal(paidByLocation.get(locations[1].id)?.startsAt.toISOString(), "2026-11-08T10:00:00.000Z", "paid coverage starts when the trial ends");
+        assert.equal(paidByLocation.get(locations[1].id)?.periodEnd?.toISOString(), "2027-03-08T10:00:00.000Z", "the existing period added after checkout is followed by the full purchased duration");
         assert.equal(paidByLocation.get(locations[2].id)?.periodEnd?.toISOString(), "2027-10-08T10:00:03.000Z", "twelve months follow the third Location's calendar anchor");
         assert.ok(paidLines.every((line) => line.providerRef === null), "prepaid lines do not create a renewal provider reference");
         const paidOrderView = await customerBilling.listCustomerBilling(owner.id, confirmationAt, tx);
         assert.equal(paidOrderView.locations.find((location) => location.id === locations[1].id)?.products.find((product) => product.productId === products[0].id)?.subscriptionId, null,
           "prepaid coverage does not expose a Cancel renewal action");
+        assert.equal(paidOrderView.locations.find((location) => location.id === locations[1].id)?.products.find((product) => product.productId === products[0].id)?.paidStartsAt, "2026-11-08T10:00:00.000Z",
+          "Account exposes the paid start date alongside the still-active trial");
         const [paidOrder] = await tx.select({ status: schema.commercialBillingOrders.status }).from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, prepaidOrder.id));
         const [paidPayment] = await tx.select({ status: schema.commercialPayments.status }).from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
         assert.equal(paidOrder.status, "paid");
         assert.equal(paidPayment.status, "succeeded");
-        assert.equal((await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id }, confirmationAt, tx)).status, "paid");
+        const settledOrderView = await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id }, confirmationAt, tx);
+        assert.equal(settledOrderView.status, "paid");
+        const trialProductLine = settledOrderView.lines.find((line) => line.locationId === locations[1].id)!;
+        assert.equal(trialProductLine.durationMonths, 3, "settlement retains the purchased duration");
+        assert.equal(trialProductLine.billingPeriodStartsAt, "2026-12-08T10:00:00.000Z", "order history exposes the actual rescheduled start");
+        assert.equal(trialProductLine.billingPeriodEndsAt, "2027-03-08T10:00:00.000Z", "order history exposes the full actual purchased period");
 
         await permissionService.grantLocationBillingPermission({
           authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
@@ -571,6 +596,9 @@ async function main() {
           "prepaid settlement preserves and extends the existing paid-through date");
         assert.deepEqual(await tx.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials), beforeTrials);
         assert.deepEqual(await tx.select({ id: schema.commercialPartnerBenefits.id }).from(schema.commercialPartnerBenefits), beforeBenefits);
+        assert.deepEqual(await tx.select({ id: schema.locationChannelGrants.id, enabled: schema.locationChannelGrants.enabled,
+          startsAt: schema.locationChannelGrants.startsAt, endsAt: schema.locationChannelGrants.endsAt, updatedAt: schema.locationChannelGrants.updatedAt,
+        }).from(schema.locationChannelGrants), beforeAdminGrants, "subscription settlement leaves Location Admin Grants unchanged");
         assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 4);
         assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 7);
         assertionCount += 5;
@@ -656,7 +684,53 @@ async function main() {
       const raceEvents = await v2Db.select({ id: schema.commercialPaymentEvents.id }).from(schema.commercialPaymentEvents)
         .where(eq(schema.commercialPaymentEvents.paymentId, racePayments[0].id));
       assert.equal(raceEvents.length, 1, "concurrent confirmation writes one provider event receipt");
-      assertionCount += 8;
+      const distinctOrders = await v2Db.transaction(async (tx) => {
+        const [location] = await tx.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1);
+        const request = { authenticatedUserId: raceFixture.ownerId, organizationId: location.organizationId,
+          lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId, durationMonths: 1 }] };
+        const drafts = [
+          await service.createPrepaidBillingOrder(request, { db: tx, now: new Date(raceFixture.now.getTime() + 3000), env: process.env }),
+          await service.createPrepaidBillingOrder(request, { db: tx, now: new Date(raceFixture.now.getTime() + 3000), env: process.env }),
+        ];
+        const settlementRows = [];
+        for (const draft of drafts) {
+          const [orderRow] = await tx.select().from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, draft.id));
+          const lines = await tx.select().from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, draft.id));
+          const paymentKey = `concurrent-success:${draft.id}`;
+          const [payment] = await tx.insert(schema.commercialPayments).values({
+            billingOrderId: draft.id, providerCode: orderRow.providerCode, paymentKey,
+            externalPaymentId: `concurrent-external:${draft.id}`, status: "pending", amountMinor: orderRow.totalAmountMinor,
+            currency: orderRow.currency, createdAt: raceFixture.now, updatedAt: raceFixture.now,
+          }).returning();
+          await tx.insert(schema.commercialPaymentAllocations).values(lines.map((line) => ({
+            orderId: draft.id, paymentId: payment.id, orderLineId: line.id, amountMinor: line.amountMinor, createdAt: raceFixture.now,
+          })));
+          await tx.update(schema.commercialBillingOrders).set({ status: "pending", quotedAt: raceFixture.now,
+            expiresAt: new Date(raceFixture.now.getTime() + 7 * 24 * 60 * 60_000),
+            quoteReference: billingOrderModel.billingOrderSnapshotReference(orderRow, lines), updatedAt: raceFixture.now,
+          }).where(eq(schema.commercialBillingOrders.id, draft.id));
+          settlementRows.push({ orderId: draft.id, paymentId: payment.id, providerCode: orderRow.providerCode, paymentKey,
+            externalPaymentId: `concurrent-external:${draft.id}`, amountMinor: orderRow.totalAmountMinor, currency: orderRow.currency });
+        }
+        return settlementRows;
+      });
+      const distinctSettlements = await Promise.all(distinctOrders.map((row, index) => paymentLifecycle.settleTrustedBillingOrderPayment({
+        ...row, idempotencyKey: `concurrent-event:${index}:${row.orderId}`, externalEventId: `concurrent-event:${index}:${row.orderId}`,
+        occurredAt: new Date(raceFixture.now.getTime() + 4000),
+      })));
+      assert.deepEqual(distinctSettlements.map((result) => result.duplicate), [false, false], "distinct concurrent successful payments both settle");
+      const distinctLines = await v2Db.select({
+        orderId: schema.commercialBillingOrderLines.orderId,
+        startsAt: schema.commercialBillingOrderLines.billingPeriodStartsAt,
+        endsAt: schema.commercialBillingOrderLines.billingPeriodEndsAt,
+      }).from(schema.commercialBillingOrderLines).where(inArray(schema.commercialBillingOrderLines.orderId, distinctOrders.map((row) => row.orderId)))
+        .orderBy(schema.commercialBillingOrderLines.billingPeriodStartsAt);
+      assert.equal(distinctLines.length, 2);
+      assert.equal(distinctLines[1].startsAt?.toISOString(), distinctLines[0].endsAt?.toISOString(), "distinct concurrent purchases receive contiguous periods");
+      assert.equal((await v2Db.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)
+        .where(eq(schema.locationSubscriptions.locationId, raceFixture.locationId))).length, 1, "distinct prepaid periods extend the same product subscription");
+      assertionCount += 12;
     } finally {
       if (raceOrganizationId) {
         await v2Db.transaction(async (tx) => {
@@ -693,7 +767,7 @@ async function main() {
       }
     }
     const finalCounts = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     assert.equal(finalCounts.rows[0]?.count, "0", "rollback and concurrent fixtures are fully removed");
     assertionCount += 1;

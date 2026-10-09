@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import {
   FAKE_AGGREGATE_CHECKOUT_TTL_MS,
   FAKE_CHECKOUT_TTL_MS,
@@ -24,12 +24,13 @@ import {
   commercialPayments,
   commercialPaymentEvents,
   commercialProducts,
+  locationCoreTrials,
   locationSubscriptions,
   locations,
   organizations,
   users,
 } from "../schema";
-import { billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
+import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { billingOrderSnapshotReference, quoteBillingRoute, fakeStagingBillingPricingAdapter } from "./billingOrderModel";
 import { PaymentFoundationError } from "./paymentFoundation";
 import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
@@ -264,6 +265,7 @@ export async function createFakeProviderBillingOrderCheckout(input: {
     for (const line of lines) {
       const subscriptions = await tx.select({
         id: locationSubscriptions.id,
+        status: locationSubscriptions.status,
         startsAt: locationSubscriptions.startsAt,
         currentPeriodEndsAt: locationSubscriptions.currentPeriodEndsAt,
         billingAnchorDay: locationSubscriptions.billingAnchorDay,
@@ -272,24 +274,17 @@ export async function createFakeProviderBillingOrderCheckout(input: {
         eq(locationSubscriptions.locationId, line.locationId),
         eq(locationSubscriptions.productId, line.productId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
-        lte(locationSubscriptions.startsAt, now),
-        or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now)),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
-      const existing = subscriptions[0];
-      if (existing?.currentPeriodEndsAt === null) throw new FakeBillingOrderError("order_stale");
-      const anchor = existing && existing.billingAnchorDay !== null && existing.billingAnchorIsEndOfMonth !== null
-        ? { dayOfMonth: existing.billingAnchorDay, isEndOfMonth: existing.billingAnchorIsEndOfMonth }
-        : existing ? billingAnchorForDate(existing.startsAt) : null;
-      let period;
-      try {
-        period = planBillingCalendarPeriod({ now, durationMonths: line.durationMonths, existingPeriod: existing ? {
-          startsAt: existing.startsAt,
-          endsAt: existing.currentPeriodEndsAt,
-          anchor,
-        } : null });
-      } catch { throw new FakeBillingOrderError("order_stale"); }
+      const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
+        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId))).limit(1);
+      const period = planNextSubscriptionPeriod({
+        now, durationMonths: line.durationMonths,
+        subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
+          billingAnchorDay: row.billingAnchorDay, billingAnchorIsEndOfMonth: row.billingAnchorIsEndOfMonth })),
+        trial,
+      });
       await tx.update(commercialBillingOrderLines).set({
-        subscriptionId: existing?.id ?? null,
+        subscriptionId: period.subscriptionId,
         billingAnchorDay: period.anchor.dayOfMonth,
         billingAnchorIsEndOfMonth: period.anchor.isEndOfMonth,
         billingPeriodStartsAt: period.startsAt,

@@ -33,7 +33,8 @@ type ActivationLink = { locationId: string; url: string; expiresAt: string };
 type BillingPlan = {
   productId: string; productName: string;
   status: "trial" | "subscription" | "partner" | "expired" | "available";
-  trialEndsAt: string | null; paidThrough: string | null; subscriptionId: string | null;
+  trialEndsAt: string | null; paidStartsAt: string | null; paidThrough: string | null; trialActive: boolean;
+  scheduledPaidPeriods: { startsAt: string; endsAt: string }[]; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
 };
 type BillingLocation = {
@@ -286,18 +287,25 @@ function Content() {
   const trialKey = trialDisplay.key === "trialDays" ? trialDaysMessageKey(locale, trialDisplay.days ?? 0) : trialDisplay.key;
   const trialStatus = t(trialKey).replace("{{days}}", String(trialDisplay.days ?? ""));
   const displayDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
+  const futurePaidPeriodText = (plan: BillingPlan) => plan.scheduledPaidPeriods
+    .map((period) => `${t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · ${t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}`)
+    .join(" · ");
   const billingStatusText = (plan: BillingPlan) => {
+    let statusText: string;
     if (plan.status === "trial") {
-      if (!plan.trialEndsAt) return t("billingTrial");
-      const countdown = trialCountdown({ status: "active", startsAt: "1970-01-01T00:00:00.000Z", endsAt: plan.trialEndsAt });
-      const key = countdown.key === "trialDays" ? trialDaysMessageKey(locale, countdown.days ?? 0) : countdown.key;
-      return `${t("billingTrial")}: ${t(key).replace("{{days}}", String(countdown.days ?? ""))}`;
-    }
-    if (plan.status === "subscription") return plan.subscriptionCanceled
+      statusText = !plan.trialEndsAt ? t("billingTrial") : (() => {
+        const countdown = trialCountdown({ status: "active", startsAt: "1970-01-01T00:00:00.000Z", endsAt: plan.trialEndsAt });
+        const key = countdown.key === "trialDays" ? trialDaysMessageKey(locale, countdown.days ?? 0) : countdown.key;
+        return `${t("billingTrial")}: ${t(key).replace("{{days}}", String(countdown.days ?? ""))}`;
+      })();
+    } else if (plan.status === "subscription") statusText = plan.subscriptionCanceled
       ? `${t("billingCanceled")}${plan.paidThrough ? ` ${t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough))}` : ""}`
       : plan.paidThrough ? t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough)) : t("billingSubscription");
-    if (plan.status === "partner") return t("billingPartnerStatus");
-    return t(plan.status === "expired" ? "billingExpired" : "billingAvailable");
+    else if (plan.status === "partner") statusText = t("billingPartnerStatus");
+    else statusText = t(plan.status === "expired" ? "billingExpired" : "billingAvailable");
+    const activeTrialText = plan.trialActive && plan.status !== "trial" && plan.trialEndsAt
+      ? t("billingTrialEnds").replace("{{date}}", displayDate(plan.trialEndsAt)) : "";
+    return [statusText, activeTrialText, futurePaidPeriodText(plan)].filter(Boolean).join(" · ");
   };
   const actionText = (plan: BillingPlan) => plan.status === "trial" || plan.status === "available" || plan.status === "partner"
     ? t("billingSubscribe") : plan.status === "subscription" ? t("billingManage") : t("billingRenew");

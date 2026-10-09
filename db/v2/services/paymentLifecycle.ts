@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { v2Db } from "../client";
 import {
@@ -10,13 +10,14 @@ import {
   commercialPaymentRoutes,
   commercialPayments,
   commercialProducts,
+  locationCoreTrials,
   locationSubscriptions,
   locations,
 } from "../schema";
 import { PaymentFoundationError, recordNormalizedPayment } from "./paymentFoundation";
 import type { NormalizedPaymentInput } from "./paymentFoundationModel";
 import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, validateProviderPaidThrough } from "./paymentLifecycleModel";
-import { addBillingCalendarMonths, billingAnchorForDate, planBillingCalendarPeriod } from "./billingCalendar";
+import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { billingOrderSnapshotReference } from "./billingOrderModel";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
@@ -307,37 +308,28 @@ export async function settleTrustedBillingOrderPayment(
 
     const allocations: AggregateBillingOrderSettlementResult["allocations"] = [];
     for (const line of lines) {
+      // The Location row lock above serializes distinct settlements for this
+      // Location. Re-read every same-Product period after acquiring it so two
+      // concurrent purchases cannot schedule overlapping time.
       const subscriptions = await tx.select().from(locationSubscriptions).where(and(
         eq(locationSubscriptions.locationId, line.locationId),
         eq(locationSubscriptions.productId, line.productId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
-        lte(locationSubscriptions.startsAt, event.occurredAt),
-        or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, event.occurredAt)),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
-      const subscription = subscriptions[0];
-      if (subscription?.currentPeriodEndsAt === null) throw new PaymentFoundationError("billing_order_invalid");
-      const anchor = subscription && subscription.billingAnchorDay !== null && subscription.billingAnchorIsEndOfMonth !== null
-        ? { dayOfMonth: subscription.billingAnchorDay, isEndOfMonth: subscription.billingAnchorIsEndOfMonth }
-        : subscription ? billingAnchorForDate(subscription.startsAt) : {
-          dayOfMonth: line.billingAnchorDay,
-          isEndOfMonth: line.billingAnchorIsEndOfMonth,
-        };
+      const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
+        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId))).limit(1);
       let period;
       try {
-        period = subscription
-          ? planBillingCalendarPeriod({
-            now: event.occurredAt,
-            durationMonths: line.durationMonths,
-            existingPeriod: { startsAt: subscription.startsAt, endsAt: subscription.currentPeriodEndsAt, anchor },
-          })
-          : {
-            startsAt: event.occurredAt,
-            endsAt: addBillingCalendarMonths(event.occurredAt, line.durationMonths, anchor),
-            anchor,
-          };
+        period = planNextSubscriptionPeriod({
+          now: event.occurredAt, durationMonths: line.durationMonths,
+          subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
+            billingAnchorDay: row.billingAnchorDay, billingAnchorIsEndOfMonth: row.billingAnchorIsEndOfMonth })),
+          trial,
+        });
       } catch {
         throw new PaymentFoundationError("billing_order_invalid");
       }
+      const subscription = subscriptions.find((row) => row.id === period.subscriptionId) ?? null;
 
       let appliedSubscription: typeof locationSubscriptions.$inferSelect;
       if (subscription) {
@@ -365,14 +357,25 @@ export async function settleTrustedBillingOrderPayment(
         }).returning();
       }
       if (!appliedSubscription) throw new PaymentFoundationError("billing_order_invalid");
-      await tx.update(commercialBillingOrderLines).set({ subscriptionId: appliedSubscription.id, updatedAt: event.occurredAt })
+      await tx.update(commercialBillingOrderLines).set({
+        subscriptionId: appliedSubscription.id,
+        billingPeriodStartsAt: period.startsAt,
+        billingPeriodEndsAt: period.endsAt,
+        billingAnchorDay: period.anchor.dayOfMonth,
+        billingAnchorIsEndOfMonth: period.anchor.isEndOfMonth,
+        updatedAt: event.occurredAt,
+      })
         .where(eq(commercialBillingOrderLines.id, line.id));
       allocations.push({ orderLineId: line.id, subscriptionId: appliedSubscription.id });
     }
 
     await tx.update(commercialPayments).set({ status: "succeeded", providerOccurredAt: event.occurredAt, updatedAt: event.occurredAt })
       .where(and(eq(commercialPayments.id, payment.id), eq(commercialPayments.status, "pending")));
-    await tx.update(commercialBillingOrders).set({ status: "paid", updatedAt: event.occurredAt })
+    const settledLines = await tx.select().from(commercialBillingOrderLines)
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.id));
+    const settledQuoteReference = billingOrderSnapshotReference(order, settledLines);
+    await tx.update(commercialBillingOrders).set({ status: "paid", quoteReference: settledQuoteReference, updatedAt: event.occurredAt })
       .where(and(eq(commercialBillingOrders.id, order.id), eq(commercialBillingOrders.status, "pending")));
     return { duplicate: false, paymentId: payment.id, orderId: order.id, allocations };
   });
