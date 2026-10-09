@@ -398,6 +398,55 @@ input[type="button"]:active {
 .customer-billing-test-notice { padding: 11px 12px; border: 1px solid rgba(195,168,108,.34); border-radius: 8px; color: #e4d3a6 !important; background: rgba(195,168,108,.08); font-size: 13px; }
 .customer-billing-secondary { min-height: 44px; padding: 9px 14px; border: 1px solid rgba(195,168,108,.42); border-radius: 8px; color: #d5bd84; background: transparent; font: inherit; cursor: pointer; }
 .customer-billing-secondary:disabled { opacity: .55; cursor: wait; }
+.customer-billing-wizard-open { min-height: 44px; margin: 8px 0 14px; }
+.customer-billing-wizard-dialog { width: min(100% - 32px, 680px); max-width: 680px; max-height: min(90dvh, 820px); margin: auto; padding: 24px; border: 1px solid rgba(195,168,108,.26); border-radius: 14px; color: #f5f0e6; background: #17171b; }
+.customer-billing-wizard-dialog::backdrop { background: rgba(0,0,0,.76); }
+.customer-billing-wizard-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.customer-billing-wizard-header h2 { margin: 2px 0 7px; font-size: 22px; font-weight: 500; }
+.customer-billing-wizard-header p { margin: 0; overflow-wrap: anywhere; color: rgba(245,240,230,.72); }
+.customer-billing-wizard-eyebrow { color: #d5bd84 !important; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+.customer-billing-wizard-header button { min-width: 44px; padding-inline: 10px; font-size: 20px; }
+.customer-billing-wizard-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 20px 0; padding: 0; list-style: none; }
+.customer-billing-wizard-steps li { display: flex; align-items: center; gap: 8px; min-width: 0; color: rgba(245,240,230,.55); font-size: 13px; }
+.customer-billing-wizard-steps li > span:first-child { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; border: 1px solid rgba(245,240,230,.22); border-radius: 50%; }
+.customer-billing-wizard-steps .is-current { color: #e4d3a6; }
+.customer-billing-wizard-steps .is-current > span:first-child, .customer-billing-wizard-steps .is-complete > span:first-child { border-color: rgba(195,168,108,.8); color: #17171b; background: #c3a86c; }
+.customer-billing-wizard-steps li > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.customer-billing-wizard-content { display: grid; gap: 12px; min-width: 0; }
+.customer-billing-wizard-content h3 { margin: 0; font-size: 17px; font-weight: 500; }
+.customer-billing-wizard-location-list { display: grid; gap: 10px; min-width: 0; }
+.customer-billing-wizard-location { min-width: 0; padding: 13px; border: 1px solid rgba(245,240,230,.1); border-radius: 9px; background: rgba(245,240,230,.025); }
+.customer-billing-wizard-check { display: flex; align-items: flex-start; gap: 11px; min-height: 44px; cursor: pointer; }
+.customer-billing-wizard-check input { flex: 0 0 21px; width: 21px; height: 21px; margin: 2px 0 0; accent-color: #c3a86c; }
+.customer-billing-wizard-check span { display: grid; gap: 4px; min-width: 0; }
+.customer-billing-wizard-check strong { overflow-wrap: anywhere; font-weight: 500; }
+.customer-billing-wizard-check small, .customer-billing-wizard-detail { color: rgba(245,240,230,.62); font-size: 13px; }
+.customer-billing-wizard-line-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; padding: 10px 0 0 32px; }
+.customer-billing-wizard-line-controls label { display: grid; gap: 6px; min-width: 0; color: rgba(245,240,230,.78); font-size: 13px; }
+.customer-billing-wizard-line-controls select { width: 100%; min-width: 0; min-height: 44px; padding: 9px 10px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; color: #f5f0e6; background: #111115; font: inherit; }
+.customer-billing-wizard-line-controls p { grid-column: 1 / -1; margin: 0; overflow-wrap: anywhere; }
+.customer-billing-wizard-price { color: #e4d3a6; font-size: 13px; }
+.customer-billing-wizard-warning { color: #e4d3a6; font-size: 13px; }
+.customer-billing-wizard-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid rgba(245,240,230,.12); }
+.customer-billing-wizard-total strong { color: #e4d3a6; text-align: right; }
+.customer-billing-wizard-note { margin: 0; padding: 11px 12px; border-left: 2px solid rgba(195,168,108,.65); color: rgba(245,240,230,.78); background: rgba(195,168,108,.06); font-size: 13px; }
+.customer-billing-wizard-review { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.customer-billing-wizard-review li { display: grid; gap: 5px; padding: 12px; border: 1px solid rgba(245,240,230,.1); border-radius: 8px; }
+.customer-billing-wizard-review li span { color: rgba(245,240,230,.7); font-size: 13px; overflow-wrap: anywhere; }
+.customer-billing-wizard-link-details { display: grid; grid-template-columns: minmax(105px, .65fr) minmax(0, 1fr); gap: 10px 14px; margin: 0; }
+.customer-billing-wizard-link-details dt { color: rgba(245,240,230,.62); }
+.customer-billing-wizard-link-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.customer-billing-wizard-link-details .is-placeholder { color: rgba(245,240,230,.5); }
+.customer-billing-wizard-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.customer-billing-wizard-actions > button { min-height: 44px; }
+@media (max-width: 520px) {
+  .customer-billing-wizard-dialog { position: fixed; inset: auto 0 0; width: 100%; max-width: none; max-height: 92dvh; margin: 0; padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
+  .customer-billing-wizard-steps { gap: 5px; }
+  .customer-billing-wizard-steps li { display: grid; justify-items: center; gap: 5px; text-align: center; font-size: 11px; }
+  .customer-billing-wizard-line-controls { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
+  .customer-billing-wizard-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .customer-billing-wizard-actions > button { width: 100%; }
+}
 @media (max-width: 520px) {
   .customer-billing-plan { grid-template-columns: minmax(0, 1fr); }
   .customer-billing-action { width: 100%; }

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { I18nProvider, useI18n } from "@/app/i18n/I18nProvider";
 import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
+import AccountBillingWizard from "./AccountBillingWizard";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
@@ -296,6 +297,11 @@ function Content() {
         </dl>
         {[...locationGroups.entries()].map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
           <h2>{group.organizationName}</h2>
+          {billing && <AccountBillingWizard
+            organizationId={organizationId}
+            organizationName={group.organizationName}
+            locations={billing.locations.filter((location) => location.organizationId === organizationId)}
+          />}
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
             <h3>{location.name}</h3><p>{location.timezone}</p>
             {billing && (() => {
