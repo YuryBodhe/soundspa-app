@@ -14,6 +14,8 @@ export type AccountPartnerBenefit = {
   endsAt: string | null;
 };
 
+export type AccountLocationPlan = AccountPlanSnapshot & { productName: string };
+
 export function accountPlanPresentation(
   plan: AccountPlanSnapshot,
   partnerBenefits: readonly AccountPartnerBenefit[],
@@ -29,6 +31,38 @@ export function accountPlanPresentation(
     : plan.status === "subscription" ? plan.paidThrough
       : plan.status === "partner" ? benefit?.endsAt ?? null : null;
   return { trialRemainingDays, accessExpiresAt };
+}
+
+/** Summarize one Location without combining different Product periods into one date. */
+export function accountLocationPresentation<T extends AccountLocationPlan>(
+  plans: readonly T[],
+  partnerBenefits: readonly AccountPartnerBenefit[],
+  now = Date.now(),
+) {
+  const products = plans.map((plan) => ({
+    ...plan,
+    ...accountPlanPresentation(plan, partnerBenefits, now),
+  }));
+  const activeProducts = products.filter((product) =>
+    product.status === "trial" || product.status === "subscription" || product.status === "partner",
+  );
+  const accessWindows = new Set(activeProducts.map((product) => product.accessExpiresAt ?? "indefinite"));
+  const accessStates = new Set(activeProducts.map((product) => `${product.status}:${product.accessExpiresAt ?? "indefinite"}`));
+  const oneSharedExpiry = accessWindows.size === 1 && activeProducts[0]?.accessExpiresAt !== null
+    ? activeProducts[0]?.accessExpiresAt ?? null
+    : null;
+  return {
+    products,
+    activeProducts,
+    activeProductCount: activeProducts.length,
+    summaryKind: activeProducts.length === 0 ? "none" as const : activeProducts.length === 1 ? "single" as const : "multiple" as const,
+    hasDifferentAccessExpirations: accessWindows.size > 1,
+    hasDifferentAccessStates: accessStates.size > 1,
+    accessExpiresAt: oneSharedExpiry,
+    trialRemainingDays: activeProducts.length === 1 && activeProducts[0].trialActive
+      ? activeProducts[0].trialRemainingDays
+      : null,
+  };
 }
 
 export function shouldRefreshAccountOnReturn(now: number, lastRefreshAt: number, visible: boolean, cooldownMs = 1200): boolean {

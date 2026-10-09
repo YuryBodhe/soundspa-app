@@ -6,7 +6,7 @@ import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
-import { accountPlanPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
@@ -379,50 +379,52 @@ function Content() {
     return [statusText, activeTrialText, futurePaidPeriodText(plan)].filter(Boolean).join(" · ");
   };
   const trialRemainingText = (days: number) => t(days === 0 ? "trialLessThanDay" : trialDaysMessageKey(locale, days)).replace("{{days}}", String(days));
+  const planStatusKey = (plan: Pick<BillingPlan, "status" | "subscriptionCanceled">) => plan.status === "trial" ? "billingTrial"
+    : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription")
+      : plan.status === "partner" ? "billingPartnerStatus"
+        : plan.status === "expired" ? "billingExpired" : "billingAvailable";
   const locationGroups = new Map<string, { organizationName: string; locations: CustomerLocation[] }>();
   for (const location of result?.locations ?? []) {
     const group = locationGroups.get(location.organizationId) ?? { organizationName: location.organizationName, locations: [] };
     group.locations.push(location); locationGroups.set(location.organizationId, group);
   }
 
-  return <main className="customer-auth-page"><section className="customer-auth-card customer-onboarding-card"><header className="customer-account-header"><span className="customer-auth-brand">SOUND SPA</span>{account && <strong>{account.email}</strong>}<AuthLanguageSelector />{account && <><button type="button" className="customer-billing-secondary" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? t("accountRefreshing") : t("accountRefresh")}</button><button type="button" className="customer-billing-secondary" onClick={logout}>{t("authLogout")}</button></>}</header>
+  return <main className="customer-auth-page customer-account-page"><section className="customer-auth-card customer-onboarding-card customer-account-shell"><header className="customer-account-header"><span className="customer-auth-brand">SOUND SPA</span>{account && <strong>{account.email}</strong>}<AuthLanguageSelector />{account && <><button type="button" className="customer-billing-secondary" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? t("accountRefreshing") : t("accountRefresh")}</button><button type="button" className="customer-billing-secondary" onClick={logout}>{t("authLogout")}</button></>}</header>
     <h1>{t("authAccountTitle")}</h1>
     {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href="/login">{t("authLoginLink")}</Link></> : <>
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
         {[...locationGroups.entries()].map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
           <h2>{group.organizationName}</h2>
-          {billing && <AccountBillingWizard
-            organizationId={organizationId}
-            organizationName={group.organizationName}
-            locations={billing.locations.filter((location) => location.organizationId === organizationId)}
-            supportedMarkets={billing.supportedMarkets}
-            onSaveMarket={persistMarket}
-            orders={billingOrders.filter((order) => order.organizationId === organizationId)}
-            ordersUnavailable={billingOrdersUnavailable}
-            onRefreshOrders={() => load(true)}
-            onPaymentConfirmed={() => load(true)}
-          />}
+          <div className="customer-account-locations">
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
             <div className="customer-account-location-heading"><h3>{location.name}</h3><small>{location.timezone}</small></div>
             {billing && (() => {
               const billingLocation = billing.locations.find((item) => item.id === location.id);
               if (!billingLocation) return null;
+              const overview = accountLocationPresentation(billingLocation.products, billingLocation.partnerBenefits);
+              const summaryProduct = overview.activeProducts[0];
+              const orphanBenefits = billingLocation.partnerBenefits.filter((benefit) =>
+                !billingLocation.products.some((plan) => plan.productId === benefit.productId),
+              );
               return <section className="customer-billing-location" aria-label={t("billingTitle")}>
-                {billingLocation.products.length > 0 && <div className="customer-billing-plans">
-                  {billingLocation.products.map((plan) => {
-                    const presentation = accountPlanPresentation(plan, billingLocation.partnerBenefits);
-                    return <article className="customer-billing-plan" key={plan.productId}>
-                      <div className="customer-billing-plan-info"><strong>{plan.productName}</strong><span className="customer-billing-access-status">{t(plan.status === "trial" ? "billingTrial" : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription") : plan.status === "partner" ? "billingPartnerStatus" : plan.status === "expired" ? "billingExpired" : "billingAvailable")}</span>
-                        {plan.trialActive && presentation.trialRemainingDays !== null && <small>{trialRemainingText(presentation.trialRemainingDays)}</small>}
-                        {presentation.accessExpiresAt && <small>{t("billingAccessExpires").replace("{{date}}", displayDate(presentation.accessExpiresAt))}</small>}
-                        {plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}
-                      </div>
-                      <button type="button" className="customer-auth-submit customer-billing-action" onClick={() => openBilling(billingLocation, plan)}>{t("billingManage")}</button>
-                    </article>;
-                  })}
-                </div>}
-                {billingLocation.partnerBenefits.length > 0 && <section className="customer-account-partner-benefits" aria-label={t("partnerAccess")}><h4>{t("partnerAccess")}</h4><ul>{billingLocation.partnerBenefits.map((benefit) => <li key={benefit.id}><span><strong>{benefit.partnerName}</strong><small>{benefit.productName}</small></span><small>{new Date(benefit.startsAt).getTime() > Date.now() ? t("billingBenefitStarts").replace("{{date}}", displayDate(benefit.startsAt)) : benefit.endsAt ? t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt)) : t("partnerAccessActive")}</small></li>)}</ul></section>}
+                <div className="customer-account-access-summary">
+                  {overview.summaryKind === "none" ? <span className="customer-billing-access-status">{t("billingAvailable")}</span> : overview.summaryKind === "single" && summaryProduct ? <>
+                    <span className="customer-billing-access-status">{summaryProduct.productName} · {t(planStatusKey(summaryProduct) as TranslationKey)}</span>
+                    {overview.trialRemainingDays !== null && <small>{trialRemainingText(overview.trialRemainingDays)}</small>}
+                    {overview.accessExpiresAt && <small>{t("billingAccessExpires").replace("{{date}}", displayDate(overview.accessExpiresAt))}</small>}
+                  </> : <>
+                    <span className="customer-billing-access-status">{t(overview.hasDifferentAccessStates ? "accountMultipleAccessStates" : "accountMultipleProductAccess").replace("{{count}}", String(overview.activeProductCount))}</span>
+                    {overview.hasDifferentAccessExpirations ? <small>{t("accountProductPeriodsDiffer")}</small> : overview.accessExpiresAt ? <small>{t("billingAccessExpires").replace("{{date}}", displayDate(overview.accessExpiresAt))}</small> : null}
+                  </>}
+                </div>
+                {(overview.products.length > 0 || orphanBenefits.length > 0) && <details className="customer-account-product-details">
+                  <summary>{t("accountProductDetails")}</summary>
+                  <ul>{overview.products.map((plan) => <li key={plan.productId}>
+                    <span><strong>{plan.productName}</strong><small>{t(planStatusKey(plan) as TranslationKey)}</small></span>
+                    <span>{plan.trialActive && plan.trialRemainingDays !== null ? <small>{trialRemainingText(plan.trialRemainingDays)}</small> : null}{plan.trialActive && plan.status !== "trial" && plan.trialEndsAt ? <small>{t("billingTrialEnds").replace("{{date}}", displayDate(plan.trialEndsAt))}</small> : null}{plan.accessExpiresAt ? <small>{t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}</small> : null}{billingLocation.partnerBenefits.filter((benefit) => benefit.productId === plan.productId).map((benefit) => <small key={benefit.id}>{benefit.partnerName}</small>)}{plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}{plan.status === "subscription" && plan.subscriptionId && !plan.subscriptionCanceled && <button type="button" className="customer-billing-secondary customer-account-cancel-renewal" onClick={() => openBilling(billingLocation, plan)}>{t("billingCancelSubscription")}</button>}</span>
+                  </li>)}{orphanBenefits.map((benefit) => <li key={benefit.id}><span><strong>{benefit.productName}</strong><small>{benefit.partnerName} · {t("billingPartnerStatus")}</small></span><small>{benefit.endsAt ? t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt)) : t("partnerAccessActive")}</small></li>)}</ul>
+                </details>}
               </section>;
             })()}
             <details className="customer-account-devices-details"><summary>{t("customerDevices")}</summary>
@@ -443,6 +445,18 @@ function Content() {
             </div>}
             </details>
           </section>)}
+          </div>
+          {billing && <AccountBillingWizard
+            organizationId={organizationId}
+            organizationName={group.organizationName}
+            locations={billing.locations.filter((location) => location.organizationId === organizationId)}
+            supportedMarkets={billing.supportedMarkets}
+            onSaveMarket={persistMarket}
+            orders={billingOrders.filter((order) => order.organizationId === organizationId)}
+            ordersUnavailable={billingOrdersUnavailable}
+            onRefreshOrders={() => load(true)}
+            onPaymentConfirmed={() => load(true)}
+          />}
         </section>)}
         {result?.locations?.length === 0 && <p role="status">{t("deviceNoAuthorizedLocations")}</p>}
         {billingNotice && !selectedBilling && <p role="status" className="customer-billing-notice">{billingNotice}</p>}

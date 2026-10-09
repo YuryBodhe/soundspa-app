@@ -230,6 +230,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const displayOrderDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
   return <>
+    <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
     <details className="customer-billing-orders">
       <summary>{t("billingOrdersTitle")} <span>{orders.length}</span></summary>
       <div className="customer-billing-orders-content">
@@ -242,7 +243,6 @@ export default function AccountBillingWizard({ organizationId, organizationName,
         </li>)}</ul>}
       </div>
     </details>
-    <button type="button" className="customer-billing-secondary customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
     <dialog ref={dialogRef} className="customer-billing-wizard-dialog customer-auth-card" aria-labelledby={`billing-wizard-title-${organizationId}`} onCancel={(event) => { event.preventDefault(); close(); }} onClose={() => setOpen(false)} onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close(); }}>
       <div className="customer-billing-wizard-header"><div><p className="customer-billing-wizard-eyebrow">{t("billingWizardOrganization")}</p><h2 id={`billing-wizard-title-${organizationId}`}>{t("billingWizardTitle")}</h2><p>{organizationName}</p></div><button data-wizard-initial-focus type="button" className="customer-billing-secondary" onClick={close} aria-label={t("billingWizardClose")}>×</button></div>
       <ol className="customer-billing-wizard-steps" aria-label={t("billingWizardProgress")}>{[1, 2, 3].map((item) => <li key={item} aria-current={step === item ? "step" : undefined} className={step === item ? "is-current" : step > item ? "is-complete" : ""}><span>{item}</span><span>{t(item === 1 ? "billingWizardStepSelect" : item === 2 ? "billingWizardStepReview" : "billingWizardStepLink")}</span></li>)}</ol>
