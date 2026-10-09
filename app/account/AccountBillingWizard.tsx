@@ -32,6 +32,14 @@ type Props = {
 
 type WizardStep = 1 | 2 | 3;
 
+function durationText(months: number, locale: string, t: (key: import("@/app/i18n/types").TranslationKey) => string) {
+  const plural = new Intl.PluralRules(locale).select(months);
+  const key = plural === "one" ? "billingWizardMonthOne"
+    : plural === "few" ? "billingWizardMonthFew"
+      : plural === "many" ? "billingWizardMonthMany" : "billingWizardMonths";
+  return t(key).replace("{{count}}", String(months));
+}
+
 export default function AccountBillingWizard({ organizationId, organizationName, locations }: Props) {
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -149,21 +157,23 @@ export default function AccountBillingWizard({ organizationId, organizationName,
             const checked = Boolean(selectedProducts[location.id]);
             const selectedProduct = location.products.find((product) => product.productId === selectedProducts[location.id]);
             const issue = selectedProduct ? lineIssue(location, selectedProduct) : "";
+            const hasPartnerBenefit = location.products.some((product) => product.status === "partner");
             return <article className="customer-billing-wizard-location" key={location.id}>
               <label className="customer-billing-wizard-check">
                 <input type="checkbox" checked={checked} disabled={location.products.length === 0} onChange={(event) => toggleLocation(location, event.target.checked)} />
                 <span><strong>{location.name}</strong><small>{selectedProduct ? statusLabel(selectedProduct) : location.products.length ? t("billingWizardChooseProduct") : t("billingWizardNoEligibleProduct")}</small></span>
               </label>
               {checked && selectedProduct && <div className="customer-billing-wizard-line-controls">
+                <p className="customer-billing-wizard-detail">{selectedProduct.productName}</p>
                 {location.products.length > 1 && <label>{t("billingWizardProduct")}<select value={selectedProduct.productId} onChange={(event) => setSelectedProducts((current) => ({ ...current, [location.id]: event.target.value }))}>
                   {location.products.map((product) => <option key={product.productId} value={product.productId}>{product.productName}</option>)}
                 </select></label>}
                 <label>{t("billingWizardDuration")}<select value={durations[location.id] ?? 1} onChange={(event) => setDurations((current) => ({ ...current, [location.id]: Number(event.target.value) }))}>
-                  {Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{t("billingWizardMonths").replace("{{count}}", String(months))}</option>)}
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{durationText(months, locale, t)}</option>)}
                 </select></label>
                 {selectedProduct.paidThrough && <p className="customer-billing-wizard-detail">{t("billingPaidThrough").replace("{{date}}", formatDate(selectedProduct.paidThrough))}</p>}
                 {selectedProduct.status === "trial" && selectedProduct.trialEndsAt && <p className="customer-billing-wizard-detail">{t("billingTrialEnds").replace("{{date}}", formatDate(selectedProduct.trialEndsAt))}</p>}
-                {selectedProduct.status === "partner" && <p className="customer-billing-wizard-detail">{t("billingWizardPartnerUnchanged")}</p>}
+                {hasPartnerBenefit && <p className="customer-billing-wizard-detail">{t("billingWizardPartnerUnchanged")}</p>}
                 <p className="customer-billing-wizard-price">{t("billingWizardPriceUnavailable")}</p>
                 {issue && <p className="customer-billing-wizard-warning" role="status">{issue}</p>}
               </div>}
@@ -181,9 +191,9 @@ export default function AccountBillingWizard({ organizationId, organizationName,
         <p><strong>{organizationName}</strong></p>
         <ul className="customer-billing-wizard-review">
           {selectedLines.map(({ location, product, months }) => <li key={location.id}>
-            <strong>{location.name}</strong><span>{product.productName} · {t("billingWizardMonths").replace("{{count}}", String(months))}</span>
+            <strong>{location.name}</strong><span>{product.productName} · {durationText(months, locale, t)}</span>
             <span>{t("billingWizardPriceUnavailable")}</span>
-            {product.status === "partner" && <span>{t("billingWizardPartnerUnchanged")}</span>}
+            {location.products.some((candidate) => candidate.status === "partner") && <span>{t("billingWizardPartnerUnchanged")}</span>}
           </li>)}
         </ul>
         <div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{t("billingWizardQuoteUnavailable")}</strong></div>
@@ -207,7 +217,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
         {step > 1 && <button type="button" className="customer-billing-secondary" onClick={() => setStep((current) => (current - 1) as WizardStep)}>{t("billingWizardBack")}</button>}
         {step < 3
           ? <button type="button" className="customer-auth-submit" onClick={nextStep}>{t("billingWizardContinue")}</button>
-          : <button type="button" className="customer-auth-submit" onClick={close}>{t("billingWizardClose")}</button>}
+          : null}
         <button type="button" className="customer-billing-secondary" onClick={close}>{t("billingWizardClose")}</button>
       </div>
     </dialog>

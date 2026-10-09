@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  ...(process.env.NODE_ENV === 'development' ? { turbopack: { root: process.cwd() } } : {}),
   async headers() {
     return [
       { source: "/signup", headers: [{ key: "Cache-Control", value: "no-store" }, { key: "Referrer-Policy", value: "no-referrer" }] },
