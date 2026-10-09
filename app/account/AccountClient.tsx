@@ -5,6 +5,7 @@ import { I18nProvider, useI18n } from "@/app/i18n/I18nProvider";
 import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
+import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
@@ -104,7 +105,8 @@ function Content() {
     if (code === "unauthenticated" || code === "unauthenticated_or_unverified") return "billingUnauthorized";
     if (code === "not_authorized") return "billingUnauthorized";
     if (code === "market_not_configured") return "billingMarketMissing";
-    if (code === "market_unavailable") return "billingMarketUnavailable";
+    if (code === "market_unavailable" || code === "invalid_market") return "billingMarketUnavailable";
+    if (code === "market_refresh_failed") return "billingUnavailable";
     if (code === "route_unavailable" || code === "product_unavailable") return "billingNoRoutes";
     if (code === "checkout_pending") return "billingCheckoutPending";
     if (code === "checkout_expired") return "billingCheckoutExpired";
@@ -112,20 +114,40 @@ function Content() {
     return "billingPaymentFailed";
   }
 
+  async function persistMarket(locationId: string, marketCode: string): Promise<BillingLocation> {
+    return saveBillingMarketAndRefresh({
+      locationId,
+      marketCode,
+      save: async (id, market) => {
+        const response = await fetch("/api/v2/customer/billing/market", {
+          method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ locationId: id, marketCode: market }),
+        });
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        if (!response.ok) throw new Error(body.error ?? "unavailable");
+      },
+      refresh: async () => {
+        const response = await fetch("/api/v2/customer/billing", { cache: "no-store", credentials: "same-origin" });
+        if (!response.ok) throw new Error("unavailable");
+        const refreshed = await response.json() as BillingSummary;
+        setBilling(refreshed);
+        setMarketChoices((current) => { const next = { ...current }; delete next[locationId]; return next; });
+        return refreshed.locations;
+      },
+    });
+  }
+
   async function saveMarket(locationId: string) {
     const marketCode = marketChoices[locationId];
     if (!marketCode) return;
     setBillingError(""); setBillingNotice(""); setMarketSavingId(locationId);
     try {
-      const response = await fetch("/api/v2/customer/billing/market", {
-        method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ locationId, marketCode }),
-      });
-      const body = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) { setBillingError(t(billingErrorKey(body.error ?? "unavailable"))); return; }
+      await persistMarket(locationId, marketCode);
       setBillingNotice(t("billingMarketSaved"));
-      await load();
-    } catch { setBillingError(t("billingUnavailable")); }
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "unavailable";
+      setBillingError(t(code === "unavailable" ? "billingUnavailable" : billingErrorKey(code)));
+    }
     finally { setMarketSavingId(null); }
   }
 
@@ -301,6 +323,8 @@ function Content() {
             organizationId={organizationId}
             organizationName={group.organizationName}
             locations={billing.locations.filter((location) => location.organizationId === organizationId)}
+            supportedMarkets={billing.supportedMarkets}
+            onSaveMarket={persistMarket}
             onPaymentConfirmed={load}
           />}
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
