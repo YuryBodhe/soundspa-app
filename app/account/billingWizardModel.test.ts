@@ -8,7 +8,19 @@ import {
   canResumeBillingOrder,
   canPreviewBillingLines,
   saveBillingMarketAndRefresh,
+  formatBillingPeriodRange,
 } from "./billingWizardModel";
+
+test("server period estimates render in the selected language using UTC calendar dates", () => {
+  const startsAt = "2026-11-06T15:16:28.704Z";
+  const endsAt = "2026-12-06T15:16:28.704Z";
+  assert.equal(formatBillingPeriodRange(startsAt, endsAt, "en"), "Nov 6, 2026 – Dec 6, 2026");
+  assert.match(formatBillingPeriodRange(startsAt, endsAt, "ru") ?? "", /6 нояб\. 2026 г\./);
+  assert.match(formatBillingPeriodRange(startsAt, endsAt, "vi") ?? "", /6 thg 11, 2026/);
+  assert.match(formatBillingPeriodRange(startsAt, endsAt, "th") ?? "", /6 พ\.ย\. 2569/);
+  assert.equal(formatBillingPeriodRange("invalid", endsAt, "en"), null);
+  assert.equal(formatBillingPeriodRange(endsAt, startsAt, "en"), null);
+});
 
 test("a persisted RU market is immediately treated as saved", () => {
   assert.equal(billingMarketSelectionState({ persistedMarket: "RU", selectedMarket: "", saving: false, error: "" }), "saved");
@@ -94,6 +106,21 @@ test("recovery UI reads Account history, resumes through the authorized checkout
   assert.match(source, /billingOrdersContinue/);
   assert.match(source, /billingPurchasedPeriod/);
   assert.doesNotMatch(source, /localStorage|sessionStorage/);
+});
+
+test("order review displays only server-calculated UTC period estimates with a settlement caveat", async () => {
+  const source = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
+  const en = await readFile(new URL("../i18n/dictionaries/en.ts", import.meta.url), "utf8");
+  const ru = await readFile(new URL("../i18n/dictionaries/ru.ts", import.meta.url), "utf8");
+  const vi = await readFile(new URL("../i18n/dictionaries/vi.ts", import.meta.url), "utf8");
+  const th = await readFile(new URL("../i18n/dictionaries/th.ts", import.meta.url), "utf8");
+  assert.match(source, /line\.billingPeriodStartsAt && line\.billingPeriodEndsAt/);
+  assert.match(source, /formatBillingPeriodRange\(line\.billingPeriodStartsAt, line\.billingPeriodEndsAt, locale\)/);
+  assert.match(source, /billingWizardEstimatedDatesNote/);
+  for (const dictionary of [en, ru, vi, th]) {
+    assert.match(dictionary, /billingWizardExpectedPeriod:/);
+    assert.match(dictionary, /billingWizardEstimatedDatesNote:/);
+  }
 });
 
 test("the wizard renders its request error in only one place", async () => {

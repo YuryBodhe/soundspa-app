@@ -472,6 +472,7 @@ input[type="button"]:active {
 .customer-billing-wizard-review { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .customer-billing-wizard-review li { display: grid; gap: 5px; padding: 12px; border: 1px solid rgba(245,240,230,.1); border-radius: 8px; }
 .customer-billing-wizard-review li span { color: rgba(245,240,230,.7); font-size: 13px; overflow-wrap: anywhere; }
+.customer-billing-wizard-period-estimate { color: rgba(245,240,230,.64); font-size: 12px; }
 .customer-billing-wizard-link-details { display: grid; grid-template-columns: minmax(105px, .65fr) minmax(0, 1fr); gap: 10px 14px; margin: 0; }
 .customer-billing-wizard-link-details dt { color: rgba(245,240,230,.62); }
 .customer-billing-wizard-link-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }

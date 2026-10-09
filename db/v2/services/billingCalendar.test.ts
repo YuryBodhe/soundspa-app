@@ -90,6 +90,18 @@ test("starts a purchase after the active same-Product trial without altering the
   assert.equal(trial.endsAt.toISOString(), "2026-11-06T07:05:10.899Z");
 });
 
+test("Hamam's current trial produces the expected exact one-calendar-month estimate", () => {
+  const now = date("2026-10-09T15:16:28.704Z");
+  const trial = {
+    status: "active",
+    startsAt: date("2026-10-09T15:16:28.704Z"),
+    endsAt: date("2026-11-06T15:16:28.704Z"),
+  };
+  const estimate = planNextSubscriptionPeriod({ now, durationMonths: 1, subscriptions: [], trial });
+  assert.equal(estimate.startsAt.toISOString(), "2026-11-06T15:16:28.704Z");
+  assert.equal(estimate.endsAt.toISOString(), "2026-12-06T15:16:28.704Z");
+});
+
 test("extends an active paid period using its existing calendar anchor", () => {
   const period = planNextSubscriptionPeriod({ now: date("2026-02-10T00:00:00.000Z"), durationMonths: 1, trial: null, subscriptions: [{
     status: "active", startsAt: date("2026-01-31T00:00:00.000Z"), endsAt: date("2026-02-28T00:00:00.000Z"),

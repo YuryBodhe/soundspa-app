@@ -228,6 +228,11 @@ async function main() {
         const order = await service.createPrepaidBillingOrder(input, { db: tx, now, env: process.env });
         assert.equal(preview.totalAmountMinor, order.totalAmountMinor, "preview and persisted order use the same trusted pricing planner");
         assert.deepEqual(preview.lines.map((line) => line.amountMinor), order.lines.map((line) => line.amountMinor));
+        assert.deepEqual(
+          preview.lines.map((line) => [line.billingPeriodStartsAt, line.billingPeriodEndsAt]),
+          order.lines.map((line) => [line.billingPeriodStartsAt, line.billingPeriodEndsAt]),
+          "preview period estimates match the draft's server-planned periods when entitlement state is unchanged",
+        );
         const draftRead = await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: order.id }, now, tx);
         assert.equal(draftRead.status, "draft");
         const ownerFirstPage = await orderRead.listCustomerBillingOrders({ authenticatedUserId: owner.id, limit: 1 }, now, tx);

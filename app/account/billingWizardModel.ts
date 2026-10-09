@@ -8,6 +8,14 @@ export type BillingMarketSaveErrorCode =
 
 export type BillingMarketSelectionState = "saved" | "missing" | "unsaved" | "saving" | "error";
 
+export function formatBillingPeriodRange(startsAt: string, endsAt: string, locale: string): string | null {
+  const start = new Date(startsAt);
+  const end = new Date(endsAt);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) return null;
+  const formatDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" });
+  return `${formatDate.format(start)} – ${formatDate.format(end)}`;
+}
+
 export function canResumeBillingOrder(status: string): boolean { return status === "pending"; }
 
 export function billingOrderStatusKey(status: string): string {

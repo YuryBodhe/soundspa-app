@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/app/i18n/I18nProvider";
-import { billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKey, canResumeBillingOrder, canPreviewBillingLines } from "./billingWizardModel";
+import { billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKey, canResumeBillingOrder, canPreviewBillingLines, formatBillingPeriodRange } from "./billingWizardModel";
 
 export type BillingWizardPlan = {
   productId: string; productName: string;
@@ -16,7 +16,7 @@ export type BillingWizardLocation = {
 };
 type Quote = {
   currency: string; totalAmountMinor: string;
-  lines: Array<{ locationId: string; locationName: string; productId: string; productName: string; durationMonths: number; amountMinor: string }>;
+  lines: Array<{ locationId: string; locationName: string; productId: string; productName: string; durationMonths: number; amountMinor: string; billingPeriodStartsAt?: string | null; billingPeriodEndsAt?: string | null }>;
 };
 export type BillingOrderHistoryItem = {
   id: string; organizationId: string; status: string; currency: string; totalAmountMinor: string; createdAt: string; expiresAt: string | null;
@@ -267,9 +267,15 @@ export default function AccountBillingWizard({ organizationId, organizationName,
         {selectionError && <p className="customer-onboarding-error" role="alert">{t("billingWizardSelectAtLeastOne")}</p>}
       </section>}
       {step === 2 && quote && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepReview")}</h3><p><strong>{organizationName}</strong></p>
-        <ul className="customer-billing-wizard-review">{quote.lines.map((line) => <li key={line.locationId}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span></li>)}</ul>
+        <ul className="customer-billing-wizard-review">{quote.lines.map((line) => {
+          const period = line.billingPeriodStartsAt && line.billingPeriodEndsAt
+            ? formatBillingPeriodRange(line.billingPeriodStartsAt, line.billingPeriodEndsAt, locale)
+            : null;
+          return <li key={line.locationId}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span>{period && <small className="customer-billing-wizard-period-estimate">{t("billingWizardExpectedPeriod").replace("{{period}}", period)}</small>}</li>;
+        })}</ul>
         <div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(quote.totalAmountMinor, quote.currency)}</strong></div>
         <p className="customer-billing-wizard-note">{previewOnly ? t("billingWizardPreviewOnly") : t("billingWizardPrepaidNotice")}</p>
+        {!previewOnly && quote.lines.some((line) => line.billingPeriodStartsAt && line.billingPeriodEndsAt) && <p className="customer-billing-wizard-detail">{t("billingWizardEstimatedDatesNote")}</p>}
       </section>}
       {step === 3 && previewOnly && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepLink")}</h3><div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{t("billingWizardQuoteUnavailable")}</strong></div><p className="customer-billing-wizard-note" role="status">{t("billingWizardPreviewOnly")}</p></section>}
       {step === 3 && checkout && order && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepLink")}</h3>
