@@ -54,6 +54,19 @@ type LocationRow = {
   marketCode: string | null;
 };
 
+type BillingOrderPlan = {
+  providerCode: string;
+  currency: string;
+  totalAmountMinor: bigint;
+  linePlans: Array<{
+    request: RequestedBillingOrderLine;
+    quote: ReturnType<typeof selectCompatibleBillingQuotes>[number];
+    period: Awaited<ReturnType<typeof planLinePeriod>>;
+    location: LocationRow;
+    product: { id: string; name: string };
+  }>;
+};
+
 function rethrowModelError(error: unknown): never {
   if (error instanceof BillingOrderModelError) throw new BillingOrderError(error.code);
   throw error;
@@ -109,7 +122,7 @@ async function loadLocationQuotes(input: {
   return { routesFound: routes.length > 0, fakeProviderNotConfigured, quotes };
 }
 
-async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId: string, durationMonths: number, now: Date) {
+async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId: string, durationMonths: number, now: Date, lockForOrder: boolean) {
   const subscriptions = await tx.select({
     id: locationSubscriptions.id,
     startsAt: locationSubscriptions.startsAt,
@@ -125,7 +138,7 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
       or(isNull(locationSubscriptions.currentPeriodEndsAt), gt(locationSubscriptions.currentPeriodEndsAt, now)),
     ))
     .orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id))
-    .for("update");
+    .for(lockForOrder ? "update" : "share");
 
   const existing = subscriptions[0];
   if (existing?.currentPeriodEndsAt === null) throw new BillingOrderError("unbounded_subscription_requires_policy");
@@ -151,6 +164,136 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
   }
 }
 
+async function prepareBillingOrderPlan(input: {
+  tx: BillingOrderTx;
+  authenticatedUserId: string;
+  request: ReturnType<typeof validateBillingOrderRequest>;
+  now: Date;
+  env: FakeProviderEnvironment;
+  pricingAdapters: readonly BillingPricingAdapter[];
+  lockForOrder: boolean;
+}): Promise<BillingOrderPlan> {
+  const { tx, authenticatedUserId, request, now, env, pricingAdapters, lockForOrder } = input;
+  const [user] = await tx.select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
+    .from(users).where(eq(users.id, authenticatedUserId)).for("share").limit(1);
+  const [organization] = await tx.select({ id: organizations.id })
+    .from(organizations).where(and(eq(organizations.id, request.organizationId), isNull(organizations.archivedAt))).for("share").limit(1);
+  if (!user?.emailVerifiedAt || user.disabledAt || !organization) throw new BillingOrderError("not_authorized");
+
+  const locationIds = [...new Set(request.lines.map((line) => line.locationId))].sort();
+  const locationRows = await tx.select({
+    id: locations.id, organizationId: locations.organizationId, name: locations.name, marketCode: locations.marketCode,
+  }).from(locations).where(and(
+    inArray(locations.id, locationIds), eq(locations.organizationId, request.organizationId), isNull(locations.archivedAt),
+  )).orderBy(asc(locations.id)).for(lockForOrder ? "update" : "share");
+  if (locationRows.length !== locationIds.length) throw new BillingOrderError("not_authorized");
+  const locationsById = new Map(locationRows.map((location) => [location.id, location]));
+  try {
+    for (const locationId of locationIds) {
+      const authority = await requireLocationBillingAuthority(tx, authenticatedUserId, locationId);
+      if (authority.organizationId !== request.organizationId) throw new BillingOrderError("not_authorized");
+    }
+  } catch (error) {
+    if (error instanceof LocationBillingAuthorizationError) throw new BillingOrderError("not_authorized");
+    throw error;
+  }
+
+  const productIds = [...new Set(request.lines.map((line) => line.productId))].sort();
+  const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name })
+    .from(commercialProducts).where(and(inArray(commercialProducts.id, productIds), eq(commercialProducts.isActive, true)))
+    .orderBy(asc(commercialProducts.id)).for("share");
+  if (productRows.length !== productIds.length) throw new BillingOrderError("product_unavailable");
+  const productsById = new Map(productRows.map((product) => [product.id, product]));
+
+  const quotesByLine = new Map<string, BillingRouteQuoteCandidate[]>();
+  const routeLookupLines = [...request.lines].sort((left, right) =>
+    left.productId.localeCompare(right.productId) ||
+    (locationsById.get(left.locationId)?.marketCode ?? "").localeCompare(locationsById.get(right.locationId)?.marketCode ?? "") ||
+    left.locationId.localeCompare(right.locationId));
+  for (const line of routeLookupLines) {
+    const location = locationsById.get(line.locationId);
+    if (!location) throw new BillingOrderError("not_authorized");
+    const result = await loadLocationQuotes({ tx, line, location, env, pricingAdapters });
+    if (!result.routesFound) throw new BillingOrderError("route_unavailable");
+    if (result.quotes.length === 0) {
+      if (result.fakeProviderNotConfigured) throw new BillingOrderError("provider_not_configured");
+      throw new BillingOrderError("unsupported_pricing");
+    }
+    quotesByLine.set(requestedLineKey(line), result.quotes);
+  }
+
+  let selectedQuotes: ReturnType<typeof selectCompatibleBillingQuotes>;
+  try {
+    selectedQuotes = selectCompatibleBillingQuotes(request.lines.map((line) => quotesByLine.get(requestedLineKey(line)) ?? []));
+  } catch (error) { rethrowModelError(error); }
+  const providerCode = selectedQuotes[0].providerCode;
+  const currency = selectedQuotes[0].currency;
+  const totalAmountMinor = selectedQuotes.reduce((sum, quote) => sum + quote.amountMinor, BigInt(0));
+  const linePlans: BillingOrderPlan["linePlans"] = [];
+  for (let index = 0; index < request.lines.length; index += 1) {
+    const line = request.lines[index];
+    const location = locationsById.get(line.locationId);
+    const product = productsById.get(line.productId);
+    if (!location || !product) throw new BillingOrderError("invalid_request");
+    const period = await planLinePeriod(tx, line.locationId, line.productId, line.durationMonths, now, lockForOrder);
+    linePlans.push({ request: line, quote: selectedQuotes[index], period, location, product });
+  }
+  return { providerCode, currency, totalAmountMinor, linePlans };
+}
+
+function validateCreateInput(input: { authenticatedUserId: string; organizationId: string; lines: readonly RequestedBillingOrderLine[] }) {
+  let request: ReturnType<typeof validateBillingOrderRequest>;
+  try { request = validateBillingOrderRequest({ organizationId: input.organizationId, lines: input.lines }); }
+  catch (error) { rethrowModelError(error); }
+  if (typeof input.authenticatedUserId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.authenticatedUserId)) {
+    throw new BillingOrderError("not_authorized");
+  }
+  return request;
+}
+
+/** Informational preview. Uses the same authorization, pricing, route and calendar planner as draft creation and writes no rows. */
+export async function previewPrepaidBillingOrder(input: {
+  authenticatedUserId: string;
+  organizationId: string;
+  lines: readonly RequestedBillingOrderLine[];
+}, options: { now?: Date; db?: BillingOrderDb; env?: FakeProviderEnvironment; pricingAdapters?: readonly BillingPricingAdapter[] } = {}) {
+  const request = validateCreateInput(input);
+  const now = options.now ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new BillingOrderError("invalid_request");
+  const db = options.db ?? v2Db;
+  const env = options.env ?? process.env;
+  const pricingAdapters = options.pricingAdapters ?? [fakeStagingBillingPricingAdapter];
+  return db.transaction(async (tx) => {
+    const plan = await prepareBillingOrderPlan({ tx, authenticatedUserId: input.authenticatedUserId, request, now, env, pricingAdapters, lockForOrder: false });
+    const [organization] = await tx.select({ id: organizations.id, name: organizations.name })
+      .from(organizations).where(eq(organizations.id, request.organizationId)).limit(1);
+    if (!organization) throw new BillingOrderError("not_authorized");
+    return {
+      organization,
+      providerCode: plan.providerCode,
+      currency: plan.currency,
+      totalAmountMinor: plan.totalAmountMinor.toString(),
+      quotedAt: now.toISOString(),
+      quoteValidity: {
+        binding: false as const,
+        refreshAfter: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+        revalidatedAtOrderCreation: true as const,
+      },
+      lines: plan.linePlans.map(({ request: line, quote, period, location, product }) => ({
+        locationId: line.locationId, locationName: location.name,
+        productId: line.productId, productName: product.name,
+        durationMonths: line.durationMonths, marketCode: quote.marketCode,
+        providerCode: quote.providerCode, currency: quote.currency,
+        listAmountMinor: quote.listAmountMinor.toString(),
+        discountAmountMinor: quote.discountAmountMinor.toString(),
+        amountMinor: quote.amountMinor.toString(),
+        billingPeriodStartsAt: period.startsAt.toISOString(),
+        billingPeriodEndsAt: period.endsAt.toISOString(),
+      })),
+    };
+  });
+}
+
 /**
  * Creates an unpaid, non-reserving prepaid order draft. This records a quote
  * snapshot only; it never creates or changes Subscriptions or entitlements.
@@ -160,15 +303,7 @@ export async function createPrepaidBillingOrder(input: {
   organizationId: string;
   lines: readonly RequestedBillingOrderLine[];
 }, options: { now?: Date; db?: BillingOrderDb; env?: FakeProviderEnvironment; pricingAdapters?: readonly BillingPricingAdapter[] } = {}) {
-  let request: ReturnType<typeof validateBillingOrderRequest>;
-  try {
-    request = validateBillingOrderRequest({ organizationId: input.organizationId, lines: input.lines });
-  } catch (error) {
-    rethrowModelError(error);
-  }
-  if (typeof input.authenticatedUserId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.authenticatedUserId)) {
-    throw new BillingOrderError("not_authorized");
-  }
+  const request = validateCreateInput(input);
   const now = options.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new BillingOrderError("invalid_request");
   const db = options.db ?? v2Db;
@@ -176,85 +311,9 @@ export async function createPrepaidBillingOrder(input: {
   const pricingAdapters = options.pricingAdapters ?? [fakeStagingBillingPricingAdapter];
 
   return db.transaction(async (tx) => {
-    const [user] = await tx.select({ id: users.id, emailVerifiedAt: users.emailVerifiedAt, disabledAt: users.disabledAt })
-      .from(users).where(eq(users.id, input.authenticatedUserId)).for("share").limit(1);
-    const [organization] = await tx.select({ id: organizations.id })
-      .from(organizations).where(and(eq(organizations.id, request.organizationId), isNull(organizations.archivedAt))).for("share").limit(1);
-    if (!user?.emailVerifiedAt || user.disabledAt || !organization) {
-      throw new BillingOrderError("not_authorized");
-    }
-
-    // Lock Locations in stable order so concurrent drafts touching overlapping
-    // Location sets serialize without changing entitlements or reserving checkout.
-    const locationIds = [...new Set(request.lines.map((line) => line.locationId))].sort();
-    const locationRows = await tx.select({
-      id: locations.id,
-      organizationId: locations.organizationId,
-      name: locations.name,
-      marketCode: locations.marketCode,
-    }).from(locations).where(and(
-      inArray(locations.id, locationIds),
-      eq(locations.organizationId, request.organizationId),
-      isNull(locations.archivedAt),
-    )).orderBy(asc(locations.id)).for("update");
-    if (locationRows.length !== locationIds.length) throw new BillingOrderError("not_authorized");
-    const locationsById = new Map(locationRows.map((location) => [location.id, location]));
-    try {
-      for (const locationId of locationIds) {
-        const authority = await requireLocationBillingAuthority(tx, input.authenticatedUserId, locationId);
-        if (authority.organizationId !== request.organizationId) throw new BillingOrderError("not_authorized");
-      }
-    } catch (error) {
-      if (error instanceof LocationBillingAuthorizationError) throw new BillingOrderError("not_authorized");
-      throw error;
-    }
-
-    const productIds = [...new Set(request.lines.map((line) => line.productId))].sort();
-    const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name })
-      .from(commercialProducts).where(and(inArray(commercialProducts.id, productIds), eq(commercialProducts.isActive, true)))
-      .orderBy(asc(commercialProducts.id)).for("share");
-    if (productRows.length !== productIds.length) throw new BillingOrderError("product_unavailable");
-    const productsById = new Map(productRows.map((product) => [product.id, product]));
-
-    const quotesByLine = new Map<string, BillingRouteQuoteCandidate[]>();
-    const routeLookupLines = [...request.lines].sort((left, right) =>
-      left.productId.localeCompare(right.productId) ||
-      (locationsById.get(left.locationId)?.marketCode ?? "").localeCompare(locationsById.get(right.locationId)?.marketCode ?? "") ||
-      left.locationId.localeCompare(right.locationId));
-    for (const line of routeLookupLines) {
-      const location = locationsById.get(line.locationId);
-      if (!location) throw new BillingOrderError("not_authorized");
-      const result = await loadLocationQuotes({ tx, line, location, env, pricingAdapters });
-      if (!result.routesFound) throw new BillingOrderError("route_unavailable");
-      if (result.quotes.length === 0) {
-        if (result.fakeProviderNotConfigured) throw new BillingOrderError("provider_not_configured");
-        throw new BillingOrderError("unsupported_pricing");
-      }
-      quotesByLine.set(requestedLineKey(line), result.quotes);
-    }
-
-    let selectedQuotes;
-    try {
-      selectedQuotes = selectCompatibleBillingQuotes(request.lines.map((line) => quotesByLine.get(requestedLineKey(line)) ?? []));
-    } catch (error) {
-      rethrowModelError(error);
-    }
-    const providerCode = selectedQuotes[0].providerCode;
-    const currency = selectedQuotes[0].currency;
-    const totalAmountMinor = selectedQuotes.reduce((sum, quote) => sum + quote.amountMinor, BigInt(0));
-
-    const linePlans = [];
-    for (let index = 0; index < request.lines.length; index += 1) {
-      const line = request.lines[index];
-      const period = await planLinePeriod(tx, line.locationId, line.productId, line.durationMonths, now);
-      linePlans.push({
-        request: line,
-        quote: selectedQuotes[index],
-        period,
-        location: locationsById.get(line.locationId)!,
-        product: productsById.get(line.productId)!,
-      });
-    }
+    const { providerCode, currency, totalAmountMinor, linePlans } = await prepareBillingOrderPlan({
+      tx, authenticatedUserId: input.authenticatedUserId, request, now, env, pricingAdapters, lockForOrder: true,
+    });
 
     const [order] = await tx.insert(commercialBillingOrders).values({
       organizationId: request.organizationId,

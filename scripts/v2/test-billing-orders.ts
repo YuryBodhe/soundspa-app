@@ -25,7 +25,7 @@ async function main() {
   process.env.V2_PUBLIC_ORIGIN = "https://test.soundspa.bodhemusic.com";
   process.env.V2_FAKE_PROVIDER_SECRET = "rollback-only-billing-order-test-secret-32-bytes";
 
-  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake] = await Promise.all([
+  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle] = await Promise.all([
     import("../../db/v2/client"),
     import("../../db/v2/schema"),
     import("../../db/v2/services/billingOrders"),
@@ -33,6 +33,8 @@ async function main() {
     import("../../db/v2/services/customerBilling"),
     import("../../db/v2/services/fakeBillingOrderProvider"),
     import("../../db/v2/services/fakePaymentProvider"),
+    import("../../db/v2/services/billingOrderRead"),
+    import("../../db/v2/services/billingOrderLifecycle"),
   ]);
   const assertAggregateError = async (operation: Promise<unknown>, code: string) => {
     await assert.rejects(operation, (error: unknown) => error instanceof aggregateFake.FakeBillingOrderError && error.code === code);
@@ -203,7 +205,36 @@ async function main() {
         "an order cannot cross into another Organization");
         assertionCount += 14;
 
+        const orderCountBeforePreview = await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders);
+        const preview = await service.previewPrepaidBillingOrder(input, { db: tx, now, env: process.env });
+        assert.equal(preview.organization.id, organization.id);
+        assert.equal(preview.totalAmountMinor, "2268000");
+        assert.deepEqual(preview.lines.map((line) => line.amountMinor), ["108000", "216000", "648000", "1296000"]);
+        assert.equal(preview.quoteValidity.binding, false);
+        assert.equal(preview.quoteValidity.revalidatedAtOrderCreation, true);
+        assert.equal((await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders)).length,
+          orderCountBeforePreview.length, "quote preview creates no order, payment, or entitlement rows");
+        assertionCount += 6;
+
         const order = await service.createPrepaidBillingOrder(input, { db: tx, now, env: process.env });
+        assert.equal(preview.totalAmountMinor, order.totalAmountMinor, "preview and persisted order use the same trusted pricing planner");
+        assert.deepEqual(preview.lines.map((line) => line.amountMinor), order.lines.map((line) => line.amountMinor));
+        const draftRead = await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: order.id }, now, tx);
+        assert.equal(draftRead.status, "draft");
+        const ownerFirstPage = await orderRead.listCustomerBillingOrders({ authenticatedUserId: owner.id, limit: 1 }, now, tx);
+        assert.equal(ownerFirstPage.items.length, 1);
+        assert.ok(ownerFirstPage.nextCursor);
+        const ownerNextPage = await orderRead.listCustomerBillingOrders({
+          authenticatedUserId: owner.id, limit: 1, cursor: ownerFirstPage.nextCursor!,
+        }, now, tx);
+        assert.equal(ownerNextPage.items.length, 1);
+        assert.notEqual(ownerFirstPage.items[0].id, ownerNextPage.items[0].id, "stable cursor pagination does not repeat an order");
+        assert.deepEqual((await orderRead.listCustomerBillingOrders({ authenticatedUserId: manager.id }, now, tx)).items, [],
+          "manager cannot discover orders after permission revocation");
+        await assert.rejects(orderRead.getCustomerBillingOrder({ authenticatedUserId: manager.id, billingOrderId: order.id }, now, tx),
+          (error: unknown) => error instanceof orderRead.BillingOrderReadError && error.code === "not_found",
+          "partial or revoked Location authority hides the entire multi-Location order");
+        assertionCount += 8;
         assertionCount += 1;
         assert.equal(order.status, "draft");
         assert.equal(order.providerCode, "fake-staging");
@@ -223,6 +254,19 @@ async function main() {
         const [persistedOrder] = await tx.select().from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, order.id));
         assert.equal(persistedOrder.status, "draft");
         assertionCount += 3;
+
+        const abandonedDraft = await service.createPrepaidBillingOrder({ ...input, lines: [input.lines[0]] }, { db: tx, now, env: process.env });
+        assert.deepEqual(await orderLifecycle.abandonCustomerBillingOrderDraft({
+          authenticatedUserId: owner.id, billingOrderId: abandonedDraft.id,
+        }, tx), { id: abandonedDraft.id, status: "canceled" });
+        assert.equal((await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: abandonedDraft.id }, now, tx)).status, "canceled");
+        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)
+          .where(eq(schema.commercialPayments.billingOrderId, abandonedDraft.id))).length, 0, "abandoning a draft creates no Payment and preserves the order audit row");
+        await assert.rejects(orderLifecycle.abandonCustomerBillingOrderDraft({
+          authenticatedUserId: owner.id, billingOrderId: abandonedDraft.id,
+        }, tx), (error: unknown) => error instanceof orderLifecycle.BillingOrderLifecycleError && error.code === "not_abandonable",
+        "a canceled draft cannot be reactivated or abandoned again");
+        assertionCount += 4;
 
         const repeatedDraft = await service.createPrepaidBillingOrder(input, { db: tx, now, env: process.env });
         assert.notEqual(repeatedDraft.id, order.id, "independent draft requests remain distinct; neither reserves checkout");
@@ -303,6 +347,10 @@ async function main() {
           authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id,
         }, new Date(now.getTime() + 1500), tx);
         assert.equal(retrievedLink.checkoutUrl, aggregateCheckout.checkoutUrl, "authorized user can retrieve the valid deterministic link");
+        const [aggregatePaymentCountAtLink] = await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)
+          .where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
+        assert.ok(aggregatePaymentCountAtLink, "link retrieval reuses the single pending Payment");
+        assert.equal((await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id }, now, tx)).status, "pending");
         const payerPreview = await aggregateFake.getFakeBillingOrderPayerView({ capability: payerCapability }, new Date(now.getTime() + 1500), tx);
         assert.equal(payerPreview.state, "pending");
         assert.equal(payerPreview.organizationName, organization.name);
@@ -385,6 +433,7 @@ async function main() {
         const [paidPayment] = await tx.select({ status: schema.commercialPayments.status }).from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
         assert.equal(paidOrder.status, "paid");
         assert.equal(paidPayment.status, "succeeded");
+        assert.equal((await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id }, confirmationAt, tx)).status, "paid");
 
         await permissionService.grantLocationBillingPermission({
           authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
@@ -465,6 +514,10 @@ async function main() {
         const expiredCapability = expiredCheckout.checkoutUrl.split("/").pop()!;
         const afterSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60_000 + 1);
         assert.equal((await aggregateFake.getFakeBillingOrderPayerView({ capability: expiredCapability }, afterSevenDays, tx)).state, "expired");
+        assert.equal((await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: expiredOrder.id }, afterSevenDays, tx)).status, "expired");
+        assert.equal((await tx.select({ status: schema.commercialBillingOrders.status }).from(schema.commercialBillingOrders)
+          .where(eq(schema.commercialBillingOrders.id, expiredOrder.id)))[0].status, "pending",
+        "status read derives expiry without mutating the stored financial state");
         await assertAggregateError(aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: expiredCheckout.confirmationToken,
         }, afterSevenDays, tx), "checkout_expired");
