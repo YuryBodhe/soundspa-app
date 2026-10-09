@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../queries/trialPolicy";
 import {
   billingResetEnvironmentAllowed,
   billingResetPlanHash,
@@ -15,7 +16,7 @@ const subscription = "44444444-4444-4444-8444-444444444444";
 const trial = "55555555-5555-4555-8555-555555555555";
 const order = "66666666-6666-4666-8666-666666666666";
 const payment = "77777777-7777-4777-8777-777777777777";
-const input = { organizationId: org, locationId: location, productIds: [product], trialProductId: product, trialDurationDays: 30, reason: "Repeat local staging test" };
+const input = { organizationId: org, locationId: location, productIds: [product], trialProductId: product, trialDurationDays: SOUNDSPA_BASIC_TRIAL_DAYS, reason: "Repeat local staging test" };
 const plan: BillingResetPlan = {
   organizationId: org, organizationName: "Bodhe Spa", locationId: location, locationName: "Hamam",
   products: [{ id: product, code: "soundspa", name: "SoundSpa Basic" }],
@@ -28,6 +29,7 @@ const plan: BillingResetPlan = {
 
 test("billing reset request requires explicit scoped identities, trial duration, and reason", () => {
   assert.deepEqual(validateBillingResetInput(input).productIds, [product]);
+  assert.equal(validateBillingResetInput({ ...input, trialDurationDays: undefined }).trialDurationDays, SOUNDSPA_BASIC_TRIAL_DAYS);
   assert.throws(() => validateBillingResetInput({ ...input, productIds: [] }), /invalid_billing_reset_request/);
   assert.throws(() => validateBillingResetInput({ ...input, trialDurationDays: 366 }), /invalid_billing_reset_request/);
   assert.throws(() => validateBillingResetInput({ ...input, reason: "test" }), /invalid_billing_reset_request/);
@@ -35,6 +37,7 @@ test("billing reset request requires explicit scoped identities, trial duration,
 
 test("billing reset preview hash is deterministic and changes with billing state", () => {
   assert.equal(billingResetPlanHash(input, plan), billingResetPlanHash(input, { ...plan, orders: [...plan.orders].reverse() }));
+  assert.equal(billingResetPlanHash({ ...input, trialDurationDays: undefined }, plan), billingResetPlanHash(input, plan));
   assert.notEqual(billingResetPlanHash(input, plan), billingResetPlanHash(input, { ...plan, trials: [] }));
 });
 

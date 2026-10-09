@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../../db/v2/queries/trialPolicy";
 
 type Args = {
   organizationId?: string;
@@ -14,7 +15,7 @@ type Args = {
 };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { productIds: [], allProducts: false, trialDurationDays: 30, apply: false };
+  const args: Args = { productIds: [], allProducts: false, trialDurationDays: SOUNDSPA_BASIC_TRIAL_DAYS, apply: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const value = () => {

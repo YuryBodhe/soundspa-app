@@ -2,7 +2,9 @@
 
 This operator utility is a CLI script. It has no HTTP route or Account button. It only runs when the server identifies itself as V2 staging, its public origin is `https://test.soundspa.bodhemusic.com`, and its database URL and live PostgreSQL identity match the V2 staging Compose database. It also requires the configured V2 operator credentials through the existing `V2_ADMIN_USERNAME` and `V2_ADMIN_PASSWORD` environment values.
 
-The reset preserves orders, payments, subscriptions, trials, the Organization, Location, users, devices, channels, and settings. Subscription and trial rows receive an `invalidated_by_reset_id` reference to an immutable audit row; their paid dates and payment records are not rewritten. It closes only pending Fake Provider payments and eligible orders. It fails closed for non-Fake pending payments, ambiguous payment states, mixed-scope aggregate checkouts, changed previews, and database lock timeouts.
+The reset preserves orders, payments, subscriptions, trials, the Organization, Location, users, devices, channels, and settings. Subscription and trial rows receive an `invalidated_by_reset_id` reference to a billing reset audit row; their paid dates and payment records are not rewritten. The reset utility inserts audit rows and does not update or delete them, but database-level append-only enforcement is not configured. It closes only pending Fake Provider payments and eligible orders. It fails closed for non-Fake pending payments, ambiguous payment states, mixed-scope aggregate checkouts, changed previews, and database lock timeouts.
+
+SoundSpa Basic's shared V2 trial policy is 28 days, defined in `db/v2/queries/trialPolicy.ts`. Ordinary V2 customer onboarding and reset previews use that default. `--trial-days` supports an explicit test override; the preview and reset audit record the selected duration, so an override is visible and bound to the plan hash.
 
 The selected Product IDs are the complete reset scope. Include only Products whose test billing state should be reset. The trial Product must be the canonical SoundSpa Basic Product (`soundspa`). Partner Benefits, Gift Access, and Location Admin Grants are always outside this utility's scope. The legacy `location_service_access` row has no Product key; if its paid/trial window is active, a Product-scoped reset is refused. Only `--all-products` explicitly authorizes clearing those Location-wide billing timestamps, with prior values recorded in the reset audit row. The suspension field is preserved.
 
@@ -21,7 +23,7 @@ docker compose --project-name soundspa-v2 -f docker-compose.staging.yml exec app
   --location-id "$LOCATION_ID" \
   --product-id "$SOUNDSPA_PRODUCT_ID" \
   --trial-product-id "$SOUNDSPA_PRODUCT_ID" \
-  --trial-days 30 \
+  --trial-days 28 \
   --reason "Reset Hamam billing for acceptance test"
 ```
 
@@ -37,7 +39,7 @@ Example output shape (IDs and hash abbreviated):
   "organization": { "id": "<organization-uuid>", "name": "Bodhe Spa" },
   "location": { "id": "<location-uuid>", "name": "Hamam" },
   "products": [{ "id": "<product-uuid>", "code": "soundspa", "name": "SoundSpa Basic" }],
-  "trial": { "productId": "<product-uuid>", "durationDays": 30, "start": "apply-time" },
+  "trial": { "productId": "<product-uuid>", "durationDays": 28, "start": "apply-time" },
   "changes": {
     "historicalSubscriptionsToInvalidate": ["<subscription-uuid>"],
     "historicalTrialsToInvalidate": ["<trial-uuid>"],
@@ -64,14 +66,14 @@ docker compose --project-name soundspa-v2 -f docker-compose.staging.yml exec app
   --location-id "$LOCATION_ID" \
   --product-id "$SOUNDSPA_PRODUCT_ID" \
   --trial-product-id "$SOUNDSPA_PRODUCT_ID" \
-  --trial-days 30 \
+  --trial-days 28 \
   --reason "Reset Hamam billing for acceptance test" \
   --apply \
   --confirm "RESET V2 STAGING BILLING $ORG_ID $LOCATION_ID" \
   --plan-hash "$PLAN_HASH"
 ```
 
-The `--trial-days` value accepts 1–365 days and defaults to 30. The reason must contain 12–500 characters. A later intentional reset requires a fresh preview and a new apply; each applied reset creates a distinct audit record and leaves at most one non-invalidated trial per Location/Product.
+The `--trial-days` value accepts 1–365 days and defaults to the shared 28-day SoundSpa Basic policy. Pass a different value only for an explicitly reviewed test scenario; the preview, confirmation hash, and audit row record it. The reason must contain 12–500 characters. A later intentional reset requires a fresh preview and a new apply; each applied reset creates a distinct audit record and leaves at most one non-invalidated trial per Location/Product.
 
 For the all-Product variant, use `--all-products` in both preview and apply in place of `--product-id`; the preview hash binds the complete Product list and scope choice.
 

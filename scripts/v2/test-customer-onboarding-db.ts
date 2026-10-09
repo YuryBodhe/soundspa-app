@@ -14,6 +14,7 @@ const [{ v2Db }, schema, { completeOrdinaryCustomerOnboarding, CustomerOnboardin
   import("../../db/v2/services/customerOnboarding"),
   import("../../db/v2/queries/coreTrials"),
 ]);
+const { SOUNDSPA_BASIC_TRIAL_DAYS } = await import("../../db/v2/queries/trialPolicy");
 const { eq } = await import("drizzle-orm");
 const fixture = randomUUID();
 const expectedError = (code: string) => (error: unknown) => error instanceof CustomerOnboardingError && error.code === code;
@@ -51,7 +52,7 @@ try {
     assert.equal(created.account.organization.name, `Onboarding ${fixture}`);
     assert.equal(created.account.location.timezone, "Asia/Ho_Chi_Minh");
     assert.equal(created.account.trial?.status, "active");
-    assert.equal(created.account.trial!.endsAt.getTime() - created.account.trial!.startsAt.getTime(), 30 * 24 * 60 * 60 * 1000);
+    assert.equal(created.account.trial!.endsAt.getTime() - created.account.trial!.startsAt.getTime(), SOUNDSPA_BASIC_TRIAL_DAYS * 24 * 60 * 60 * 1000);
     const repeated = await completeOrdinaryCustomerOnboarding({ ...input, organizationName: "Ignored retry", locationName: "Ignored retry", timezone: "Europe/Moscow" }, { runInTransaction });
     assert.equal(repeated.status, "already_complete");
     assert(repeated.account.organization && created.account.organization);
@@ -84,7 +85,7 @@ try {
   }).catch((error: unknown) => {
     if (!(error instanceof Error) || error.message !== "ONBOARDING_TEST_ROLLBACK") throw error;
   });
-  console.info("V2 Customer Onboarding DB PASS: auth/verification guards, Partner context boundary, atomic owner+Location+canonical Basic Trial, 30-day duration, no manual grants, retry idempotency, and forced membership/trial-failure rollback (all fixtures rolled back).");
+  console.info(`V2 Customer Onboarding DB PASS: auth/verification guards, Partner context boundary, atomic owner+Location+canonical Basic Trial, ${SOUNDSPA_BASIC_TRIAL_DAYS}-day duration, no manual grants, retry idempotency, and forced membership/trial-failure rollback (all fixtures rolled back).`);
 } finally {
   await v2Db.$client.end();
 }

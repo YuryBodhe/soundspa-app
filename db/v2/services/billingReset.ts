@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { operatorAuthStatus } from "@/lib/v2/adminOperator";
 import { v2Db } from "../client";
+import { soundSpaBasicTrialEndsAt } from "../queries/trialPolicy";
 import {
   commercialBillingOrderLines,
   commercialBillingOrders,
@@ -272,8 +273,9 @@ export async function applyStagingBillingReset(input: BillingResetInput & {
         .where(eq(locationServiceAccess.locationId, normalized.locationId));
     }
     const trialStartsAt = now;
-    const trialEndsAt = new Date(now.getTime() + normalized.trialDurationDays * 86_400_000);
-    if (!Number.isFinite(trialEndsAt.getTime())) throw new BillingResetError("invalid_request");
+    let trialEndsAt: Date;
+    try { trialEndsAt = soundSpaBasicTrialEndsAt(now, normalized.trialDurationDays); }
+    catch { throw new BillingResetError("invalid_request"); }
     const [trial] = await tx.insert(locationCoreTrials).values({
       locationId: normalized.locationId, productId: normalized.trialProductId,
       status: "active", startsAt: trialStartsAt, endsAt: trialEndsAt, createdAt: now, updatedAt: now,

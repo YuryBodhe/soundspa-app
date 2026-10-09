@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { isIP } from "node:net";
 import { randomUUID, createHash } from "node:crypto";
+import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../../db/v2/queries/trialPolicy";
 
 let closeTestPool: (() => Promise<void>) | undefined;
 
@@ -137,9 +138,12 @@ async function main() {
 
   const input = {
     organizationId: org.id, locationId: targetLocation.id, productIds: [basic.id], trialProductId: basic.id,
-    trialDurationDays: 30, reason: "Repeat SoundSpa staging acceptance test", operatorAuthorization: authorization,
+    trialDurationDays: SOUNDSPA_BASIC_TRIAL_DAYS, reason: "Repeat SoundSpa staging acceptance test", operatorAuthorization: authorization,
   };
   const preview = await reset.previewStagingBillingReset(input, now);
+  check(preview.trial.durationDays === SOUNDSPA_BASIC_TRIAL_DAYS, "reset preview uses the shared SoundSpa Basic trial policy");
+  const defaultPreview = await reset.previewStagingBillingReset({ ...input, trialDurationDays: undefined }, now);
+  check(defaultPreview.trial.durationDays === SOUNDSPA_BASIC_TRIAL_DAYS, "omitting the reset duration cannot silently select another policy");
   const unchanged = await v2Db.select({ id: schema.commercialBillingOrders.id, status: schema.commercialBillingOrders.status }).from(schema.commercialBillingOrders);
   check(unchanged.some((row) => row.id === pendingDraft.id && row.status === "pending"), "dry-run must not change pending order");
   check((await v2Db.select().from(schema.commercialBillingResets)).length === 0, "dry-run must not create reset audit rows");
@@ -170,7 +174,7 @@ async function main() {
     (await import("drizzle-orm")).eq(schema.locationCoreTrials.productId, basic.id),
     (await import("drizzle-orm")).isNull(schema.locationCoreTrials.invalidatedByResetId),
   ));
-  check(newTrial.startsAt.getTime() === now.getTime() && newTrial.endsAt.getTime() === now.getTime() + 30 * 86_400_000, "fresh trial should have configured 30-day window");
+  check(newTrial.startsAt.getTime() === now.getTime() && newTrial.endsAt.getTime() === now.getTime() + SOUNDSPA_BASIC_TRIAL_DAYS * 86_400_000, "fresh trial should have the 28-day product policy window");
 
   const accessBeforeRepeat = await access.resolveEffectiveChannelAccess(targetLocation.id, new Date(now.getTime() + 1_000));
   const source = (id: string) => accessBeforeRepeat.find((row) => row.id === id)?.accessSources ?? [];

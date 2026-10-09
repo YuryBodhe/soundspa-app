@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
 import { endSoundSpaTrial, startSoundSpaTrial } from "../../db/v2/queries/coreTrials";
+import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../../db/v2/queries/trialPolicy";
 import { SOUNDSPA_PRODUCT_CODE } from "../../db/v2/queries/commercialProducts";
 import {
   channels,
@@ -81,7 +82,7 @@ async function main() {
 
       const trial = await startSoundSpaTrial(locationId, tx);
       trialId = trial.id;
-      assert.equal(trial.endsAt.getTime() - trial.startsAt.getTime(), 30 * 24 * 60 * 60 * 1000);
+      assert.equal(trial.endsAt.getTime() - trial.startsAt.getTime(), SOUNDSPA_BASIC_TRIAL_DAYS * 24 * 60 * 60 * 1000);
       const withTrial = asMap(await resolveEffectiveChannelAccess(locationId, new Date(Date.now() + 10), tx));
       for (const channelId of basicOnlyChannelIds) {
         assert.equal(withTrial.get(channelId)?.playable, true);

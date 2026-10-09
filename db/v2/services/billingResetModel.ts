@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../queries/trialPolicy";
 
 export type BillingResetInput = {
   organizationId: string;
   locationId: string;
   productIds: string[];
   trialProductId: string;
-  trialDurationDays: number;
+  trialDurationDays?: number;
   reason: string;
   includeAllProducts?: boolean;
 };
@@ -28,14 +29,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 export function validateBillingResetInput(input: BillingResetInput) {
   const reason = input.reason.trim();
   const productIds = [...new Set(input.productIds)].sort();
+  const trialDurationDays = input.trialDurationDays === undefined ? SOUNDSPA_BASIC_TRIAL_DAYS : input.trialDurationDays;
   if (!UUID.test(input.organizationId) || !UUID.test(input.locationId) || !UUID.test(input.trialProductId) ||
       productIds.length === 0 || productIds.some((id) => !UUID.test(id)) || !productIds.includes(input.trialProductId) ||
-      !Number.isInteger(input.trialDurationDays) || input.trialDurationDays < 1 || input.trialDurationDays > 365 ||
+      !Number.isInteger(trialDurationDays) || trialDurationDays < 1 || trialDurationDays > 365 ||
       reason.length < 12 || reason.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(reason) ||
       (input.includeAllProducts !== undefined && typeof input.includeAllProducts !== "boolean")) {
     throw new Error("invalid_billing_reset_request");
   }
-  return { ...input, productIds, reason, includeAllProducts: input.includeAllProducts ?? false };
+  return { ...input, trialDurationDays, productIds, reason, includeAllProducts: input.includeAllProducts ?? false };
 }
 
 export function billingResetPlanHash(input: BillingResetInput, plan: BillingResetPlan): string {
