@@ -8,6 +8,16 @@ export type BillingMarketSaveErrorCode =
 
 export type BillingMarketSelectionState = "saved" | "missing" | "unsaved" | "saving" | "error";
 
+export function canResumeBillingOrder(status: string): boolean { return status === "pending"; }
+
+export function billingOrderStatusKey(status: string): string {
+  const keys: Record<string, string> = {
+    pending: "billingOrderPending", paid: "billingOrderPaid", expired: "billingOrderExpiredStatus",
+    canceled: "billingOrderAbandoned", failed: "billingOrderFailed", draft: "billingOrderDraft", quoted: "billingOrderDraft",
+  };
+  return keys[status] ?? "billingOrderFailed";
+}
+
 export function billingMarketSelectionState(input: {
   persistedMarket: string | null;
   selectedMarket: string;

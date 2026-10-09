@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   billingMarketSelectionState,
   billingOrderErrorKey,
+  billingOrderStatusKey,
+  canResumeBillingOrder,
   canPreviewBillingLines,
   saveBillingMarketAndRefresh,
 } from "./billingWizardModel";
@@ -69,6 +71,26 @@ test("single-Location billing route and pricing errors retain their existing mes
   assert.equal(billingOrderErrorKey("route_unavailable", 1), "billingNoRoutes");
   assert.equal(billingOrderErrorKey("unsupported_pricing", 1), "billingPaymentFailed");
   assert.equal(billingOrderErrorKey("market_not_configured", 1), "billingMarketMissing");
+});
+
+test("only authoritative pending orders can be resumed and every order status is localized", () => {
+  assert.equal(canResumeBillingOrder("pending"), true);
+  for (const status of ["paid", "expired", "canceled", "failed", "draft", "quoted"]) assert.equal(canResumeBillingOrder(status), false);
+  assert.equal(billingOrderStatusKey("paid"), "billingOrderPaid");
+  assert.equal(billingOrderStatusKey("pending"), "billingOrderPending");
+  assert.equal(billingOrderStatusKey("expired"), "billingOrderExpiredStatus");
+  assert.equal(billingOrderStatusKey("canceled"), "billingOrderAbandoned");
+  assert.equal(billingOrderStatusKey("failed"), "billingOrderFailed");
+});
+
+test("recovery UI reads Account history, resumes through the authorized checkout route, and exposes status retry", async () => {
+  const source = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
+  assert.match(source, /billing\/orders\/\$\{encodeURIComponent\(historyOrder\.id\)\}\/fake-checkout/);
+  assert.match(source, /billingWizardRefreshStatus/);
+  assert.match(source, /billingWizardStatusRefreshFailed/);
+  assert.match(source, /billingOrdersContinue/);
+  assert.match(source, /billingPaidStarts/);
+  assert.doesNotMatch(source, /localStorage|sessionStorage/);
 });
 
 test("the wizard renders its request error in only one place", async () => {

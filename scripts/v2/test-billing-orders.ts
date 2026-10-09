@@ -349,6 +349,12 @@ async function main() {
         assert.equal(repeatedCheckout.checkoutId, aggregateCheckout.checkoutId, "repeated checkout reuses the same pending aggregate payment");
         assert.equal(repeatedCheckout.confirmationToken, aggregateCheckout.confirmationToken, "same actor receives the same stable ticket");
         assert.equal(repeatedCheckout.checkoutUrl, aggregateCheckout.checkoutUrl, "repeated checkout returns the same transferable payer URL");
+        await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [
+          { locationId: locations[0].id, productId: products[0].id, durationMonths: 1 },
+        ] }, { db: tx, now: new Date(now.getTime() + 1000), env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "checkout_pending",
+        "a pending checkout prevents a second order for the same Location and Product");
+        assertionCount += 1;
         assert.equal(new Date(aggregateCheckout.expiresAt).getTime() - now.getTime(), 7 * 24 * 60 * 60_000, "aggregate payer link expires after seven days");
         assert.match(aggregateCheckout.checkoutUrl, /^https:\/\/test\.soundspa\.bodhemusic\.com\/fake-checkout\//);
         const payerCapability = aggregateCheckout.checkoutUrl.split("/").pop()!;
@@ -378,6 +384,11 @@ async function main() {
         assert.equal(aggregateCheckout.currency, "RUB");
         const [pendingAggregate] = await tx.select().from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
         assert.equal(pendingAggregate.status, "pending");
+        const pendingHistory = await orderRead.getCustomerBillingOrder({ authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id }, now, tx);
+        assert.equal(pendingHistory.status, "pending");
+        assert.equal("checkoutUrl" in pendingHistory, false, "Account history never serializes a bearer checkout capability");
+        assert.equal("confirmationToken" in pendingHistory, false, "Account history never serializes a confirmation token");
+        assertionCount += 3;
         assert.equal(pendingAggregate.amountMinor, BigInt(1_728_000));
         assert.equal(pendingAggregate.locationId, null);
         assert.equal(pendingAggregate.productId, null);
@@ -421,6 +432,17 @@ async function main() {
           authenticatedUserId: owner.id, confirmationToken: aggregateCheckout.confirmationToken,
         }, new Date(confirmationAt.getTime() + 1000), tx);
         assert.equal(repeatedSettlement.duplicate, true, "repeated success callback cannot extend twice");
+        const legacyPendingCheckout = await singleFake.createFakeProviderCheckout({
+          authenticatedUserId: owner.id, locationId: locations[0].id, productId: products[0].id, routeId: routes[0].id,
+        }, new Date(confirmationAt.getTime() + 1500), tx);
+        await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [
+          { locationId: locations[0].id, productId: products[0].id, durationMonths: 1 },
+        ] }, { db: tx, now: new Date(confirmationAt.getTime() + 2000), env: process.env }),
+        (error: unknown) => error instanceof service.BillingOrderError && error.code === "checkout_pending",
+        "legacy single-Location pending checkout also prevents an aggregate duplicate order");
+        await tx.update(schema.commercialPayments).set({ status: "canceled" })
+          .where(eq(schema.commercialPayments.id, legacyPendingCheckout.checkoutId));
+        assertionCount += 1;
         const paidLines = await tx.select({
           lineId: schema.commercialPaymentAllocations.orderLineId,
           amountMinor: schema.commercialPaymentAllocations.amountMinor,
@@ -600,7 +622,7 @@ async function main() {
           startsAt: schema.locationChannelGrants.startsAt, endsAt: schema.locationChannelGrants.endsAt, updatedAt: schema.locationChannelGrants.updatedAt,
         }).from(schema.locationChannelGrants), beforeAdminGrants, "subscription settlement leaves Location Admin Grants unchanged");
         assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 4);
-        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 7);
+        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 8);
         assertionCount += 5;
 
         const routeSnapshot = await tx.select({ id: schema.commercialPaymentRoutes.id }).from(schema.commercialPaymentRoutes).where(and(

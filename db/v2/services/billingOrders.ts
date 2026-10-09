@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { FAKE_PROVIDER_CODE, fakeProviderIsConfigured, type FakeProviderEnvironment } from "@/lib/v2/fakePaymentProvider";
+import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { FAKE_CHECKOUT_TTL_MS, FAKE_PROVIDER_CODE, fakeProviderIsConfigured, type FakeProviderEnvironment } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
   commercialBillingOrderLines,
   commercialBillingOrders,
   commercialPaymentProviders,
+  commercialPayments,
   commercialPaymentRoutes,
   commercialProducts,
   locationCoreTrials,
@@ -39,7 +40,8 @@ export type BillingOrderErrorCode =
   | "provider_not_configured"
   | "unsupported_pricing"
   | "incompatible_routes"
-  | "unbounded_subscription_requires_policy";
+  | "unbounded_subscription_requires_policy"
+  | "checkout_pending";
 
 export class BillingOrderError extends Error {
   constructor(readonly code: BillingOrderErrorCode) {
@@ -309,6 +311,41 @@ export async function createPrepaidBillingOrder(input: {
     const { providerCode, currency, totalAmountMinor, linePlans } = await prepareBillingOrderPlan({
       tx, authenticatedUserId: input.authenticatedUserId, request, now, env, pricingAdapters, lockForOrder: true,
     });
+
+    // The location rows are locked by prepareBillingOrderPlan. Checkout creation
+    // takes the same locks, so this check serializes with a checkout becoming
+    // pending and prevents a stale Account page from creating another order.
+    const matchingPendingLines = await tx.select({
+      locationId: commercialBillingOrderLines.locationId,
+      productId: commercialBillingOrderLines.productId,
+    }).from(commercialBillingOrderLines)
+      .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
+      .innerJoin(commercialPayments, eq(commercialPayments.billingOrderId, commercialBillingOrders.id))
+      .where(and(
+        inArray(commercialBillingOrderLines.locationId, request.lines.map((line) => line.locationId)),
+        inArray(commercialBillingOrderLines.productId, request.lines.map((line) => line.productId)),
+        eq(commercialBillingOrderLines.organizationId, request.organizationId),
+        eq(commercialBillingOrders.status, "pending"),
+        gt(commercialBillingOrders.expiresAt, now),
+        eq(commercialPayments.status, "pending"),
+      ));
+    const requestedPairs = new Set(request.lines.map((line) => requestedLineKey(line)));
+    const legacyCutoff = new Date(now.getTime() - FAKE_CHECKOUT_TTL_MS);
+    const matchingPendingLegacyPayments = await tx.select({
+      locationId: commercialPayments.locationId,
+      productId: commercialPayments.productId,
+    }).from(commercialPayments).where(and(
+      inArray(commercialPayments.locationId, request.lines.map((line) => line.locationId)),
+      inArray(commercialPayments.productId, request.lines.map((line) => line.productId)),
+      eq(commercialPayments.providerCode, FAKE_PROVIDER_CODE),
+      eq(commercialPayments.status, "pending"),
+      isNull(commercialPayments.billingOrderId),
+      gt(commercialPayments.createdAt, legacyCutoff),
+    ));
+    if (matchingPendingLines.some((line) => requestedPairs.has(requestedLineKey(line))) ||
+        matchingPendingLegacyPayments.some((payment) => payment.locationId && payment.productId && requestedPairs.has(requestedLineKey({ locationId: payment.locationId, productId: payment.productId })))) {
+      throw new BillingOrderError("checkout_pending");
+    }
 
     const [order] = await tx.insert(commercialBillingOrders).values({
       organizationId: request.organizationId,

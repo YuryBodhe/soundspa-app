@@ -399,6 +399,14 @@ input[type="button"]:active {
 .customer-billing-secondary { min-height: 44px; padding: 9px 14px; border: 1px solid rgba(195,168,108,.42); border-radius: 8px; color: #d5bd84; background: transparent; font: inherit; cursor: pointer; }
 .customer-billing-secondary:disabled { opacity: .55; cursor: wait; }
 .customer-billing-wizard-open { min-height: 44px; margin: 8px 0 14px; }
+.customer-billing-orders { margin: 10px 0 14px; padding: 14px; border: 1px solid rgba(245,240,230,.1); border-radius: 10px; background: rgba(245,240,230,.025); }
+.customer-billing-orders-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.customer-billing-orders-heading h3 { margin: 0; }
+.customer-billing-orders-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.customer-billing-orders-list > li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid rgba(245,240,230,.08); }
+.customer-billing-orders-list > li > div { display: grid; gap: 4px; min-width: 0; }
+.customer-billing-orders-list strong, .customer-billing-orders-list small { overflow-wrap: anywhere; }
+.customer-billing-orders-list span, .customer-billing-orders-list small { color: rgba(245,240,230,.72); font-size: 13px; }
 .customer-billing-wizard-dialog { width: min(100% - 32px, 680px); max-width: 680px; max-height: min(90dvh, 820px); margin: auto; padding: 24px; border: 1px solid rgba(195,168,108,.26); border-radius: 14px; color: #f5f0e6; background: #17171b; }
 .customer-billing-wizard-dialog::backdrop { background: rgba(0,0,0,.76); }
 .customer-billing-wizard-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -451,6 +459,7 @@ input[type="button"]:active {
 }
 @media (max-width: 520px) {
   .customer-billing-plan { grid-template-columns: minmax(0, 1fr); }
+  .customer-billing-orders-list > li { align-items: stretch; flex-direction: column; }
   .customer-billing-action { width: 100%; }
   .customer-billing-backdrop { align-items: end; padding: 0; }
   .customer-billing-dialog, .customer-billing-dialog.customer-auth-card { width: 100%; max-height: 92dvh; padding: 24px 20px calc(20px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }

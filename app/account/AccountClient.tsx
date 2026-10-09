@@ -42,6 +42,12 @@ type BillingLocation = {
   marketCode: string | null; products: BillingPlan[];
 };
 type BillingSummary = { locations: BillingLocation[]; supportedMarkets: string[] };
+type BillingOrderHistoryItem = {
+  id: string; organizationId: string; status: "draft" | "quoted" | "pending" | "paid" | "expired" | "canceled" | "failed";
+  currency: string; totalAmountMinor: string; createdAt: string; expiresAt: string | null;
+  payment: { status: string; updatedAt: string; providerOccurredAt: string | null } | null;
+  lines: Array<{ id: string; locationId: string; locationName: string; productId: string; productName: string; durationMonths: number; amountMinor: string; billingPeriodStartsAt: string | null; billingPeriodEndsAt: string | null }>;
+};
 type FakeCheckout = {
   confirmationToken: string; expiresAt: string; amountMinor: number; currency: string;
   providerName: string; phase: "checkout" | "done";
@@ -65,6 +71,8 @@ function Content() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [billingUnavailable, setBillingUnavailable] = useState(false);
+  const [billingOrders, setBillingOrders] = useState<BillingOrderHistoryItem[]>([]);
+  const [billingOrdersUnavailable, setBillingOrdersUnavailable] = useState(false);
   const [selectedBilling, setSelectedBilling] = useState<{ location: BillingLocation; plan: BillingPlan } | null>(null);
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [fakeCheckout, setFakeCheckout] = useState<FakeCheckout | null>(null);
@@ -77,9 +85,10 @@ function Content() {
 
   async function load() {
     try {
-      const [response, billingResponse] = await Promise.all([
+      const [response, billingResponse, ordersResponse] = await Promise.all([
         fetch("/api/v2/customer/onboarding", { cache: "no-store", credentials: "same-origin" }),
         fetch("/api/v2/customer/billing", { cache: "no-store", credentials: "same-origin" }),
+        fetch("/api/v2/customer/billing/orders?limit=50", { cache: "no-store", credentials: "same-origin" }).catch(() => null),
       ]);
       if (response.ok) setResult(await response.json() as LoadResult);
       else setResult(null);
@@ -90,7 +99,15 @@ function Content() {
         setBilling(null);
         setBillingUnavailable(billingResponse.status !== 404 && billingResponse.status !== 401);
       }
-    } catch { setResult(null); }
+      if (ordersResponse?.ok) {
+        const history = await ordersResponse.json() as { items?: BillingOrderHistoryItem[] };
+        setBillingOrders(Array.isArray(history.items) ? history.items : []);
+        setBillingOrdersUnavailable(false);
+      } else {
+        setBillingOrders([]);
+        setBillingOrdersUnavailable(!ordersResponse || (ordersResponse.status !== 404 && ordersResponse.status !== 401));
+      }
+    } catch { setResult(null); setBillingOrdersUnavailable(true); }
     finally { setLoaded(true); }
   }
 
@@ -333,6 +350,9 @@ function Content() {
             locations={billing.locations.filter((location) => location.organizationId === organizationId)}
             supportedMarkets={billing.supportedMarkets}
             onSaveMarket={persistMarket}
+            orders={billingOrders.filter((order) => order.organizationId === organizationId)}
+            ordersUnavailable={billingOrdersUnavailable}
+            onRefreshOrders={load}
             onPaymentConfirmed={load}
           />}
           {group.locations.map((location) => <section className="customer-account-location" key={location.id}>
