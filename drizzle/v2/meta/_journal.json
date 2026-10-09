@@ -120,6 +120,13 @@
       "when": 1791461497519,
       "tag": "0016_location_billing_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791526957000,
+      "tag": "0017_gift_access_foundation",
+      "breakpoints": true
     }
   ]
 }

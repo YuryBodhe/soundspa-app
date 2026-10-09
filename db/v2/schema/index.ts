@@ -17,6 +17,7 @@ export * from "./access/locationChannelEntitlements";
 export * from "./access/baseChannels";
 export * from "./access/locationChannelGrants";
 export * from "./access/locationChannelVisibility";
+export * from "./access/giftAccess";
 export * from "./monitoring/devices";
 export * from "./monitoring/deviceActivationTokens";
 export * from "./monitoring/deviceCurrentState";

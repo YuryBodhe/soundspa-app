@@ -17,3 +17,4 @@ export const commercialProductKind = pgEnum("commercial_product_kind", ["core", 
 export const commercialTrialStatus = pgEnum("commercial_trial_status", ["active", "expired"]);
 export const commercialSubscriptionStatus = pgEnum("commercial_subscription_status", ["active", "past_due", "canceled", "expired"]);
 export const commercialOfferGrantType = pgEnum("commercial_offer_grant_type", ["partner_benefit", "trial"]);
+export const giftAccessDuration = pgEnum("gift_access_duration", ["3_months", "6_months", "12_months", "indefinite"]);
