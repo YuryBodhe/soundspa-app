@@ -6,6 +6,7 @@ export type AccountPlanSnapshot = {
   trialEndsAt: string | null;
   paidThrough: string | null;
   trialActive: boolean;
+  scheduledPaidPeriods?: readonly { startsAt: string; endsAt: string }[];
 };
 
 export type AccountPartnerBenefit = {
@@ -15,6 +16,19 @@ export type AccountPartnerBenefit = {
 };
 
 export type AccountLocationPlan = AccountPlanSnapshot & { productName: string };
+
+/** Periods in this list are supplied by the billing API as future, non-invalidated paid coverage. */
+export function accountScheduledPaidPeriodRanges(
+  periods: readonly { startsAt: string; endsAt: string }[] | undefined,
+  formatDate: (value: string) => string,
+): string[] {
+  return (periods ?? []).flatMap((period) => {
+    const start = new Date(period.startsAt).getTime();
+    const end = new Date(period.endsAt).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+    return [`${formatDate(period.startsAt)} – ${formatDate(period.endsAt)}`];
+  });
+}
 
 export function accountPlanPresentation(
   plan: AccountPlanSnapshot,
@@ -46,6 +60,10 @@ export function accountLocationPresentation<T extends AccountLocationPlan>(
   const activeProducts = products.filter((product) =>
     product.status === "trial" || product.status === "subscription" || product.status === "partner",
   );
+  const summaryProducts = products.filter((product) =>
+    product.status === "trial" || product.status === "subscription" || product.status === "partner" ||
+    accountScheduledPaidPeriodRanges(product.scheduledPaidPeriods, (value) => value).length > 0,
+  );
   const accessWindows = new Set(activeProducts.map((product) => product.accessExpiresAt ?? "indefinite"));
   const accessStates = new Set(activeProducts.map((product) => `${product.status}:${product.accessExpiresAt ?? "indefinite"}`));
   const oneSharedExpiry = accessWindows.size === 1 && activeProducts[0]?.accessExpiresAt !== null
@@ -54,6 +72,7 @@ export function accountLocationPresentation<T extends AccountLocationPlan>(
   return {
     products,
     activeProducts,
+    summaryProducts,
     activeProductCount: activeProducts.length,
     summaryKind: activeProducts.length === 0 ? "none" as const : activeProducts.length === 1 ? "single" as const : "multiple" as const,
     hasDifferentAccessExpirations: accessWindows.size > 1,

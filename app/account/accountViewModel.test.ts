@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { accountLocationPresentation, accountPlanPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationPresentation, accountPlanPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 
 const now = Date.parse("2026-10-09T15:16:28.704Z");
 
@@ -36,6 +36,7 @@ test("a single Location summary shows its single trial Product and remaining day
   }], [], now);
   assert.equal(view.summaryKind, "single");
   assert.equal(view.activeProductCount, 1);
+  assert.equal(view.summaryProducts.length, 1, "a trial-only Location remains visible without a scheduled-period label");
   assert.equal(view.activeProducts[0].productName, "SoundSpa Basic");
   assert.equal(view.accessExpiresAt, "2026-11-06T15:16:28.704Z");
   assert.equal(view.trialRemainingDays, 28);
@@ -48,6 +49,46 @@ test("a current paid Product still surfaces its independent active trial window"
   }], [], now);
   assert.equal(view.trialRemainingDays, 28);
   assert.equal(view.accessExpiresAt, "2026-11-09T10:24:00.385Z");
+});
+
+test("collapsed summaries can show scheduled paid coverage beside an active trial without changing current status", () => {
+  const view = accountLocationPresentation([{
+    productId: "basic", productName: "SoundSpa Basic", status: "trial",
+    trialEndsAt: "2026-11-06T15:16:28.704Z", paidThrough: null, trialActive: true,
+    scheduledPaidPeriods: [{ startsAt: "2026-11-06T15:16:28.704Z", endsAt: "2026-12-06T15:16:28.704Z" }],
+  }, {
+    productId: "spa", productName: "Spaquatoria", status: "partner",
+    trialEndsAt: null, paidThrough: null, trialActive: false, scheduledPaidPeriods: [],
+  }], [{ productId: "spa", startsAt: "2026-10-07T07:05:10.899Z", endsAt: null }], now);
+  assert.equal(view.activeProductCount, 2);
+  assert.deepEqual(view.summaryProducts.map((plan) => plan.productName), ["SoundSpa Basic", "Spaquatoria"]);
+  assert.equal(view.products[0].status, "trial");
+  assert.equal(view.products[0].trialRemainingDays, 28);
+  assert.equal(view.products[1].status, "partner");
+  assert.equal(view.products[1].accessExpiresAt, null);
+  assert.equal(view.accessExpiresAt, null, "the Location summary must not merge the trial and indefinite Partner Benefit windows");
+});
+
+test("a future-only paid Product remains in the collapsed summary without claiming current access", () => {
+  const view = accountLocationPresentation([{
+    productId: "basic", productName: "SoundSpa Basic", status: "expired",
+    trialEndsAt: null, paidThrough: null, trialActive: false,
+    scheduledPaidPeriods: [{ startsAt: "2026-11-06T00:00:00.000Z", endsAt: "2026-12-06T00:00:00.000Z" }],
+  }], [], now);
+  assert.equal(view.activeProductCount, 0);
+  assert.deepEqual(view.summaryProducts.map((plan) => plan.productId), ["basic"]);
+  assert.equal(view.accessExpiresAt, null);
+});
+
+test("scheduled paid periods format individually and omit malformed or absent periods", () => {
+  const formatter = (value: string) => value.slice(0, 10);
+  assert.deepEqual(accountScheduledPaidPeriodRanges(undefined, formatter), []);
+  assert.deepEqual(accountScheduledPaidPeriodRanges([
+    { startsAt: "2026-11-06T15:16:28.704Z", endsAt: "2026-12-06T15:16:28.704Z" },
+    { startsAt: "2026-12-06T15:16:28.704Z", endsAt: "2027-01-06T15:16:28.704Z" },
+    { startsAt: "bad-date", endsAt: "2027-02-01T00:00:00.000Z" },
+    { startsAt: "2027-02-01T00:00:00.000Z", endsAt: "2027-01-01T00:00:00.000Z" },
+  ], formatter), ["2026-11-06 – 2026-12-06", "2026-12-06 – 2027-01-06"]);
 });
 
 test("multiple Product entitlements keep distinct expiry dates in details, not a combined date", () => {
@@ -95,7 +136,10 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(account, /<details className="customer-account-location-details">/);
   assert.match(account, /customer-account-device-disclosure/);
   assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
-  assert.match(account, /locationPlanSummary\(plan, overview\.activeProductCount > 1\)/);
+  assert.match(account, /locationPlanSummary\(plan, overview\.summaryProducts\.length > 1\)/);
+  assert.match(account, /accountScheduledPaidPeriodRanges\(plan\.scheduledPaidPeriods, displayDate\)/);
+  assert.match(account, /accountNextPaidPeriod/);
+  assert.match(account, /accountNextPaidPeriods/);
   assert.match(account, /plan\.status === "trial" && plan\.trialEndsAt \? trialSummaryText\(plan\)/);
   assert.match(account, /plan\.status !== "partner" && billingLocation\.partnerBenefits/);
   assert.match(account, /plan\.accessExpiresAt && !\(plan\.status === "trial" && plan\.trialEndsAt\)/);
@@ -110,6 +154,10 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(css, /customer-account-locations \{ display: grid/);
   assert.match(css, /customer-account-location-summary:focus-visible/);
   assert.match(css, /customer-account-product-row/);
+  assert.match(css, /customer-billing-wizard-link-actions > a\.customer-auth-submit \{ color: #08070a; background: var\(--accent\);/);
+  assert.match(css, /customer-billing-wizard-link-actions > a\.customer-auth-submit:hover/);
+  assert.match(css, /customer-billing-wizard-link-actions > a\.customer-auth-submit:focus-visible/);
+  assert.match(css, /\.customer-auth-submit:disabled \{ opacity: \.6; cursor: wait; \}/);
   assert.match(css, /background: var\(--accent\)/);
   assert.match(css, /customer-billing-wizard-check \{\s*display: grid;\s*grid-template-columns: 21px/);
   assert.match(css, /@media \(max-width: 520px\)/);
@@ -124,6 +172,18 @@ test("compact Account labels and organization billing action are localized in ev
     assert.match(dictionary, /accountAccessActive:/);
     assert.match(dictionary, /accountNoActiveAccess:/);
     assert.match(dictionary, /accountTrialUntil:/);
+    assert.match(dictionary, /accountNextPaidPeriod:/);
+    assert.match(dictionary, /accountNextPaidPeriods:/);
     assert.match(dictionary, /billingOrdersTitle: 'Order history'|billingOrdersTitle: 'История заказов'|billingOrdersTitle: 'Lịch sử đơn hàng'|billingOrdersTitle: 'ประวัติคำสั่งซื้อ'/);
   }
+  const ru = await readFile(new URL("../i18n/dictionaries/ru.ts", import.meta.url), "utf8");
+  assert.match(ru, /accountNextPaidPeriod: 'Следующий оплаченный период: \{\{period\}\}'/);
+});
+
+test("the billing API exposes only future, non-invalidated paid periods to Account", async () => {
+  const source = await readFile(new URL("../../db/v2/services/customerBilling.ts", import.meta.url), "utf8");
+  assert.match(source, /isNull\(locationSubscriptions\.invalidatedByResetId\)/);
+  assert.match(source, /candidate\.startsAt > now/);
+  assert.match(source, /candidate\.currentPeriodEndsAt !== null && candidate\.currentPeriodEndsAt > candidate\.startsAt/);
+  assert.match(source, /scheduledPaidPeriods: subscriptions\.filter/);
 });

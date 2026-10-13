@@ -481,6 +481,9 @@ input[type="button"]:active {
 .customer-billing-wizard-actions > button { min-height: 44px; }
 .customer-billing-wizard-link-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .customer-billing-wizard-link-actions > a, .customer-billing-wizard-link-actions > button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid rgba(195,168,108,.45); border-radius: 8px; text-decoration: none; }
+.customer-billing-wizard-link-actions > a.customer-auth-submit { color: #08070a; background: var(--accent); font-weight: 600; }
+.customer-billing-wizard-link-actions > a.customer-auth-submit:hover { color: #08070a; background: color-mix(in srgb, var(--accent) 88%, white); }
+.customer-billing-wizard-link-actions > a.customer-auth-submit:focus-visible { outline: 2px solid #f5f0e6; outline-offset: 3px; }
 @media (max-width: 520px) {
   .customer-account-page { padding: 16px; }
   .customer-account-shell { padding: 22px 18px; }

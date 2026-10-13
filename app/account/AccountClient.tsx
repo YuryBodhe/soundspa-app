@@ -6,7 +6,7 @@ import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
-import { accountLocationPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 
 type Account = {
@@ -389,6 +389,12 @@ function Content() {
     if (plan.trialActive || plan.status === "trial") summary.push(`${prefix}${trialSummaryText(plan)}`);
     if (plan.status === "subscription" && plan.paidThrough) summary.push(`${prefix}${t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough))}`);
     if (plan.status === "partner") summary.push(`${prefix}${plan.accessExpiresAt ? `${t("billingPartnerStatus")} · ${t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}` : t("billingPartnerStatus")}`);
+    const scheduledPeriods = accountScheduledPaidPeriodRanges(plan.scheduledPaidPeriods, displayDate);
+    if (scheduledPeriods.length === 1) {
+      summary.push(`${prefix}${t("accountNextPaidPeriod").replace("{{period}}", scheduledPeriods[0])}`);
+    } else if (scheduledPeriods.length > 1) {
+      summary.push(`${prefix}${t("accountNextPaidPeriods").replace("{{periods}}", scheduledPeriods.join("; "))}`);
+    }
     return summary;
   };
   const planStatusKey = (plan: Pick<BillingPlan, "status" | "subscriptionCanceled">) => plan.status === "trial" ? "billingTrial"
@@ -433,7 +439,7 @@ function Content() {
               <div className="customer-account-location-summary"><span className="customer-account-location-name">{location.name}</span></div>
             </section>;
             const overview = accountLocationPresentation(billingLocation.products, billingLocation.partnerBenefits);
-            const locationSummary = overview.activeProducts.flatMap((plan) => locationPlanSummary(plan, overview.activeProductCount > 1));
+            const locationSummary = overview.summaryProducts.flatMap((plan) => locationPlanSummary(plan, overview.summaryProducts.length > 1));
             const orphanBenefits = billingLocation.partnerBenefits.filter((benefit) =>
               !billingLocation.products.some((plan) => plan.productId === benefit.productId),
             );
