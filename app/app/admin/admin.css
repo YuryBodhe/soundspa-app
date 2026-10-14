@@ -209,8 +209,32 @@
 .product-channel-option { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 40px; padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.035); }
 .product-channel-option input { width: 18px; height: 18px; accent-color: #c3a86c; }
 .product-create-card .admin-form > .text-dim { margin: -4px 0 0; font-size: 12px; }
+.payment-route-management { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.payment-route-management > h3 { margin: 0 0 6px; font-size: 15px; }
+.payment-route-management > .text-dim { max-width: 720px; font-size: 12px; }
+.payment-route-list { display: grid; gap: 10px; margin: 12px 0; padding: 0; list-style: none; }
+.payment-route-card { display: grid; gap: 8px; padding: 12px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; background: rgba(255, 255, 255, 0.025); }
+.payment-route-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.payment-route-summary > span:last-child { color: rgba(255, 255, 255, 0.65); font-size: 12px; }
+.payment-route-reference { margin: 0; color: rgba(255, 255, 255, 0.7); font-size: 12px; overflow-wrap: anywhere; }
+.payment-route-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.payment-route-change-form { display: grid; grid-template-columns: minmax(80px, 0.6fr) minmax(160px, 1.4fr) auto; align-items: end; gap: 8px; }
+.payment-route-change-form > label:not(.payment-route-confirm) { display: grid; gap: 5px; color: rgba(255, 255, 255, 0.7); font-size: 11px; }
+.payment-route-change-form input:not([type="checkbox"]) { width: 100%; min-height: 36px; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 7px 9px; background: rgba(8, 8, 14, 0.95); color: #f5f5f7; }
+.payment-route-confirm { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; font-size: 12px; }
+.payment-route-history summary,
+.payment-route-create summary { cursor: pointer; color: rgba(195, 168, 108, 0.95); font-size: 12px; }
+.payment-route-history ol { display: grid; gap: 8px; margin: 8px 0 0; padding-left: 20px; color: rgba(255, 255, 255, 0.7); font-size: 12px; }
+.payment-route-history small { overflow-wrap: anywhere; }
+.payment-route-create { margin-top: 12px; }
+.payment-route-create > summary { padding: 8px 0; }
+.payment-route-create .admin-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 10px; }
+.payment-route-create .admin-form > .text-dim { grid-column: 1 / -1; margin: -4px 0 0; font-size: 12px; }
+.payment-route-create button { justify-self: start; }
 @media (max-width: 700px) {
   .product-management-summary { align-items: flex-start; }
+  .payment-route-change-form { grid-template-columns: minmax(0, 1fr); }
+  .payment-route-change-form > button { justify-self: start; }
   .admin-main-nav,
   .product-page-nav { flex-wrap: wrap; }
   .product-page-header { align-items: flex-start; flex-wrap: wrap; }

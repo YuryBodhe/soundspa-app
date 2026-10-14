@@ -277,6 +277,32 @@ export const commercialPaymentRoutes = pgTable("commercial_payment_routes", {
   check("commercial_payment_routes_display_order_nonnegative", sql`${table.displayOrder} >= 0`),
 ]);
 
+export type CommercialPaymentRouteAuditState = {
+  marketCode: string;
+  providerCode: string;
+  externalReference: string;
+  isEnabled: boolean;
+  displayOrder: number;
+};
+
+/** Append-only operator audit history for route configuration changes. */
+export const commercialPaymentRouteEvents = pgTable("commercial_payment_route_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  routeId: uuid("route_id").notNull().references(() => commercialPaymentRoutes.id, { onDelete: "restrict" }),
+  action: text("action").notNull(),
+  operator: text("operator").notNull(),
+  reason: text("reason").notNull(),
+  beforeState: jsonb("before_state").$type<CommercialPaymentRouteAuditState | null>(),
+  afterState: jsonb("after_state").$type<CommercialPaymentRouteAuditState>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("commercial_payment_route_events_route_time_idx").on(table.routeId, table.createdAt),
+  check("commercial_payment_route_events_action_valid", sql`${table.action} IN ('created', 'enabled', 'disabled', 'priority_changed')`),
+  check("commercial_payment_route_events_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
+  check("commercial_payment_route_events_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 12 AND 500`),
+  check("commercial_payment_route_events_state_shape", sql`jsonb_typeof(${table.afterState}) = 'object' AND (${table.beforeState} IS NULL OR jsonb_typeof(${table.beforeState}) = 'object')`),
+]);
+
 /** Provider-independent, immutable-at-quote billing snapshot for one Organization. */
 export const commercialBillingOrders = pgTable("commercial_billing_orders", {
   id: uuid("id").defaultRandom().primaryKey(),

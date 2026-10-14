@@ -4,10 +4,14 @@ import { FormEvent, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
 import { productVisibilityConfirmationReducer, type VisibilityConfirmationState } from "./visibilityConfirmation";
 import { productPriceInputFromMinor, productPriceMinorFromInput } from "./productPriceInput";
+import PaymentRouteManagement from "./PaymentRouteManagement";
 
 type Channel = { id: string; name: string; kind: "music" | "ambient"; isPublished: boolean; isArchived: boolean };
 type Visibility = "public" | "private" | "disabled";
-type Product = { id: string; code: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }> };
+type RouteState = { marketCode: string; providerCode: string; externalReference: string; isEnabled: boolean; displayOrder: number };
+type PaymentRoute = RouteState & { id: string; productId: string; providerName: string; providerEnabled: boolean; createdAt: Date | string; updatedAt: Date | string; history: Array<{ id: string; action: string; operator: string; reason: string; beforeState: RouteState | null; afterState: RouteState; createdAt: Date | string }> };
+type Product = { id: string; code: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }>; paymentRoutes: PaymentRoute[] };
+type PaymentRouteProvider = { code: string; name: string; markets: readonly string[] };
 
 function configuredPrice(product: Product): string {
   if (product.priceMinor === null || product.currency === null || product.billingIntervalMonths === null) return "Not configured";
@@ -18,7 +22,7 @@ function selectedChannels(form: HTMLFormElement): string[] {
   return new FormData(form).getAll("channelIds").filter((value): value is string => typeof value === "string");
 }
 
-export default function ProductManagement({ products, channels }: { products: Product[]; channels: Channel[] }) {
+export default function ProductManagement({ products, channels, paymentRouteProviders }: { products: Product[]; channels: Channel[]; paymentRouteProviders: readonly PaymentRouteProvider[] }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +139,7 @@ export default function ProductManagement({ products, channels }: { products: Pr
             </details>}
             <ProductAuthorizationManagement productId={product.id} productName={product.name} />
           </section>
+          <PaymentRouteManagement productId={product.id} productName={product.name} initialRoutes={product.paymentRoutes} providers={paymentRouteProviders} />
           <form className="admin-form product-management-form" onSubmit={(event) => void update(event, product)}>
             <label>Product code<input value={product.code} readOnly aria-readonly="true" /></label>
             <label>Product name<input name="name" required maxLength={160} defaultValue={product.name} /></label>

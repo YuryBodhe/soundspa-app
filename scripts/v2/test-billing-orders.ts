@@ -50,12 +50,12 @@ async function main() {
     const expectedLocalRole = decodeURIComponent(target.username);
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
-        expectedLocalRole === "soundspa_v2" || dbIdentity.role !== expectedLocalRole ||
-        Number(dbIdentity.migrationCount) !== 21 || dbIdentity.latestMigration !== "1791990342891") {
-      throw new Error("Database is not the expected disposable local database at migration 0020.");
+        expectedLocalRole !== "soundspa_v2_test" || dbIdentity.role !== "soundspa_v2_test" ||
+        Number(dbIdentity.migrationCount) !== 22 || dbIdentity.latestMigration !== "1792004696226") {
+      throw new Error("Database is not the expected disposable local database at migration 0021.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     if (baseline.rows[0]?.count !== "0") throw new Error("Disposable integration database must contain no customer or commercial fixtures before the test.");
 
@@ -394,6 +394,14 @@ async function main() {
         assert.equal(repeatedCheckout.checkoutId, aggregateCheckout.checkoutId, "repeated checkout reuses the same pending aggregate payment");
         assert.equal(repeatedCheckout.confirmationToken, aggregateCheckout.confirmationToken, "same actor receives the same stable ticket");
         assert.equal(repeatedCheckout.checkoutUrl, aggregateCheckout.checkoutUrl, "repeated checkout returns the same transferable payer URL");
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: false }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
+        const resumedAfterRouteDisable = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id,
+        }, new Date(now.getTime() + 1100), tx);
+        assert.equal(resumedAfterRouteDisable.checkoutId, aggregateCheckout.checkoutId,
+          "a pending aggregate checkout remains resumable after its route is disabled");
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: true }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
+        assertionCount += 1;
         await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [
           { locationId: locations[0].id, productId: products[0].id, durationMonths: 1 },
         ] }, { db: tx, now: new Date(now.getTime() + 1000), env: process.env }),
@@ -468,9 +476,11 @@ async function main() {
         });
 
         const confirmationAt = new Date(now.getTime() + 3000);
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: false }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
         const settledAggregate = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: aggregateCheckout.confirmationToken,
         }, confirmationAt, tx);
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: true }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
         assert.equal(settledAggregate.duplicate, false);
         assert.equal(settledAggregate.allocations.length, 3);
         await tx.update(schema.commercialProducts).set({ priceMinor: 150_000, updatedAt: confirmationAt })
@@ -497,17 +507,37 @@ async function main() {
           authenticatedUserId: owner.id, confirmationToken: aggregateCheckout.confirmationToken,
         }, new Date(confirmationAt.getTime() + 1000), tx);
         assert.equal(repeatedSettlement.duplicate, true, "repeated success callback cannot extend twice");
+        const [routeDisableLocation] = await tx.insert(schema.locations).values({
+          organizationId: organization.id, name: "Route disable compatibility", slug: `billing-route-disable-${randomUUID().slice(0, 8)}`,
+          timezone: "Europe/Moscow", marketCode: "RU",
+        }).returning();
         const legacyPendingCheckout = await singleFake.createFakeProviderCheckout({
-          authenticatedUserId: owner.id, locationId: locations[0].id, productId: products[0].id, routeId: routes[0].id,
+          authenticatedUserId: owner.id, locationId: routeDisableLocation.id, productId: products[0].id, routeId: routes[0].id,
         }, new Date(confirmationAt.getTime() + 1500), tx);
         await assert.rejects(service.createPrepaidBillingOrder({ ...input, lines: [
-          { locationId: locations[0].id, productId: products[0].id, durationMonths: 1 },
+          { locationId: routeDisableLocation.id, productId: products[0].id, durationMonths: 1 },
         ] }, { db: tx, now: new Date(confirmationAt.getTime() + 2000), env: process.env }),
         (error: unknown) => error instanceof service.BillingOrderError && error.code === "checkout_pending",
         "legacy single-Location pending checkout also prevents an aggregate duplicate order");
-        await tx.update(schema.commercialPayments).set({ status: "canceled" })
-          .where(eq(schema.commercialPayments.id, legacyPendingCheckout.checkoutId));
-        assertionCount += 1;
+        const [legacyPaymentBeforeDisable] = await tx.select({ amountMinor: schema.commercialPayments.amountMinor, currency: schema.commercialPayments.currency })
+          .from(schema.commercialPayments).where(eq(schema.commercialPayments.id, legacyPendingCheckout.checkoutId));
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: false }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
+        await assert.rejects(singleFake.createFakeProviderCheckout({
+          authenticatedUserId: owner.id, locationId: routeDisableLocation.id, productId: products[0].id, routeId: routes[0].id,
+        }, new Date(confirmationAt.getTime() + 2500), tx),
+        (error: unknown) => error instanceof singleFake.FakeProviderError && error.code === "route_unavailable",
+        "disabling a route blocks a new single-Location checkout");
+        const legacySettlement = await singleFake.confirmFakeProviderCheckout({
+          authenticatedUserId: owner.id, confirmationToken: legacyPendingCheckout.confirmationToken,
+        }, new Date(confirmationAt.getTime() + 3000), tx);
+        assert.equal(legacySettlement.duplicate, false, "a pending single-Location payment still settles after route disable");
+        const [legacyPaymentAfterSettlement] = await tx.select({ amountMinor: schema.commercialPayments.amountMinor, currency: schema.commercialPayments.currency, status: schema.commercialPayments.status })
+          .from(schema.commercialPayments).where(eq(schema.commercialPayments.id, legacyPendingCheckout.checkoutId));
+        assert.equal(legacyPaymentAfterSettlement.amountMinor, legacyPaymentBeforeDisable.amountMinor);
+        assert.equal(legacyPaymentAfterSettlement.currency, legacyPaymentBeforeDisable.currency);
+        assert.equal(legacyPaymentAfterSettlement.status, "succeeded");
+        await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: true }).where(eq(schema.commercialPaymentRoutes.id, routes[0].id));
+        assertionCount += 8;
         const paidLines = await tx.select({
           lineId: schema.commercialPaymentAllocations.orderLineId,
           amountMinor: schema.commercialPaymentAllocations.amountMinor,
@@ -699,7 +729,7 @@ async function main() {
         assert.deepEqual(await tx.select({ id: schema.locationChannelGrants.id, enabled: schema.locationChannelGrants.enabled,
           startsAt: schema.locationChannelGrants.startsAt, endsAt: schema.locationChannelGrants.endsAt, updatedAt: schema.locationChannelGrants.updatedAt,
         }).from(schema.locationChannelGrants), beforeAdminGrants, "subscription settlement leaves Location Admin Grants unchanged");
-        assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 4);
+        assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 5);
         assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 10,
           "the two frozen-price checkout fixtures each create one payment snapshot");
         assertionCount += 5;
@@ -720,7 +750,7 @@ async function main() {
       : [];
     assert.equal(rollbackOrganization, undefined, "fixture Organization must not remain after rollback");
     const afterRollback = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
     );
     assert.equal(afterRollback.rows[0]?.count, "0", "all customer and commercial fixtures must be absent after rollback");
     assertionCount += 2;
@@ -892,7 +922,7 @@ async function main() {
       }
     }
     const finalCounts = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     assert.equal(finalCounts.rows[0]?.count, "0", "rollback and concurrent fixtures are fully removed");
     assertionCount += 1;

@@ -217,7 +217,6 @@ export async function confirmFakeProviderCheckout(input: {
 
     const [route] = await tx.select({
       externalReference: commercialPaymentRoutes.externalReference,
-      isEnabled: commercialPaymentRoutes.isEnabled,
       providerEnabled: commercialPaymentProviders.isEnabled,
       productActive: commercialProducts.isActive,
       marketCode: commercialPaymentRoutes.marketCode,
@@ -232,7 +231,9 @@ export async function confirmFakeProviderCheckout(input: {
         eq(commercialPaymentRoutes.providerCode, FAKE_PROVIDER_CODE),
         isNull(locations.archivedAt),
       )).limit(1);
-    if (!route || !route.isEnabled || !route.providerEnabled || !route.productActive || route.marketCode !== route.locationMarketCode) {
+    // Route enablement gates new checkouts. A pending payment already owns an
+    // immutable route snapshot, so disabling that route must not strand it.
+    if (!route || !route.providerEnabled || !route.productActive || route.marketCode !== route.locationMarketCode) {
       throw new FakeProviderError("route_unavailable");
     }
 

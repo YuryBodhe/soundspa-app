@@ -6,6 +6,7 @@ import {
   validateCreateProductInput,
   validateUpdateProductInput,
 } from "./productAdminValidation";
+import { listProductPaymentRoutesForProductAdmin, PAYMENT_ROUTE_PROVIDERS } from "./paymentRouteAdmin";
 export { ProductAdminError, type ProductAdminErrorCode, type ProductKind } from "./productAdminValidation";
 
 type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
@@ -48,14 +49,19 @@ export async function listProductManagementData() {
   for (const row of compositionRows) channelsByProduct.set(row.productId, [...(channelsByProduct.get(row.productId) ?? []), row]);
   const visibilityHistoryByProduct = new Map<string, typeof visibilityRows>();
   for (const row of visibilityRows) visibilityHistoryByProduct.set(row.productId, [...(visibilityHistoryByProduct.get(row.productId) ?? []), row]);
+  const paymentRouteDataByProduct = new Map(await Promise.all(productRows.map(async (product) =>
+    [product.id, await listProductPaymentRoutesForProductAdmin(v2Db, product.id)] as const,
+  )));
   return {
     products: productRows.map((product) => ({
       ...product,
       channelIds: (channelsByProduct.get(product.id) ?? []).map((channel) => channel.channelId),
       channels: (channelsByProduct.get(product.id) ?? []).map(({ channelId, channelName, channelKind }) => ({ id: channelId, name: channelName, kind: channelKind })),
       visibilityHistory: visibilityHistoryByProduct.get(product.id) ?? [],
+      paymentRoutes: paymentRouteDataByProduct.get(product.id)?.routes ?? [],
     })),
     channels: channelRows.map(({ archivedAt, ...channel }) => ({ ...channel, isArchived: archivedAt !== null })),
+    paymentRouteProviders: PAYMENT_ROUTE_PROVIDERS,
   };
 }
 
