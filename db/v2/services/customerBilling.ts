@@ -17,6 +17,7 @@ import {
   users,
 } from "../schema";
 import { resolveEnabledPaymentRoutesForLocationProduct } from "./paymentFoundation";
+import { getOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 
 export class CustomerBillingError extends Error {
   constructor(readonly code: "not_authorized" | "market_unavailable" | "invalid_market") {
@@ -54,24 +55,36 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
       isNull(locations.archivedAt),
     )).orderBy(asc(organizations.name), asc(locations.name), asc(locations.id));
 
-  const products = await db.select({ id: commercialProducts.id, name: commercialProducts.name })
-    .from(commercialProducts).where(eq(commercialProducts.isActive, true))
+  const products = await db.select({ id: commercialProducts.id, name: commercialProducts.name, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility })
+    .from(commercialProducts)
     .orderBy(asc(commercialProducts.name), asc(commercialProducts.id));
 
-  const marketRows = await db.selectDistinct({ marketCode: commercialPaymentRoutes.marketCode })
+  const organizationIds = [...new Set(authorizedLocations.map((location) => location.organizationId))];
+  const purchaseEligibilityByOrganization = new Map<string, Awaited<ReturnType<typeof getOrganizationProductPurchaseEligibility>>>();
+  for (const organizationId of organizationIds) {
+    purchaseEligibilityByOrganization.set(organizationId, await getOrganizationProductPurchaseEligibility(
+      db, organizationId, products.map((product) => product.id),
+    ));
+  }
+  const customerPurchasableProductIds = [...new Set([...purchaseEligibilityByOrganization.values()]
+    .flatMap((eligibility) => [...eligibility.values()].filter((product) => product.eligible).map((product) => product.id)))];
+
+  const marketRows = customerPurchasableProductIds.length ? await db.selectDistinct({ marketCode: commercialPaymentRoutes.marketCode })
     .from(commercialPaymentRoutes)
     .innerJoin(commercialPaymentProviders, eq(commercialPaymentProviders.code, commercialPaymentRoutes.providerCode))
     .innerJoin(commercialProducts, eq(commercialProducts.id, commercialPaymentRoutes.productId))
     .where(and(
       eq(commercialPaymentRoutes.providerCode, FAKE_PROVIDER_CODE),
       eq(commercialPaymentRoutes.isEnabled, true), eq(commercialPaymentProviders.isEnabled, true), eq(commercialProducts.isActive, true),
+      inArray(commercialProducts.id, customerPurchasableProductIds),
     ))
-    .orderBy(asc(commercialPaymentRoutes.marketCode));
+    .orderBy(asc(commercialPaymentRoutes.marketCode)) : [];
   const supportedMarkets = marketRows.map((row) => row.marketCode);
 
   const result = [];
   for (const location of authorizedLocations) {
     const cards = [];
+    const purchaseEligibility = purchaseEligibilityByOrganization.get(location.organizationId);
     const partnerBenefitRows = await db.select({
       id: commercialPartnerBenefits.id,
       partnerName: commercialPartners.name,
@@ -107,17 +120,18 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         .from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, location.id), eq(commercialPartnerBenefits.productId, product.id))).orderBy(desc(commercialPartnerBenefits.startsAt));
       const benefit = benefits.find((candidate) => resolveCustomerBillingStatus({ partnerBenefit: candidate }, now) === "partner") ?? benefits[0] ?? null;
       const status = resolveCustomerBillingStatus({ trial, subscription, partnerBenefit: benefit }, now);
-      // Catalog eligibility is independent of entitlement history. An active
-      // product remains purchasable for a new Location with status "available".
-      // This catalog query already excludes inactive products; market and route
-      // eligibility is still validated by the existing quote/order services.
-      const routes = location.marketCode
+      const purchaseEligible = purchaseEligibility?.get(product.id)?.eligible ?? false;
+      // Keep a Product visible when it has current, scheduled, expired, or
+      // partner entitlement history, even when it is no longer purchasable.
+      if (!purchaseEligible && !trial && subscriptions.length === 0 && benefits.length === 0) continue;
+      const routes = purchaseEligible && location.marketCode
         ? await resolveEnabledPaymentRoutesForLocationProduct(location.id, product.id, db)
         : [];
       cards.push({
         productId: product.id,
         productName: product.name,
         status,
+        purchaseEligible,
         trialEndsAt: trial?.endsAt.toISOString() ?? null,
         paidStartsAt: subscription?.startsAt.toISOString() ?? null,
         paidThrough: subscription?.currentPeriodEndsAt?.toISOString() ?? null,

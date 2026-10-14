@@ -15,13 +15,37 @@ export const commercialProducts = pgTable("commercial_products", {
   currency: text("currency"),
   billingIntervalMonths: integer("billing_interval_months"),
   isActive: boolean("is_active").notNull().default(true),
+  // Purchase visibility is separate from activation/access resolution. Changing
+  // visibility must not revoke any existing commercial entitlement.
+  visibility: text("visibility").$type<"public" | "private" | "disabled">().notNull().default("public"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("commercial_products_name_nonempty", sql`length(btrim(${table.name})) > 0`),
   check("commercial_products_price_pair", sql`(${table.priceMinor} IS NULL AND ${table.currency} IS NULL) OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL AND length(btrim(${table.currency})) = 3)`),
   check("commercial_products_interval_positive", sql`${table.billingIntervalMonths} IS NULL OR ${table.billingIntervalMonths} > 0`),
+  check("commercial_products_visibility_valid", sql`${table.visibility} IN ('public', 'private', 'disabled')`),
   uniqueIndex("commercial_products_code_unique").on(table.code),
+]);
+
+/** Auditable Organization authorization history for private Product purchases. */
+export const commercialProductOrganizationAuthorizations = pgTable("commercial_product_organization_authorizations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  grantedByOperator: text("granted_by_operator").notNull(),
+  grantReason: text("grant_reason").notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByOperator: text("revoked_by_operator"),
+  revokeReason: text("revoke_reason"),
+}, (table) => [
+  uniqueIndex("commercial_product_org_authorizations_active_unique")
+    .on(table.organizationId, table.productId).where(sql`${table.revokedAt} IS NULL`),
+  index("commercial_product_org_authorizations_history_idx").on(table.organizationId, table.productId, table.grantedAt),
+  check("commercial_product_org_authorizations_grant_operator_nonempty", sql`length(btrim(${table.grantedByOperator})) > 0`),
+  check("commercial_product_org_authorizations_grant_reason_nonempty", sql`length(btrim(${table.grantReason})) BETWEEN 1 AND 500`),
+  check("commercial_product_org_authorizations_revoke_shape", sql`(${table.revokedAt} IS NULL AND ${table.revokedByOperator} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByOperator} IS NOT NULL AND length(btrim(${table.revokedByOperator})) > 0 AND ${table.revokeReason} IS NOT NULL AND length(btrim(${table.revokeReason})) BETWEEN 1 AND 500 AND ${table.revokedAt} >= ${table.grantedAt})`),
 ]);
 
 export type BillingResetAffectedRecords = {

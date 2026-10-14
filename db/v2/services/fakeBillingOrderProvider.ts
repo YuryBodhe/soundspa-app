@@ -35,6 +35,7 @@ import { billingOrderSnapshotReference, quoteBillingRoute, fakeStagingBillingPri
 import { PaymentFoundationError } from "./paymentFoundation";
 import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
+import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 
 type FakeBillingOrderDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 type FakeBillingOrderTx = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
@@ -177,6 +178,12 @@ export async function createFakeProviderBillingOrderCheckout(input: {
     }
     if (order.status !== "draft" || lines.length === 0) throw new FakeBillingOrderError("checkout_unavailable");
     if (order.providerCode !== FAKE_PROVIDER_CODE || order.currency !== FAKE_PAYMENT_CURRENCY) throw new FakeBillingOrderError("route_unavailable");
+
+    // Drafts are not yet payable. Revalidate authorization before first
+    // checkout; pending orders above remain resumable through their expiry.
+    await requireOrganizationProductPurchaseEligibility(
+      tx, order.organizationId, lines.map((line) => line.productId), { lockForShare: true },
+    );
 
     const [provider] = await tx.select({ displayName: commercialPaymentProviders.displayName, isEnabled: commercialPaymentProviders.isEnabled })
       .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, order.providerCode)).for("share").limit(1);

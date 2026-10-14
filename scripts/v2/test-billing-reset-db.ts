@@ -43,11 +43,11 @@ async function main() {
   const address = identity?.address?.split("/")[0] ?? "";
   if (!identity || identity.database !== "soundspa_v2" || identity.role !== "soundspa_v2_test" || identity.port !== 5432 ||
       !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
-      !identity.version.startsWith("16") || Number(identity.migrationCount) !== 19 || identity.latest !== "1791547650457") {
+      !identity.version.startsWith("16") || Number(identity.migrationCount) !== 20 || identity.latest !== "1791986317531") {
     throw new Error("Refusing billing-reset integration test: disposable PostgreSQL identity or migration ledger mismatch.");
   }
   const baseline = await v2Pool.query<{ count: string }>(
-    "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM location_service_access) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) + (SELECT count(*) FROM location_channel_grants) AS count",
+    "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM location_service_access) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) + (SELECT count(*) FROM location_channel_grants) AS count",
   );
   if (baseline.rows[0]?.count !== "0") throw new Error("Disposable billing-reset database must start without fixtures.");
 
@@ -250,7 +250,7 @@ async function main() {
   const counts = await v2Pool.query<{ resets: string; payments: string; orders: string }>(
     "SELECT (SELECT count(*)::text FROM commercial_billing_resets) AS resets, (SELECT count(*)::text FROM commercial_payments) AS payments, (SELECT count(*)::text FROM commercial_billing_orders) AS orders",
   );
-  console.info(JSON.stringify({ postgres: "16", migrationCount: 19, assertions: assertionCount, resets: counts.rows[0]?.resets, orders: counts.rows[0]?.orders, payments: counts.rows[0]?.payments, race: "serialized-or-retried", result: "PASS" }));
+  console.info(JSON.stringify({ postgres: "16", migrationCount: 20, assertions: assertionCount, resets: counts.rows[0]?.resets, orders: counts.rows[0]?.orders, payments: counts.rows[0]?.payments, race: "serialized-or-retried", result: "PASS" }));
   await v2Pool.end();
   closeTestPool = undefined;
   for (const [key, value] of oldEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }

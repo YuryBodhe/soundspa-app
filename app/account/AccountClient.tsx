@@ -34,6 +34,7 @@ type LoadResult = { account: Account | null; partnerContext: boolean; partnerCom
 type ActivationLink = { locationId: string; url: string; expiresAt: string };
 type BillingPlan = {
   productId: string; productName: string;
+  purchaseEligible: boolean;
   status: "trial" | "subscription" | "partner" | "expired" | "available";
   trialEndsAt: string | null; paidStartsAt: string | null; paidThrough: string | null; trialActive: boolean;
   scheduledPaidPeriods: { startsAt: string; endsAt: string }[]; subscriptionId: string | null;

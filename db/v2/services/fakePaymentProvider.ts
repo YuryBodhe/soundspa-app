@@ -28,6 +28,7 @@ import {
 import { resolveEnabledPaymentRoutesForLocationProduct, recordNormalizedPayment } from "./paymentFoundation";
 import { cancelTrustedSubscription, settleTrustedProviderPayment } from "./paymentLifecycle";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
+import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 
 type FakeProviderDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 type FakeProviderTransaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
@@ -90,13 +91,11 @@ export async function createFakeProviderCheckout(input: {
     const [lockedLocation] = await tx.select({ id: locations.id })
       .from(locations).where(eq(locations.id, input.locationId)).for("update").limit(1);
     if (!lockedLocation) throw new FakeProviderError("not_authorized");
-    const { location } = await authorizeCustomerLocation(tx, input.authenticatedUserId, input.locationId);
+    const { location, organizationId } = await authorizeCustomerLocation(tx, input.authenticatedUserId, input.locationId);
     if (!location.marketCode) throw new FakeProviderError("market_not_configured");
     if (location.marketCode !== FAKE_PROVIDER_MARKET) throw new FakeProviderError("route_unavailable");
 
-    const [product] = await tx.select({ id: commercialProducts.id })
-      .from(commercialProducts).where(and(eq(commercialProducts.id, input.productId), eq(commercialProducts.isActive, true))).limit(1);
-    if (!product) throw new FakeProviderError("product_unavailable");
+    await requireOrganizationProductPurchaseEligibility(tx, organizationId, [input.productId], { lockForShare: true });
 
     const routes = await resolveEnabledPaymentRoutesForLocationProduct(input.locationId, input.productId, tx);
     const selectedRoute = routes.find((route) => route.id === input.routeId && route.providerCode === FAKE_PROVIDER_CODE);

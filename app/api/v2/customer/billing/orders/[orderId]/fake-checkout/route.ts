@@ -11,7 +11,7 @@ const paramsSchema = z.object({ orderId: z.string().uuid() });
 function failure(error: string, status: number) { return NextResponse.json({ error }, { status, headers }); }
 function statusFor(error: unknown) {
   const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "unavailable";
-  return { code, status: code === "not_authorized" ? 404 : code === "checkout_expired" ? 410 : code === "checkout_unavailable" || code === "checkout_pending" || code === "route_unavailable" || code === "order_stale" ? 409 : 503 };
+  return { code, status: code === "not_authorized" ? 404 : code === "checkout_expired" ? 410 : code === "checkout_unavailable" || code === "checkout_pending" || code === "route_unavailable" || code === "order_stale" || code === "product_unavailable" ? 409 : 503 };
 }
 
 async function authorizedRequest(request: Request) {

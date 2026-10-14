@@ -6,6 +6,7 @@ import { billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKe
 
 export type BillingWizardPlan = {
   productId: string; productName: string;
+  purchaseEligible: boolean;
   status: "trial" | "subscription" | "partner" | "expired" | "available";
   trialEndsAt: string | null; paidThrough: string | null; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
@@ -73,9 +74,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
 
   const organizationLocations = useMemo(() => locations.filter((location) => location.organizationId === organizationId)
     .map((location) => refreshedLocations[location.id] ?? location), [locations, organizationId, refreshedLocations]);
+  const purchasableProducts = (location: BillingWizardLocation) => location.products.filter((product) => product.purchaseEligible);
   const selectedLines = organizationLocations.flatMap((location) => {
     const productId = selectedProducts[location.id];
-    const product = location.products.find((candidate) => candidate.productId === productId);
+    const product = purchasableProducts(location).find((candidate) => candidate.productId === productId);
     return product ? [{ location, product, months: durations[location.id] ?? 1 }] : [];
   });
   const matchingPendingOrder = orders.find((item) => canResumeBillingOrder(item.status) && item.lines.some((orderLine) =>
@@ -129,7 +131,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
     updateSelection(() => setSelectedProducts((current) => {
       const next = { ...current };
       if (!checked) delete next[location.id];
-      else if (location.products[0]) next[location.id] = current[location.id] ?? location.products[0].productId;
+      else if (purchasableProducts(location)[0]) next[location.id] = current[location.id] ?? purchasableProducts(location)[0].productId;
       return next;
     }));
   }
@@ -248,10 +250,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       <ol className="customer-billing-wizard-steps" aria-label={t("billingWizardProgress")}>{[1, 2, 3].map((item) => <li key={item} aria-current={step === item ? "step" : undefined} className={step === item ? "is-current" : step > item ? "is-complete" : ""}><span>{item}</span><span>{t(item === 1 ? "billingWizardStepSelect" : item === 2 ? "billingWizardStepReview" : "billingWizardStepLink")}</span></li>)}</ol>
       {step === 1 && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepSelect")}</h3>
         {organizationLocations.length === 0 ? <p role="status">{t("billingWizardNoLocations")}</p> : <div className="customer-billing-wizard-location-list">{organizationLocations.map((location) => {
-          const checked = Boolean(selectedProducts[location.id]); const product = location.products.find((candidate) => candidate.productId === selectedProducts[location.id]); const issue = product ? lineIssue(location, product) : "";
+          const availableProducts = purchasableProducts(location); const checked = Boolean(selectedProducts[location.id]); const product = availableProducts.find((candidate) => candidate.productId === selectedProducts[location.id]); const issue = product ? lineIssue(location, product) : "";
           const selectionState = billingMarketSelectionState({ persistedMarket: location.marketCode, selectedMarket: marketSelections[location.id] ?? "", saving: Boolean(marketSaving[location.id]), error: marketSaveErrors[location.id] ?? "" });
-          return <article className="customer-billing-wizard-location" key={location.id}><label className="customer-billing-wizard-check"><input type="checkbox" checked={checked} disabled={!location.products.length || busy} onChange={(event) => toggleLocation(location, event.target.checked)} /><span><strong>{location.name}</strong><small>{product ? statusLabel(product) : location.products.length ? t("billingWizardChooseProduct") : t("billingWizardNoEligibleProduct")}</small></span></label>
-            {checked && product && <div className="customer-billing-wizard-line-controls">{location.products.length > 1 && <label>{t("billingWizardProduct")}<select disabled={busy} value={product.productId} onChange={(event) => updateSelection(() => setSelectedProducts((current) => ({ ...current, [location.id]: event.target.value })))}>{location.products.map((item) => <option key={item.productId} value={item.productId}>{item.productName}</option>)}</select></label>}
+          return <article className="customer-billing-wizard-location" key={location.id}><label className="customer-billing-wizard-check"><input type="checkbox" checked={checked} disabled={!availableProducts.length || busy} onChange={(event) => toggleLocation(location, event.target.checked)} /><span><strong>{location.name}</strong><small>{product ? statusLabel(product) : availableProducts.length ? t("billingWizardChooseProduct") : t("billingWizardNoEligibleProduct")}</small></span></label>
+            {checked && product && <div className="customer-billing-wizard-line-controls">{availableProducts.length > 1 && <label>{t("billingWizardProduct")}<select disabled={busy} value={product.productId} onChange={(event) => updateSelection(() => setSelectedProducts((current) => ({ ...current, [location.id]: event.target.value })))}>{availableProducts.map((item) => <option key={item.productId} value={item.productId}>{item.productName}</option>)}</select></label>}
               <label>{t("billingWizardDuration")}<select disabled={busy} value={durations[location.id] ?? 1} onChange={(event) => updateSelection(() => setDurations((current) => ({ ...current, [location.id]: Number(event.target.value) })))}>{Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{durationText(months, locale, t)}</option>)}</select></label>
               <p className="customer-billing-wizard-detail">{t("billingWizardPersistedMarket")}: <strong>{location.marketCode ?? t("billingWizardMarketNotSaved")}</strong></p>
               <label>{t("billingMarketLabel")}<select aria-label={`${t("billingMarketLabel")} · ${location.name}`} disabled={busy || Boolean(marketSaving[location.id]) || !onSaveMarket} value={marketSelections[location.id] ?? location.marketCode ?? ""} onChange={(event) => updateSelection(() => { setMarketSelections((current) => ({ ...current, [location.id]: event.target.value })); setMarketSaveErrors((current) => ({ ...current, [location.id]: "" })); setSavedMarketIds((current) => ({ ...current, [location.id]: false })); })}><option value="">—</option>{supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}</select></label>

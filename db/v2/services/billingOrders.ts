@@ -16,6 +16,7 @@ import {
 } from "../schema";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
+import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 import {
   BillingOrderModelError,
   fakeStagingBillingPricingAdapter,
@@ -197,6 +198,7 @@ async function prepareBillingOrderPlan(input: {
   }
 
   const productIds = [...new Set(request.lines.map((line) => line.productId))].sort();
+  await requireOrganizationProductPurchaseEligibility(tx, request.organizationId, productIds, { lockForShare: true });
   const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name })
     .from(commercialProducts).where(and(inArray(commercialProducts.id, productIds), eq(commercialProducts.isActive, true)))
     .orderBy(asc(commercialProducts.id)).for("share");

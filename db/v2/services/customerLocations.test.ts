@@ -130,8 +130,8 @@ test("disposable PostgreSQL verifies tenant authorization, cap, slug retry, side
   assert.equal(target?.role, decodeURIComponent(targetUrl.username));
   assert.notEqual(target?.role, "postgres", "must not use the PostgreSQL superuser");
   assert(isIP(address) > 0 && new Set(["127.0.0.1", "::1"]).has(address));
-  assert.equal(target?.migrations, 19);
-  assert.equal(target?.latest, "1791547650457");
+  assert.equal(target?.migrations, 20);
+  assert.equal(target?.latest, "1791986317531");
   const empty = await v2Pool.query<{ count: string }>(
     `SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) +
       (SELECT count(*) FROM monitoring_lifecycle_events) + (SELECT count(*) FROM location_core_trials) +
