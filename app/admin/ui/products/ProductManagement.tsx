@@ -6,7 +6,7 @@ import { productVisibilityConfirmationReducer, type VisibilityConfirmationState 
 
 type Channel = { id: string; name: string; kind: "music" | "ambient"; isPublished: boolean; isArchived: boolean };
 type Visibility = "public" | "private" | "disabled";
-type Product = { id: string; code: string; name: string; kind: "core" | "partner" | "addon"; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }> };
+type Product = { id: string; code: string; name: string; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }> };
 
 function selectedChannels(form: HTMLFormElement): string[] {
   return new FormData(form).getAll("channelIds").filter((value): value is string => typeof value === "string");
@@ -39,7 +39,7 @@ export default function ProductManagement({ products, channels }: { products: Pr
     const form = event.currentTarget;
     const data = new FormData(form);
     const created = await save("create", "/api/v2/admin/products", "POST", {
-      name: data.get("name"), code: data.get("code"), kind: data.get("kind"),
+      name: data.get("name"), code: data.get("code"),
       isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
     });
     if (created) form.reset();
@@ -79,7 +79,6 @@ export default function ProductManagement({ products, channels }: { products: Pr
         <label>Product name<input name="name" required maxLength={160} /></label>
         <label>Product code<input name="code" required maxLength={80} pattern="[A-Za-z0-9_-]+(\s+[A-Za-z0-9_-]+)*" autoCapitalize="none" /></label>
         <p className="text-dim">Code is normalized to lowercase with hyphens and cannot be changed after creation.</p>
-        <label>Product kind<select name="kind" defaultValue="core"><option value="core">Core</option><option value="partner">Partner</option><option value="addon">Add-on</option></select></label>
         <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked /> Active Product</label>
         <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channels.length ? channelOptions([]) : <p className="text-dim">No Channels exist yet.</p>}</fieldset>
         <button className="btn btn-primary" disabled={pending === "create"}>{pending === "create" ? "Creating…" : "Create Product"}</button>
@@ -90,7 +89,7 @@ export default function ProductManagement({ products, channels }: { products: Pr
       {!products.length && <section className="admin-card"><p className="text-dim">No Products configured.</p></section>}
       {products.map((product) => <details className="admin-card product-management-card" key={product.id}>
         <summary className="product-management-summary">
-          <span><strong>{product.name}</strong><small>{product.code} · {product.kind}</small></span>
+          <span><strong>{product.name}</strong><small>{product.code}</small></span>
           <span className={`badge ${product.isActive ? "badge-ok" : "badge-neutral"}`}>{product.isActive ? "ACTIVE" : "INACTIVE"}</span>
           <span className="badge badge-neutral">{product.visibility.toUpperCase()}</span>
         </summary>
@@ -115,7 +114,6 @@ export default function ProductManagement({ products, channels }: { products: Pr
           </section>
           <form className="admin-form product-management-form" onSubmit={(event) => void update(event, product)}>
             <label>Product code<input value={product.code} readOnly aria-readonly="true" /></label>
-            <label>Product kind<input value={product.kind} readOnly aria-readonly="true" /></label>
             <label>Product name<input name="name" required maxLength={160} defaultValue={product.name} /></label>
             <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked={product.isActive} /> Active Product</label>
             <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channelOptions(product.channelIds)}</fieldset>

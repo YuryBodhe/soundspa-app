@@ -26,6 +26,12 @@ test("create validates Product fields and preserves selected channel identities"
   assert.deepEqual(validateCreateProductInput({
     name: "Empty composition", code: "empty-composition", kind: "addon", isActive: false, channelIds: [],
   }).channelIds, []);
+  assert.equal(validateCreateProductInput({
+    name: "Kind omitted", code: "kind-omitted", isActive: true, channelIds: [],
+  }).kind, "core", "the server supplies the compatibility Kind when callers omit it");
+  assert.equal(validateCreateProductInput({
+    name: "Legacy caller", code: "legacy-kind", kind: "partner", isActive: true, channelIds: [],
+  }).kind, "partner", "legacy callers that explicitly send a valid Kind remain compatible");
 });
 
 test("create rejects invalid, duplicate, or excessive channel selections", () => {

@@ -47,6 +47,8 @@ async function main() {
       const created = await createProduct({ name: "  Admin Test Product ", code: ` Product_Admin_${suffix} `, kind: "partner", isActive: false, channelIds: [first.id] }, runInTransaction);
       assert.equal(created.code, `product-admin-${suffix}`);
       assert.equal(created.isActive, false, "a Product can be created inactive");
+      const defaultKindProduct = await createProduct({ name: "Default Kind Product", code: `default-kind-${suffix}`, isActive: true, channelIds: [] }, runInTransaction);
+      assert.equal(defaultKindProduct.kind, "core", "omitting Kind stores the server-selected compatibility value");
       await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: created.id, status: "active", startsAt: new Date(now.getTime() - 60_000), endsAt: new Date(now.getTime() + 60_000) });
       await assert.rejects(createProduct({ name: "Duplicate", code: created.code, kind: "core", isActive: true, channelIds: [] }, runInTransaction),
         (error: unknown) => error instanceof ProductAdminError && error.code === "PRODUCT_CODE_EXISTS");
@@ -89,7 +91,7 @@ async function main() {
   } catch (error) {
     if (!(error instanceof Rollback)) throw error;
   }
-  console.info("Product Admin integration PASS: create, immutable code/kind, atomic composition edit, activation effects, effective-access regression, and transaction rollback.");
+  console.info("Product Admin integration PASS: create (legacy and default Kind), immutable code/kind, atomic composition edit, activation effects, effective-access regression, and transaction rollback.");
   await v2Pool.end();
 }
 

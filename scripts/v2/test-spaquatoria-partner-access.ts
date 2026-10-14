@@ -38,8 +38,10 @@ async function main() {
       const [partner] = await tx.select().from(commercialPartners).where(eq(commercialPartners.code, "spaquatoria"));
       const [spaChannel] = await tx.select().from(channels).where(eq(channels.slug, "spaquatoria"));
       assert(basic && partnerProduct && partner && spaChannel, "Provisioned Products, Partner, or Spaquatoria channel is missing.");
-      assert.equal(basic.kind, "core");
-      assert.equal(partnerProduct.kind, "partner");
+      assert.equal(basic.code, SOUNDSPA_PRODUCT_CODE, "Basic identity is established by its canonical code");
+      assert.equal(basic.name, "SoundSpa Basic");
+      assert.equal(partnerProduct.code, "spaquatoria", "Partner Benefit identity is established by its Product code");
+      assert.equal(partnerProduct.name, "Spaquatoria");
       assert.equal(partnerProduct.isActive, true);
       assert.equal(partner.isActive, true);
 

@@ -3,6 +3,7 @@ import { asc, eq } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { channels, commercialPartners, commercialProductChannels, commercialProducts } from "../../db/v2/schema";
 import { SOUNDSPA_PRODUCT_CODE } from "../../db/v2/queries/commercialProducts";
+import { classifyProductProvisioning, hasExpectedProductIdentity } from "../../db/v2/services/productProvisioningModel";
 
 const SPAQUATORIA_CODE = "spaquatoria";
 const SPAQUATORIA_CHANNEL_SLUG = "spaquatoria";
@@ -11,8 +12,7 @@ async function inspectOrProvision(apply: boolean) {
   const result = await v2Db.transaction(async (tx) => {
     const [basic] = await tx.select().from(commercialProducts).where(eq(commercialProducts.code, SOUNDSPA_PRODUCT_CODE));
     assert(basic, `Required ${SOUNDSPA_PRODUCT_CODE} Product is missing.`);
-    assert.equal(basic.kind, "core", "SoundSpa Basic has unexpected Product kind.");
-    assert.equal(basic.isActive, true, "SoundSpa Basic is not active.");
+    assert(hasExpectedProductIdentity(basic, { code: SOUNDSPA_PRODUCT_CODE, name: "SoundSpa Basic", isActive: true }), "SoundSpa Basic has conflicting canonical identity or is inactive.");
     const basicBefore = await tx.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels)
       .where(eq(commercialProductChannels.productId, basic.id)).orderBy(asc(commercialProductChannels.channelId));
     assert.equal(basicBefore.length, 10, "SoundSpa Basic composition is not the accepted 10 channels; refusing to provision.");
@@ -22,12 +22,10 @@ async function inspectOrProvision(apply: boolean) {
     assert(basicBefore.some(({ channelId }) => channelId === channel.id), "Spaquatoria is not in the accepted SoundSpa Basic composition; refusing to provision.");
 
     let [product] = await tx.select().from(commercialProducts).where(eq(commercialProducts.code, SPAQUATORIA_CODE));
-    const productCreated = !product;
-    if (product) {
-      assert.equal(product.name, "Spaquatoria", "Conflicting Product name exists; refusing to overwrite.");
-      assert.equal(product.kind, "partner", "Conflicting Product kind exists; refusing to overwrite.");
-      assert.equal(product.isActive, true, "Spaquatoria Product exists but is inactive; refusing to overwrite.");
-    } else if (apply) {
+    const productDecision = classifyProductProvisioning(product, { code: SPAQUATORIA_CODE, name: "Spaquatoria", isActive: true });
+    assert.notEqual(productDecision, "conflict", "Conflicting or inactive Product exists; refusing to overwrite.");
+    const productCreated = productDecision === "create";
+    if (productDecision === "create" && apply) {
       [product] = await tx.insert(commercialProducts).values({ code: SPAQUATORIA_CODE, name: "Spaquatoria", kind: "partner", isActive: true }).returning();
     }
 
@@ -61,7 +59,7 @@ async function inspectOrProvision(apply: boolean) {
 
   console.info(JSON.stringify({
     mode: apply ? "apply" : "dry-run",
-    product: result.product ? { id: result.product.id, code: result.product.code, name: result.product.name, kind: result.product.kind, active: result.product.isActive } : { code: SPAQUATORIA_CODE, name: "Spaquatoria", kind: "partner", active: true },
+    product: result.product ? { id: result.product.id, code: result.product.code, name: result.product.name, active: result.product.isActive } : { code: SPAQUATORIA_CODE, name: "Spaquatoria", active: true },
     productWouldBeCreated: result.productCreated,
     partner: result.partner ? { id: result.partner.id, code: result.partner.code, name: result.partner.name, active: result.partner.isActive } : { code: SPAQUATORIA_CODE, name: "Spaquatoria", active: true },
     partnerWouldBeCreated: result.partnerCreated,

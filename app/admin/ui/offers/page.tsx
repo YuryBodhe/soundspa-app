@@ -51,14 +51,13 @@ export default async function PartnerOffersPage() {
         id: grant.id,
         productId: product.id,
         productName: product.name,
-        productKind: product.kind,
         productActive: product.isActive,
         grantType: grant.grantType,
         durationDays: grant.durationDays,
       })),
     })),
   }));
-  const products = data.products.map(({ id, code, name, kind, isActive }) => ({ id, code, name, kind, isActive }));
+  const products = data.products.map(({ id, code, name, isActive }) => ({ id, code, name, isActive }));
 
   return <>
     <div className="admin-page-header">

@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 const createSchema = z.object({
   name: z.string().trim().min(1).max(160),
   code: z.string().trim().min(2).max(80),
-  kind: z.enum(["core", "partner", "addon"]),
+  // Accept legacy clients that still send Kind, while the operator UI omits it.
+  kind: z.enum(["core", "partner", "addon"]).optional(),
   isActive: z.boolean(),
   channelIds: z.array(z.string().uuid()).max(250),
 }).strict();

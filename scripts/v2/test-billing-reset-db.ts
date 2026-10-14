@@ -64,7 +64,8 @@ async function main() {
     { organizationId: org.id, name: "Legacy Access Location", slug: `reset-legacy-${suffix}`, timezone: "Europe/Moscow", marketCode: "RU" },
   ]).returning();
   const [basic, otherProduct, partnerProduct] = await v2Db.insert(schema.commercialProducts).values([
-    { code: "soundspa", name: "SoundSpa Basic", kind: "core", priceMinor: 108000, currency: "RUB", billingIntervalMonths: 1 },
+    // Kind is legacy metadata; reset identity is the canonical Product code.
+    { code: "soundspa", name: "SoundSpa Basic", kind: "partner", priceMinor: 108000, currency: "RUB", billingIntervalMonths: 1 },
     { code: `other-${suffix}`, name: "Other Product", kind: "core", priceMinor: 1000, currency: "RUB", billingIntervalMonths: 1 },
     { code: `partner-${suffix}`, name: "Partner Product", kind: "partner" },
   ]).returning();
@@ -141,6 +142,9 @@ async function main() {
     trialDurationDays: SOUNDSPA_BASIC_TRIAL_DAYS, reason: "Repeat SoundSpa staging acceptance test", operatorAuthorization: authorization,
   };
   const preview = await reset.previewStagingBillingReset(input, now);
+  await assert.rejects(reset.previewStagingBillingReset({ ...input, productIds: [otherProduct.id], trialProductId: otherProduct.id }, now),
+    (error: unknown) => error instanceof reset.BillingResetError && error.code === "trial_product_invalid");
+  assertionCount += 1;
   check(preview.trial.durationDays === SOUNDSPA_BASIC_TRIAL_DAYS, "reset preview uses the shared SoundSpa Basic trial policy");
   const defaultPreview = await reset.previewStagingBillingReset({ ...input, trialDurationDays: undefined }, now);
   check(defaultPreview.trial.durationDays === SOUNDSPA_BASIC_TRIAL_DAYS, "omitting the reset duration cannot silently select another policy");

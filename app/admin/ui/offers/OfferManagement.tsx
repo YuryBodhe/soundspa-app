@@ -4,8 +4,8 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import InviteManagement from "./InviteManagement";
 
-type Product = { id: string; code: string; name: string; kind: string; isActive: boolean };
-type Grant = { id: string; productId: string; productName: string; productKind: string; productActive: boolean; grantType: "partner_benefit" | "trial"; durationDays: number | null };
+type Product = { id: string; code: string; name: string; isActive: boolean };
+type Grant = { id: string; productId: string; productName: string; productActive: boolean; grantType: "partner_benefit" | "trial"; durationDays: number | null };
 type InviteClaim = { locationId: string; organizationName: string; locationName: string; locationSlug: string; claimedAt: string };
 type Invite = { id: string; createdAt: string; expiresAt: string | null; maxClaims: number | null; claimCount: number; status: "ACTIVE" | "EXPIRED" | "EXHAUSTED" | "REVOKED"; claims: InviteClaim[] };
 type Offer = { id: string; code: string; name: string; isActive: boolean; inviteCount: number; grantsLocked: boolean; grants: Grant[]; invites: Invite[] };

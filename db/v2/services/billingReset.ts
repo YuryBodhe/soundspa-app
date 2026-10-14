@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { operatorAuthStatus } from "@/lib/v2/adminOperator";
 import { v2Db } from "../client";
+import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
 import { soundSpaBasicTrialEndsAt } from "../queries/trialPolicy";
 import {
   commercialBillingOrderLines,
@@ -66,7 +67,7 @@ async function readPlan(tx: Pick<ResetTx, "select">, input: ReturnType<typeof va
     .where(and(eq(locations.id, input.locationId), eq(locations.organizationId, input.organizationId))).limit(1);
   if (!locationRow || locationRow.archivedAt || locationRow.organizationArchivedAt || !locationRow.organizationName) throw new BillingResetError("location_not_found");
 
-  const products = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind })
+  const products = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name })
     .from(commercialProducts).where(inArray(commercialProducts.id, input.productIds)).orderBy(asc(commercialProducts.id));
   if (products.length !== input.productIds.length) throw new BillingResetError("product_not_found");
   if (input.includeAllProducts) {
@@ -76,7 +77,7 @@ async function readPlan(tx: Pick<ResetTx, "select">, input: ReturnType<typeof va
     }
   }
   const trialProduct = products.find((product) => product.id === input.trialProductId);
-  if (!trialProduct || trialProduct.code !== "soundspa" || trialProduct.kind !== "core") throw new BillingResetError("trial_product_invalid");
+  if (!trialProduct || trialProduct.code !== SOUNDSPA_PRODUCT_CODE) throw new BillingResetError("trial_product_invalid");
 
   const subscriptions = await tx.select({ id: locationSubscriptions.id, productId: locationSubscriptions.productId, status: locationSubscriptions.status,
       startsAt: locationSubscriptions.startsAt, endsAt: locationSubscriptions.currentPeriodEndsAt,

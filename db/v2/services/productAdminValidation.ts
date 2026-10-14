@@ -27,6 +27,7 @@ function productName(value: unknown): string {
 }
 
 function productKind(value: unknown): ProductKind {
+  if (value === undefined) return "core";
   if (value !== "core" && value !== "partner" && value !== "addon") throw new ProductAdminError("INVALID_INPUT");
   return value;
 }
@@ -43,7 +44,7 @@ function channelIds(value: unknown): string[] {
 export function validateCreateProductInput(input: {
   name: unknown;
   code: unknown;
-  kind: unknown;
+  kind?: unknown;
   isActive: unknown;
   channelIds: unknown;
 }) {

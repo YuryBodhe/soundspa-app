@@ -60,7 +60,7 @@ export async function listProductManagementData() {
 }
 
 export async function createProduct(
-  input: { name: unknown; code: unknown; kind: unknown; isActive: unknown; channelIds: unknown },
+  input: { name: unknown; code: unknown; kind?: unknown; isActive: unknown; channelIds: unknown },
   runInTransaction: TransactionRunner = defaultTransaction,
 ) {
   const values = validateCreateProductInput(input);
