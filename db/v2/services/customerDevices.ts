@@ -53,6 +53,7 @@ export async function listCustomerLocationsWithDevices(authenticatedUserId: stri
     id: locations.id,
     organizationId: organizations.id,
     organizationName: organizations.name,
+    membershipRole: organizationMembers.role,
     name: locations.name,
     timezone: locations.timezone,
   }).from(organizationMembers)
@@ -102,6 +103,7 @@ export async function listCustomerLocationsWithDevices(authenticatedUserId: stri
     id: location.id,
     organizationId: location.organizationId,
     organizationName: location.organizationName,
+    canCreateLocations: location.membershipRole === "owner",
     name: location.name,
     timezone: location.timezone,
     devices: devicesByLocation.get(location.id) ?? [],

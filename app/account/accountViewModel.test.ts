@@ -187,3 +187,24 @@ test("the billing API exposes only future, non-invalidated paid periods to Accou
   assert.match(source, /candidate\.currentPeriodEndsAt !== null && candidate\.currentPeriodEndsAt > candidate\.startsAt/);
   assert.match(source, /scheduledPaidPeriods: subscriptions\.filter/);
 });
+
+test("only Organizations advertised as Owner-capable render Add Location, and success refreshes Account", async () => {
+  const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
+  const locations = await readFile(new URL("../../db/v2/services/customerDevices.ts", import.meta.url), "utf8");
+  assert.match(locations, /canCreateLocations: location\.membershipRole === "owner"/);
+  assert.match(account, /group\.canCreateLocations &&/);
+  assert.match(account, /fetch\("\/api\/v2\/customer\/locations"/);
+  assert.match(account, /setNewLocationTimezone\(group\.locations\[0\]\?\.timezone \?\? ""\)/);
+  assert.match(account, /await load\(true\)/);
+  assert.match(account, /locations=\{billing\.locations\.filter\(\(location\) => location\.organizationId === organizationId\)\}/);
+  assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
+});
+
+test("Add Location labels and customer-facing errors are localized in RU, EN, VI, and TH", async () => {
+  const dictionaries = await Promise.all(["en", "ru", "vi", "th"].map((locale) => readFile(new URL(`../i18n/dictionaries/${locale}.ts`, import.meta.url), "utf8")));
+  for (const dictionary of dictionaries) {
+    for (const key of ["addLocation:", "addLocationName:", "addLocationTimezone:", "addLocationSave:", "addLocationSaving:", "addLocationCancel:", "addLocationInvalid:", "addLocationDuplicate:", "addLocationLimit:", "addLocationUnauthorized:", "addLocationUnavailable:"]) {
+      assert.ok(dictionary.includes(key), `missing ${key}`);
+    }
+  }
+});

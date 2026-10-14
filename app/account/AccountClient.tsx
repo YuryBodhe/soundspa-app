@@ -22,6 +22,7 @@ type CustomerLocation = {
   organizationName: string;
   name: string;
   timezone: string;
+  canCreateLocations: boolean;
   devices: Array<{
     label: string | null;
     state: "active" | "revoked";
@@ -72,6 +73,12 @@ function Content() {
   const deviceSubmitLock = useRef(false);
   const [deviceError, setDeviceError] = useState("");
   const [activationLink, setActivationLink] = useState<ActivationLink | null>(null);
+  const [addingLocationOrganizationId, setAddingLocationOrganizationId] = useState<string | null>(null);
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationTimezone, setNewLocationTimezone] = useState("");
+  const [newLocationError, setNewLocationError] = useState("");
+  const [newLocationSaving, setNewLocationSaving] = useState(false);
+  const locationSubmitLock = useRef(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [billingUnavailable, setBillingUnavailable] = useState(false);
@@ -349,6 +356,41 @@ function Content() {
     finally { deviceSubmitLock.current = false; setDeviceSaving(false); }
   }
 
+  async function createLocation(event: FormEvent<HTMLFormElement>, organizationId: string) {
+    event.preventDefault();
+    if (locationSubmitLock.current) return;
+    const name = newLocationName.trim();
+    const timezoneValue = newLocationTimezone.trim();
+    if (!name || name.length > 160 || !timezoneValue || timezoneValue.length > 100) {
+      setNewLocationError(t("addLocationInvalid"));
+      return;
+    }
+    locationSubmitLock.current = true;
+    setNewLocationSaving(true);
+    setNewLocationError("");
+    try {
+      const response = await fetch("/api/v2/customer/locations", {
+        method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ organizationId, name, timezone: timezoneValue }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        const errorKey = body.error === "duplicate_name" ? "addLocationDuplicate"
+          : body.error === "location_limit" ? "addLocationLimit"
+            : body.error === "validation" || body.error === "invalid" ? "addLocationInvalid"
+              : body.error === "owner_required" || body.error === "unverified" ? "addLocationUnauthorized"
+                : "addLocationUnavailable";
+        setNewLocationError(t(errorKey));
+        return;
+      }
+      setAddingLocationOrganizationId(null);
+      setNewLocationName("");
+      setNewLocationError("");
+      await load(true);
+    } catch { setNewLocationError(t("addLocationUnavailable")); }
+    finally { locationSubmitLock.current = false; setNewLocationSaving(false); }
+  }
+
   async function copyActivationLink() {
     if (!activationLink) return;
     try { await navigator.clipboard.writeText(activationLink.url); setLinkCopied(true); }
@@ -401,9 +443,9 @@ function Content() {
     : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription")
       : plan.status === "partner" ? "billingPartnerStatus"
         : plan.status === "expired" ? "billingExpired" : "billingAvailable";
-  const locationGroups = new Map<string, { organizationName: string; locations: CustomerLocation[] }>();
+  const locationGroups = new Map<string, { organizationName: string; canCreateLocations: boolean; locations: CustomerLocation[] }>();
   for (const location of result?.locations ?? []) {
-    const group = locationGroups.get(location.organizationId) ?? { organizationName: location.organizationName, locations: [] };
+    const group = locationGroups.get(location.organizationId) ?? { organizationName: location.organizationName, canCreateLocations: location.canCreateLocations, locations: [] };
     group.locations.push(location); locationGroups.set(location.organizationId, group);
   }
   const organizationEntries = [...locationGroups.entries()];
@@ -432,6 +474,14 @@ function Content() {
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
         {organizationEntries.map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
           {organizationEntries.length === 1 ? <><h1 className="customer-account-org-title">{group.organizationName}</h1><p className="customer-account-subtitle">{t("authAccountTitle")}</p></> : <h2>{group.organizationName}</h2>}
+          {group.canCreateLocations && <div className="customer-account-add-location">
+            {addingLocationOrganizationId === organizationId ? <form onSubmit={(event) => void createLocation(event, organizationId)}>
+              <label>{t("addLocationName")}<input required maxLength={160} autoComplete="organization-title" value={newLocationName} onChange={(event) => setNewLocationName(event.target.value)} /></label>
+              <label>{t("addLocationTimezone")}<input required maxLength={100} autoComplete="off" placeholder="Asia/Ho_Chi_Minh" value={newLocationTimezone} onChange={(event) => setNewLocationTimezone(event.target.value)} /></label>
+              {newLocationError && <p role="alert">{t(newLocationError as TranslationKey)}</p>}
+              <div><button className="customer-auth-submit" type="submit" disabled={newLocationSaving}>{newLocationSaving ? t("addLocationSaving") : t("addLocationSave")}</button><button className="customer-billing-secondary" type="button" disabled={newLocationSaving} onClick={() => { setAddingLocationOrganizationId(null); setNewLocationError(""); }}>{t("addLocationCancel")}</button></div>
+            </form> : <button type="button" className="customer-billing-secondary" onClick={() => { setAddingLocationOrganizationId(organizationId); setNewLocationName(""); setNewLocationTimezone(group.locations[0]?.timezone ?? ""); setNewLocationError(""); }}>{t("addLocation")}</button>}
+          </div>}
           <div className="customer-account-locations">
           {group.locations.map((location) => {
             const billingLocation = billing?.locations.find((item) => item.id === location.id);
