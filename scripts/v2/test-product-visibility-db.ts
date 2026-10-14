@@ -46,10 +46,10 @@ async function main() {
     if (!identity || identity.database !== "soundspa_v2" || identity.role !== decodeURIComponent(target.username) ||
         identity.role === "soundspa_v2" || identity.role === "postgres" || !identity.version.startsWith("16") ||
         isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) ||
-        identity.migrations !== 20 || identity.latest !== "1791986317531") {
-      throw new Error("Database identity did not match the expected isolated PostgreSQL 16 test instance at migration 0019.");
+        identity.migrations !== 21 || identity.latest !== "1791990342891") {
+      throw new Error("Database identity did not match the expected isolated PostgreSQL 16 test instance at migration 0020.");
     }
-    const clean = await v2Pool.query<{ count: string }>("SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM location_channel_grants) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count");
+    const clean = await v2Pool.query<{ count: string }>("SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM location_channel_grants) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count");
     if (clean.rows[0]?.count !== "0") throw new Error("Disposable Product Visibility database must start without customer or billing records.");
 
     try {
@@ -230,10 +230,10 @@ async function main() {
     } catch (error) {
       if (!(error instanceof Rollback)) throw error;
     }
-    const leftovers = await v2Pool.query<{ count: string }>("SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM location_channel_grants) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count");
+    const leftovers = await v2Pool.query<{ count: string }>("SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM location_channel_grants) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count");
     assert.equal(leftovers.rows[0]?.count, "0", "all Product Visibility fixtures roll back cleanly");
     assertions += 1;
-    console.info(JSON.stringify({ postgres: 16, migrations: 20, assertions, result: "PASS" }));
+    console.info(JSON.stringify({ postgres: 16, migrations: 21, assertions, result: "PASS" }));
   } finally {
     await v2Pool.end();
   }

@@ -1,6 +1,6 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import { v2Db } from "../client";
-import { channels, commercialProductChannels, commercialProducts } from "../schema";
+import { channels, commercialProductChannels, commercialProducts, commercialProductVisibilityEvents } from "../schema";
 import {
   ProductAdminError,
   validateCreateProductInput,
@@ -31,22 +31,29 @@ async function assertChannelsExist(tx: V2Transaction, channelIds: string[]) {
 }
 
 export async function listProductManagementData() {
-  const [productRows, channelRows, compositionRows] = await Promise.all([
-    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, isActive: commercialProducts.isActive })
+  const [productRows, channelRows, compositionRows, visibilityRows] = await Promise.all([
+    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility })
       .from(commercialProducts).orderBy(asc(commercialProducts.name), asc(commercialProducts.code), asc(commercialProducts.id)),
     v2Db.select({ id: channels.id, name: channels.displayName, kind: channels.kind, isPublished: channels.isPublished, archivedAt: channels.archivedAt })
       .from(channels).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.displayName), asc(channels.id)),
     v2Db.select({ productId: commercialProductChannels.productId, channelId: channels.id, channelName: channels.displayName, channelKind: channels.kind })
       .from(commercialProductChannels).innerJoin(channels, eq(channels.id, commercialProductChannels.channelId)),
+    v2Db.select({ productId: commercialProductVisibilityEvents.productId, previousVisibility: commercialProductVisibilityEvents.previousVisibility,
+      newVisibility: commercialProductVisibilityEvents.newVisibility, operator: commercialProductVisibilityEvents.operator,
+      reason: commercialProductVisibilityEvents.reason, changedAt: commercialProductVisibilityEvents.changedAt })
+      .from(commercialProductVisibilityEvents).orderBy(asc(commercialProductVisibilityEvents.changedAt)),
   ]);
 
   const channelsByProduct = new Map<string, typeof compositionRows>();
   for (const row of compositionRows) channelsByProduct.set(row.productId, [...(channelsByProduct.get(row.productId) ?? []), row]);
+  const visibilityHistoryByProduct = new Map<string, typeof visibilityRows>();
+  for (const row of visibilityRows) visibilityHistoryByProduct.set(row.productId, [...(visibilityHistoryByProduct.get(row.productId) ?? []), row]);
   return {
     products: productRows.map((product) => ({
       ...product,
       channelIds: (channelsByProduct.get(product.id) ?? []).map((channel) => channel.channelId),
       channels: (channelsByProduct.get(product.id) ?? []).map(({ channelId, channelName, channelKind }) => ({ id: channelId, name: channelName, kind: channelKind })),
+      visibilityHistory: visibilityHistoryByProduct.get(product.id) ?? [],
     })),
     channels: channelRows.map(({ archivedAt, ...channel }) => ({ ...channel, isArchived: archivedAt !== null })),
   };

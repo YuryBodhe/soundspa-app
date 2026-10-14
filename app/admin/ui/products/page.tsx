@@ -16,7 +16,7 @@ export default async function ProductsPage() {
       <div><p className="monitoring-eyebrow">SOUNDSPA V2 · COMMERCIAL</p><h1 className="admin-page-title">Products</h1></div>
       <div className="admin-page-nav product-page-nav"><Link href="/admin/ui" className="btn btn-sm">Admin</Link><Link href="/admin/ui/offers" className="btn btn-sm">Offers &amp; Invites</Link></div>
     </div>
-    <p className="text-dim">Products define which Channels are included in a customer access package.</p>
+    <p className="text-dim">Products define which Channels are included in a customer access package. Active status controls entitlement availability; purchase visibility controls new sales only and never removes existing access.</p>
     <ProductManagement products={data.products} channels={data.channels} />
   </>;
 }

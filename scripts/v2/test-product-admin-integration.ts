@@ -44,12 +44,10 @@ async function main() {
       };
       const first = await makeChannel("first");
       const second = await makeChannel("second");
-      const [trialProduct] = await tx.insert(commercialProducts).values({ code: `trial-${suffix}`, name: "Test Trial", kind: "core", isActive: true }).returning();
-      await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: trialProduct.id, status: "active", startsAt: new Date(now.getTime() - 60_000), endsAt: new Date(now.getTime() + 60_000) });
-
       const created = await createProduct({ name: "  Admin Test Product ", code: ` Product_Admin_${suffix} `, kind: "partner", isActive: false, channelIds: [first.id] }, runInTransaction);
       assert.equal(created.code, `product-admin-${suffix}`);
       assert.equal(created.isActive, false, "a Product can be created inactive");
+      await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: created.id, status: "active", startsAt: new Date(now.getTime() - 60_000), endsAt: new Date(now.getTime() + 60_000) });
       await assert.rejects(createProduct({ name: "Duplicate", code: created.code, kind: "core", isActive: true, channelIds: [] }, runInTransaction),
         (error: unknown) => error instanceof ProductAdminError && error.code === "PRODUCT_CODE_EXISTS");
       const [beforeUpdate] = await tx.select().from(commercialProducts).where(eq(commercialProducts.id, created.id));

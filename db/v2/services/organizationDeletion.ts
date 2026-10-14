@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { v2Db } from "../client";
-import { organizationMembers, locations, organizations } from "../schema";
+import { commercialProductOrganizationAuthorizations, organizationMembers, locations, organizations } from "../schema";
 import { deleteDevicesForLocation } from "./deviceAdministration";
 import { deleteLocationOwnedData } from "./locationOwnedData";
 import { recordLifecycleEvent } from "./monitoringObservability";
@@ -8,8 +8,10 @@ import { recordLifecycleEvent } from "./monitoringObservability";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class OrganizationDeletionError extends Error {
-  constructor(readonly code: "not_found" | "confirmation_mismatch") {
-    super(code === "not_found" ? "Organization was not found." : "The typed Organization name does not match the current Organization name.");
+  constructor(readonly code: "not_found" | "confirmation_mismatch" | "product_authorization_history") {
+    super(code === "not_found" ? "Organization was not found."
+      : code === "confirmation_mismatch" ? "The typed Organization name does not match the current Organization name."
+        : "This Organization has Product purchase authorization history. Its audit history must be retained, so it cannot be deleted.");
     this.name = "OrganizationDeletionError";
   }
 }
@@ -22,6 +24,12 @@ export async function deleteOrganization(organizationId: string, confirmationNam
       .from(organizations).where(eq(organizations.id, organizationId)).for("update").limit(1);
     if (!organization) throw new OrganizationDeletionError("not_found");
     if (typeof confirmationName !== "string" || confirmationName !== organization.name) throw new OrganizationDeletionError("confirmation_mismatch");
+
+    const [authorizationHistory] = await tx.select({ id: commercialProductOrganizationAuthorizations.id })
+      .from(commercialProductOrganizationAuthorizations)
+      .where(eq(commercialProductOrganizationAuthorizations.organizationId, organizationId))
+      .limit(1);
+    if (authorizationHistory) throw new OrganizationDeletionError("product_authorization_history");
 
     const ownedLocations = await tx.select({ id: locations.id, name: locations.name })
       .from(locations).where(eq(locations.organizationId, organizationId)).orderBy(locations.id).for("update");

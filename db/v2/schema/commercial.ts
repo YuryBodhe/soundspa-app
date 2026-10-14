@@ -48,6 +48,22 @@ export const commercialProductOrganizationAuthorizations = pgTable("commercial_p
   check("commercial_product_org_authorizations_revoke_shape", sql`(${table.revokedAt} IS NULL AND ${table.revokedByOperator} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByOperator} IS NOT NULL AND length(btrim(${table.revokedByOperator})) > 0 AND ${table.revokeReason} IS NOT NULL AND length(btrim(${table.revokeReason})) BETWEEN 1 AND 500 AND ${table.revokedAt} >= ${table.grantedAt})`),
 ]);
 
+/** Append-only operator audit trail for Product purchase-visibility changes. */
+export const commercialProductVisibilityEvents = pgTable("commercial_product_visibility_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  previousVisibility: text("previous_visibility").$type<"public" | "private" | "disabled">().notNull(),
+  newVisibility: text("new_visibility").$type<"public" | "private" | "disabled">().notNull(),
+  operator: text("operator").notNull(),
+  reason: text("reason").notNull(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("commercial_product_visibility_events_product_time_idx").on(table.productId, table.changedAt),
+  check("commercial_product_visibility_events_visibility_valid", sql`${table.previousVisibility} IN ('public', 'private', 'disabled') AND ${table.newVisibility} IN ('public', 'private', 'disabled') AND ${table.previousVisibility} <> ${table.newVisibility}`),
+  check("commercial_product_visibility_events_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
+  check("commercial_product_visibility_events_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 12 AND 500`),
+]);
+
 export type BillingResetAffectedRecords = {
   subscriptions: string[];
   trials: string[];
