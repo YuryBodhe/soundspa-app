@@ -46,6 +46,15 @@ test("a missing market requires selection, save, and authoritative refresh befor
   assert.equal(canPreviewBillingLines([{ marketCode: updated.marketCode }]), true);
 });
 
+test("a new Location with an available product can be selected before saving its market", async () => {
+  const source = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
+  assert.match(source, /disabled=\{!location\.products\.length \|\| busy\}/,
+    "a product returned by the active catalog keeps the Location selectable");
+  assert.match(source, /\{checked && product && <div className="customer-billing-wizard-line-controls"/,
+    "market selection and save controls are available after selecting the product");
+  assert.match(source, /if \(!canPreviewBillingLines\([\s\S]*?billingWizardMarketsMustBeSaved/, "preview remains blocked until the market is saved and refreshed");
+});
+
 test("save failure is surfaced and does not refresh billing data", async () => {
   let refreshed = false;
   await assert.rejects(saveBillingMarketAndRefresh({

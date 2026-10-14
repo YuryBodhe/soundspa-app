@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "./customerBillingModel";
+import { normalizeMarketCode, resolveCustomerBillingStatus } from "./customerBillingModel";
 
 const now = new Date("2026-10-08T00:00:00.000Z");
 
@@ -19,11 +19,11 @@ test("an independent active partner benefit remains available without paid subsc
   assert.equal(resolveCustomerBillingStatus({}, now), "available");
 });
 
-test("billing choices include current and expired entitlements but hide unrelated products", () => {
-  for (const status of ["trial", "subscription", "partner", "expired"] as const) {
-    assert.equal(shouldShowCustomerBillingProduct(status), true, `${status} remains visible`);
-  }
-  assert.equal(shouldShowCustomerBillingProduct("available"), false);
+test("a Location without current or prior entitlement has available billing status", () => {
+  assert.equal(resolveCustomerBillingStatus({}, now), "available");
+  assert.equal(resolveCustomerBillingStatus({ trial: { status: "active", startsAt: "2026-10-01", endsAt: "2026-10-10" } }, now), "trial");
+  assert.equal(resolveCustomerBillingStatus({ subscription: { status: "active", startsAt: "2026-10-01", currentPeriodEndsAt: "2026-11-01" } }, now), "subscription");
+  assert.equal(resolveCustomerBillingStatus({ trial: { status: "expired", startsAt: "2026-09-01", endsAt: "2026-10-01" } }, now), "expired");
 });
 
 test("market values must be explicit two-letter codes", () => {

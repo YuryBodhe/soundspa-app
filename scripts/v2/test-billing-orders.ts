@@ -82,12 +82,12 @@ async function main() {
           { organizationId: organization.id, userId: admin.id, role: "admin" },
         ]);
 
-        const locations = await tx.insert(schema.locations).values([1, 2, 3, 4].map((number) => ({
+        const locations = await tx.insert(schema.locations).values([1, 2, 3, 4, 5, 6].map((number) => ({
           organizationId: organization.id,
           name: `Billing order ${number}`,
           slug: `billing-order-${suffix.slice(0, 8)}-${number}`,
           timezone: "Europe/Moscow",
-          marketCode: "RU",
+          marketCode: number <= 4 ? "RU" : null,
         }))).returning();
         const [outsideOrganization] = await tx.insert(schema.organizations).values({ name: `billing-order-outsider-${suffix}` }).returning();
         const [outsideLocation] = await tx.insert(schema.locations).values({
@@ -101,6 +101,7 @@ async function main() {
         const products = await tx.insert(schema.commercialProducts).values([
           { code: `billing-order-basic-${suffix}`, name: "Billing Basic", kind: "core", priceMinor: 1, currency: "USD" },
           { code: `billing-order-partner-${suffix}`, name: "Billing Partner", kind: "partner" },
+          { code: `billing-order-inactive-${suffix}`, name: "Inactive Billing Product", kind: "core", priceMinor: 1, currency: "USD", isActive: false },
         ]).returning();
         const [provider] = await tx.insert(schema.commercialPaymentProviders).values({
           code: "fake-staging", displayName: "Staging Fake Provider", isEnabled: true,
@@ -167,6 +168,31 @@ async function main() {
           ...input, authenticatedUserId: manager.id, lines: [input.lines[0]],
         }, { db: tx, now, env: process.env });
         assert.equal(managerOrder.lines[0].locationId, locations[0].id);
+        const billingRowsBeforeLoad = {
+          trials: await tx.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials),
+          subscriptions: await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions),
+          orders: await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders),
+          payments: await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments),
+        };
+        const initialOwnerBillingView = await customerBilling.listCustomerBilling(owner.id, now, tx);
+        for (const location of [locations[4], locations[5]]) {
+          const locationProducts = initialOwnerBillingView.locations.find((row) => row.id === location.id)?.products ?? [];
+          const product = locationProducts
+            .find((row) => row.productId === products[0].id);
+          assert.equal(product?.status, "available", "an active catalog product is purchasable without a prior entitlement");
+          assert.deepEqual(product?.routes, [], "an unset market has no resolved payment route yet");
+          assert.equal(locationProducts.some((row) => row.productId === products[2].id), false, "inactive catalog products remain unavailable");
+        }
+        assert.ok(initialOwnerBillingView.supportedMarkets.includes("RU"), "the Wizard can offer configured RU even when a new Location has no saved market");
+        assert.deepEqual(await tx.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials), billingRowsBeforeLoad.trials,
+          "loading Billing does not create trials");
+        assert.deepEqual(await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions), billingRowsBeforeLoad.subscriptions,
+          "loading Billing does not create subscriptions or entitlements");
+        assert.deepEqual(await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders), billingRowsBeforeLoad.orders,
+          "loading Billing does not create orders");
+        assert.deepEqual(await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments), billingRowsBeforeLoad.payments,
+          "loading Billing does not create payments");
+        assertionCount += 11;
         const managerBillingView = await customerBilling.listCustomerBilling(manager.id, now, tx);
         assert.deepEqual(managerBillingView.locations.map((location) => location.id), [locations[0].id],
           "billing view exposes only explicitly delegated Locations to a manager");
@@ -476,6 +502,10 @@ async function main() {
           "prepaid coverage does not expose a Cancel renewal action");
         assert.equal(paidOrderView.locations.find((location) => location.id === locations[1].id)?.products.find((product) => product.productId === products[0].id)?.paidStartsAt, "2026-11-08T10:00:00.000Z",
           "Account exposes the paid start date alongside the still-active trial");
+        assert.deepEqual(paidOrderView.locations.find((location) => location.id === locations[1].id)?.products.find((product) => product.productId === products[0].id)?.scheduledPaidPeriods,
+          [{ startsAt: "2026-11-08T10:00:00.000Z", endsAt: "2027-03-08T10:00:00.000Z" }],
+          "scheduled paid coverage remains visible independently of current trial status");
+        assertionCount += 1;
         const [paidOrder] = await tx.select({ status: schema.commercialBillingOrders.status }).from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, prepaidOrder.id));
         const [paidPayment] = await tx.select({ status: schema.commercialPayments.status }).from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
         assert.equal(paidOrder.status, "paid");
@@ -493,6 +523,13 @@ async function main() {
         const managerCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
           authenticatedUserId: manager.id, billingOrderId: managerOrder.id,
         }, new Date(now.getTime() + 4000), tx);
+        const pendingOrderBillingView = await customerBilling.listCustomerBilling(owner.id, now, tx);
+        for (const location of [locations[4], locations[5]]) {
+          const product = pendingOrderBillingView.locations.find((row) => row.id === location.id)?.products
+            .find((row) => row.productId === products[0].id);
+          assert.equal(product?.status, "available", "a pending checkout for Location A does not hide products for new Locations B/C");
+        }
+        assertionCount += 2;
         await permissionService.revokeLocationBillingPermission({
           authenticatedUserId: owner.id, locationId: locations[0].id, managerUserId: manager.id,
         }, tx);

@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
-import { normalizeMarketCode, resolveCustomerBillingStatus, shouldShowCustomerBillingProduct } from "@/lib/v2/customerBillingModel";
+import { normalizeMarketCode, resolveCustomerBillingStatus } from "@/lib/v2/customerBillingModel";
 import { FAKE_PROVIDER_CODE } from "@/lib/v2/fakePaymentProvider";
 import { v2Db } from "../client";
 import {
@@ -107,7 +107,10 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         .from(commercialPartnerBenefits).where(and(eq(commercialPartnerBenefits.locationId, location.id), eq(commercialPartnerBenefits.productId, product.id))).orderBy(desc(commercialPartnerBenefits.startsAt));
       const benefit = benefits.find((candidate) => resolveCustomerBillingStatus({ partnerBenefit: candidate }, now) === "partner") ?? benefits[0] ?? null;
       const status = resolveCustomerBillingStatus({ trial, subscription, partnerBenefit: benefit }, now);
-      if (!shouldShowCustomerBillingProduct(status)) continue;
+      // Catalog eligibility is independent of entitlement history. An active
+      // product remains purchasable for a new Location with status "available".
+      // This catalog query already excludes inactive products; market and route
+      // eligibility is still validated by the existing quote/order services.
       const routes = location.marketCode
         ? await resolveEnabledPaymentRoutesForLocationProduct(location.id, product.id, db)
         : [];
