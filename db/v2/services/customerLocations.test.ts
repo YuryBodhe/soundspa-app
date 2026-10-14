@@ -101,9 +101,11 @@ test("unique slug conflicts retry the complete transaction with a new server-gen
 test("creation service contains no trial, subscription, entitlement, order, or payment writes", async () => {
   const source = await readFile(new URL("./customerLocations.ts", import.meta.url), "utf8");
   const onboarding = await readFile(new URL("./customerOnboarding.ts", import.meta.url), "utf8");
+  const stagingCompose = await readFile(new URL("../../../docker-compose.staging.yml", import.meta.url), "utf8");
   assert.doesNotMatch(source, /startSoundSpaTrial|locationSubscriptions|billingOrders|payments|entitlements/);
   assert.match(source, /for\("update"\)/);
   assert.match(source, /lower\(btrim\(\$\{locations\.name\}\)\)/);
+  assert.match(stagingCompose, /V2_MAX_LOCATIONS_PER_ORGANIZATION: \$\{V2_MAX_LOCATIONS_PER_ORGANIZATION:-20\}/);
   assert.match(onboarding, /const trial = await createTrial\(location\.id, tx\)/, "first-Location signup keeps its existing trial creation path");
 });
 
