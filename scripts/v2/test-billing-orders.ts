@@ -51,11 +51,11 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole === "soundspa_v2" || dbIdentity.role !== expectedLocalRole ||
-        Number(dbIdentity.migrationCount) !== 18 || dbIdentity.latestMigration !== "1791526957000") {
-      throw new Error("Database is not the expected disposable local database at Gate 6.3I migration 0017.");
+        Number(dbIdentity.migrationCount) !== 19 || dbIdentity.latestMigration !== "1791547650457") {
+      throw new Error("Database is not the expected disposable local database at migration 0018.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     if (baseline.rows[0]?.count !== "0") throw new Error("Disposable integration database must contain no customer or commercial fixtures before the test.");
 
@@ -522,9 +522,11 @@ async function main() {
           occurredAt: confirmationAt,
         };
         const lifecycle = await import("../../db/v2/services/paymentLifecycle");
-        const paymentFoundation = await import("../../db/v2/services/paymentFoundation");
         await assert.rejects(lifecycle.settleTrustedBillingOrderPayment(conflictInput, tx),
-          (error: unknown) => error instanceof paymentFoundation.PaymentFoundationError && error.code === "payment_identity_conflict");
+          (error: unknown) => error instanceof Error &&
+            error.name === "PaymentFoundationError" &&
+            "code" in error && error.code === "payment_identity_conflict" &&
+            error.message === "payment_identity_conflict");
 
         const externalOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
           { locationId: locations[2].id, productId: products[1].id, durationMonths: 1 },
@@ -646,7 +648,7 @@ async function main() {
       : [];
     assert.equal(rollbackOrganization, undefined, "fixture Organization must not remain after rollback");
     const afterRollback = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
     );
     assert.equal(afterRollback.rows[0]?.count, "0", "all customer and commercial fixtures must be absent after rollback");
     assertionCount += 2;
@@ -794,7 +796,7 @@ async function main() {
       }
     }
     const finalCounts = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     assert.equal(finalCounts.rows[0]?.count, "0", "rollback and concurrent fixtures are fully removed");
     assertionCount += 1;
