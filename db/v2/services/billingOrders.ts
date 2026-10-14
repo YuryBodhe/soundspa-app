@@ -18,6 +18,7 @@ import { LocationBillingAuthorizationError, requireLocationBillingAuthority } fr
 import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 import {
+  billingOrderSnapshotReference,
   BillingOrderModelError,
   fakeStagingBillingPricingAdapter,
   quoteBillingRoute,
@@ -67,7 +68,7 @@ type BillingOrderPlan = {
     quote: ReturnType<typeof selectCompatibleBillingQuotes>[number];
     period: Awaited<ReturnType<typeof planLinePeriod>>;
     location: LocationRow;
-    product: { id: string; name: string };
+    product: { id: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null };
   }>;
 };
 
@@ -86,6 +87,7 @@ async function loadLocationQuotes(input: {
   location: LocationRow;
   env: FakeProviderEnvironment;
   pricingAdapters: readonly BillingPricingAdapter[];
+  product: { priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null };
 }): Promise<{ routesFound: boolean; fakeProviderNotConfigured: boolean; quotes: BillingRouteQuoteCandidate[] }> {
   if (!input.location.marketCode) throw new BillingOrderError("market_not_configured");
   const routes = await input.tx.select({
@@ -119,6 +121,9 @@ async function loadLocationQuotes(input: {
       externalReference: route.externalReference,
       displayOrder: route.displayOrder,
       durationMonths: input.line.durationMonths,
+      priceMinor: input.product.priceMinor,
+      currency: input.product.currency,
+      billingIntervalMonths: input.product.billingIntervalMonths,
       env: input.env,
     }, input.pricingAdapters);
     if (quote) quotes.push(quote);
@@ -199,7 +204,7 @@ async function prepareBillingOrderPlan(input: {
 
   const productIds = [...new Set(request.lines.map((line) => line.productId))].sort();
   await requireOrganizationProductPurchaseEligibility(tx, request.organizationId, productIds, { lockForShare: true });
-  const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name })
+  const productRows = await tx.select({ id: commercialProducts.id, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths })
     .from(commercialProducts).where(and(inArray(commercialProducts.id, productIds), eq(commercialProducts.isActive, true)))
     .orderBy(asc(commercialProducts.id)).for("share");
   if (productRows.length !== productIds.length) throw new BillingOrderError("product_unavailable");
@@ -213,7 +218,9 @@ async function prepareBillingOrderPlan(input: {
   for (const line of routeLookupLines) {
     const location = locationsById.get(line.locationId);
     if (!location) throw new BillingOrderError("not_authorized");
-    const result = await loadLocationQuotes({ tx, line, location, env, pricingAdapters });
+    const product = productsById.get(line.productId);
+    if (!product) throw new BillingOrderError("product_unavailable");
+    const result = await loadLocationQuotes({ tx, line, location, env, pricingAdapters, product });
     if (!result.routesFound) throw new BillingOrderError("route_unavailable");
     if (result.quotes.length === 0) {
       if (result.fakeProviderNotConfigured) throw new BillingOrderError("provider_not_configured");
@@ -384,6 +391,15 @@ export async function createPrepaidBillingOrder(input: {
       createdAt: now,
       updatedAt: now,
     }))).returning({ id: commercialBillingOrderLines.id });
+
+    const snapshotLines = await tx.select().from(commercialBillingOrderLines)
+      .where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.id));
+    const quoteReference = billingOrderSnapshotReference({
+      id: order.id, organizationId: request.organizationId, providerCode, currency, totalAmountMinor,
+    }, snapshotLines);
+    await tx.update(commercialBillingOrders).set({ quoteReference, updatedAt: now })
+      .where(eq(commercialBillingOrders.id, order.id));
 
     return {
       id: order.id,

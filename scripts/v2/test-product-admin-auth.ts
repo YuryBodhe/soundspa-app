@@ -39,6 +39,13 @@ async function main() {
   }), { params: Promise.resolve({ productId: "00000000-0000-4000-8000-000000000001" }) });
   assert.equal(codeMutationResponse.status, 400, "Product code cannot be changed through the Admin endpoint");
 
+  const missingPriceResponse = await createProductRoute(new Request("https://v2-admin.test/api/v2/admin/products", {
+    method: "POST",
+    headers: { authorization: operatorAuthorization, origin: "https://v2-admin.test", "content-type": "application/json" },
+    body: JSON.stringify({ name: "No price", code: "no-price", isActive: true, channelIds: [] }),
+  }));
+  assert.equal(missingPriceResponse.status, 400, "new Products require an explicit supported price before persistence");
+
   assert.equal(isSameOriginMutation(new Request("https://internal:3000/api/v2/admin/products", {
     method: "POST", headers: { host: "v2-admin.test", origin: "https://v2-admin.test", "x-forwarded-proto": "https" },
   })), true);

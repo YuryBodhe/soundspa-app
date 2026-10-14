@@ -1,5 +1,7 @@
 export type ProductKind = "core" | "partner" | "addon";
 export type ProductAdminErrorCode = "INVALID_INPUT" | "PRODUCT_CODE_EXISTS" | "PRODUCT_NOT_FOUND" | "CHANNEL_NOT_FOUND";
+export type ProductPrice = { priceMinor: number; currency: "RUB"; billingIntervalMonths: 1 };
+const MAX_PRICE_MINOR = 2_147_483_647;
 
 export class ProductAdminError extends Error {
   constructor(readonly code: ProductAdminErrorCode) {
@@ -41,12 +43,24 @@ function channelIds(value: unknown): string[] {
   return ids;
 }
 
+function productPrice(priceMinor: unknown, currency: unknown, billingIntervalMonths: unknown, allowUnconfigured: boolean): ProductPrice | null {
+  if (allowUnconfigured && priceMinor === null && currency === null && billingIntervalMonths === null) return null;
+  if (!Number.isInteger(priceMinor) || (priceMinor as number) <= 0 || (priceMinor as number) > MAX_PRICE_MINOR ||
+      currency !== "RUB" || billingIntervalMonths !== 1) {
+    throw new ProductAdminError("INVALID_INPUT");
+  }
+  return { priceMinor: priceMinor as number, currency: "RUB", billingIntervalMonths: 1 };
+}
+
 export function validateCreateProductInput(input: {
   name: unknown;
   code: unknown;
   kind?: unknown;
   isActive: unknown;
   channelIds: unknown;
+  priceMinor?: unknown;
+  currency?: unknown;
+  billingIntervalMonths?: unknown;
 }) {
   if (typeof input.isActive !== "boolean") throw new ProductAdminError("INVALID_INPUT");
   return {
@@ -55,6 +69,7 @@ export function validateCreateProductInput(input: {
     kind: productKind(input.kind),
     isActive: input.isActive,
     channelIds: channelIds(input.channelIds),
+    ...productPrice(input.priceMinor, input.currency, input.billingIntervalMonths, false)!,
   };
 }
 
@@ -62,12 +77,18 @@ export function validateUpdateProductInput(input: {
   name: unknown;
   isActive: unknown;
   channelIds: unknown;
+  priceMinor?: unknown;
+  currency?: unknown;
+  billingIntervalMonths?: unknown;
 }) {
   if (typeof input.isActive !== "boolean") throw new ProductAdminError("INVALID_INPUT");
   return {
     name: productName(input.name),
     isActive: input.isActive,
     channelIds: channelIds(input.channelIds),
+    ...(input.priceMinor === undefined && input.currency === undefined && input.billingIntervalMonths === undefined
+      ? {}
+      : { price: productPrice(input.priceMinor, input.currency, input.billingIntervalMonths, true) }),
   };
 }
 

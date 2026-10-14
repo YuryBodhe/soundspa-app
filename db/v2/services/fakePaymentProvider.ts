@@ -4,7 +4,6 @@ import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import {
   fakeConfirmedPaidThrough,
   FAKE_CHECKOUT_TTL_MS,
-  FAKE_PAYMENT_AMOUNT_MINOR,
   FAKE_PAYMENT_CURRENCY,
   FAKE_PROVIDER_CODE,
   FAKE_PROVIDER_MARKET,
@@ -29,6 +28,7 @@ import { resolveEnabledPaymentRoutesForLocationProduct, recordNormalizedPayment 
 import { cancelTrustedSubscription, settleTrustedProviderPayment } from "./paymentLifecycle";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
+import { quoteBillingRoute } from "./billingOrderModel";
 
 type FakeProviderDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 type FakeProviderTransaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
@@ -101,6 +101,27 @@ export async function createFakeProviderCheckout(input: {
     const selectedRoute = routes.find((route) => route.id === input.routeId && route.providerCode === FAKE_PROVIDER_CODE);
     if (!selectedRoute) throw new FakeProviderError("route_unavailable");
 
+    const [product] = await tx.select({ isActive: commercialProducts.isActive, priceMinor: commercialProducts.priceMinor,
+      currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths })
+      .from(commercialProducts).where(eq(commercialProducts.id, input.productId)).for("share").limit(1);
+    if (!product?.isActive) throw new FakeProviderError("product_unavailable");
+    const quote = quoteBillingRoute({
+      routeId: selectedRoute.id,
+      providerCode: FAKE_PROVIDER_CODE,
+      marketCode: location.marketCode,
+      externalReference: selectedRoute.externalReference,
+      displayOrder: selectedRoute.displayOrder,
+      durationMonths: 1,
+      priceMinor: product.priceMinor,
+      currency: product.currency,
+      billingIntervalMonths: product.billingIntervalMonths,
+      env: process.env,
+    });
+    if (!quote || quote.currency !== FAKE_PAYMENT_CURRENCY || quote.discountAmountMinor !== BigInt(0)) {
+      throw new FakeProviderError("route_unavailable");
+    }
+    const amountMinor = quote.listAmountMinor - quote.discountAmountMinor;
+
     const [activeAggregateOrder] = await tx.select({ id: commercialBillingOrders.id })
       .from(commercialBillingOrderLines)
       .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
@@ -146,8 +167,8 @@ export async function createFakeProviderCheckout(input: {
       routeId: input.routeId,
       externalSubscriptionRef,
       status: "pending",
-      amountMinor: FAKE_PAYMENT_AMOUNT_MINOR,
-      currency: FAKE_PAYMENT_CURRENCY,
+      amountMinor,
+      currency: quote.currency,
       occurredAt: now,
     }, tx);
     const [payment] = await tx.select({ id: commercialPayments.id, createdAt: commercialPayments.createdAt, amountMinor: commercialPayments.amountMinor, currency: commercialPayments.currency })

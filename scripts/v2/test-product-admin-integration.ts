@@ -28,7 +28,7 @@ async function main() {
   try {
     await v2Db.transaction(async (tx) => {
       const runInTransaction = <T>(operation: (inner: typeof tx) => Promise<T>) => tx.transaction(operation);
-      const protectedProductsBefore = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, isActive: commercialProducts.isActive })
+      const protectedProductsBefore = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive })
         .from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code));
       const protectedProductIds = protectedProductsBefore.map((product) => product.id);
       const protectedCompositionBefore = protectedProductIds.length
@@ -44,13 +44,24 @@ async function main() {
       };
       const first = await makeChannel("first");
       const second = await makeChannel("second");
-      const created = await createProduct({ name: "  Admin Test Product ", code: ` Product_Admin_${suffix} `, kind: "partner", isActive: false, channelIds: [first.id] }, runInTransaction);
+      const created = await createProduct({ name: "  Admin Test Product ", code: ` Product_Admin_${suffix} `, kind: "partner", isActive: false, channelIds: [first.id], priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       assert.equal(created.code, `product-admin-${suffix}`);
       assert.equal(created.isActive, false, "a Product can be created inactive");
-      const defaultKindProduct = await createProduct({ name: "Default Kind Product", code: `default-kind-${suffix}`, isActive: true, channelIds: [] }, runInTransaction);
+      assert.equal(created.priceMinor, 108_000);
+      assert.equal(created.currency, "RUB");
+      assert.equal(created.billingIntervalMonths, 1);
+      const defaultKindProduct = await createProduct({ name: "Default Kind Product", code: `default-kind-${suffix}`, isActive: true, channelIds: [], priceMinor: 50_000, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       assert.equal(defaultKindProduct.kind, "core", "omitting Kind stores the server-selected compatibility value");
+      const [legacyUnconfigured] = await tx.insert(commercialProducts).values({
+        code: `legacy-unconfigured-${suffix}`, name: "Legacy unconfigured Product", kind: "core",
+      }).returning();
+      await updateProduct(legacyUnconfigured.id, { name: "Legacy renamed", isActive: true, channelIds: [] }, runInTransaction);
+      const [legacyAfterEdit] = await tx.select().from(commercialProducts).where(eq(commercialProducts.id, legacyUnconfigured.id));
+      assert.equal(legacyAfterEdit.priceMinor, null, "omitted price fields retain the legacy null price tuple");
+      assert.equal(legacyAfterEdit.currency, null);
+      assert.equal(legacyAfterEdit.billingIntervalMonths, null);
       await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: created.id, status: "active", startsAt: new Date(now.getTime() - 60_000), endsAt: new Date(now.getTime() + 60_000) });
-      await assert.rejects(createProduct({ name: "Duplicate", code: created.code, kind: "core", isActive: true, channelIds: [] }, runInTransaction),
+      await assert.rejects(createProduct({ name: "Duplicate", code: created.code, kind: "core", isActive: true, channelIds: [], priceMinor: 1, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction),
         (error: unknown) => error instanceof ProductAdminError && error.code === "PRODUCT_CODE_EXISTS");
       const [beforeUpdate] = await tx.select().from(commercialProducts).where(eq(commercialProducts.id, created.id));
       const firstComposition = await tx.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, created.id));
@@ -60,12 +71,16 @@ async function main() {
       assert.equal(accessBefore.get(first.id)?.playable, false, "inactive Product must not grant its composed Channel");
       assert.equal(accessBefore.get(second.id)?.playable, false);
 
-      await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [first.id] }, runInTransaction);
+      await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [first.id], priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       const accessAfterActivate = new Map((await resolveEffectiveChannelAccess(location.id, now, tx)).map((item) => [item.id, item]));
       assert.equal(accessAfterActivate.get(first.id)?.playable, true, "active trial should include the active Product composition");
 
-      const updated = await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [second.id] }, runInTransaction);
+      const updated = await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [second.id], priceMinor: 125_500, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       assert.equal(updated.name, "Updated Test Product");
+      assert.equal(updated.priceMinor, 125_500, "price edits affect the Product catalog configuration");
+      await assert.rejects(updateProduct(created.id, { name: updated.name, isActive: true, channelIds: [second.id], priceMinor: null, currency: null, billingIntervalMonths: null }, runInTransaction),
+        (error: unknown) => error instanceof ProductAdminError && error.code === "INVALID_INPUT",
+        "a configured Product cannot be cleared into the legacy fallback pricing mode");
       assert.equal(updated.code, created.code);
       assert.equal(updated.kind, "partner");
       const secondComposition = await tx.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, created.id));
@@ -74,13 +89,13 @@ async function main() {
       assert.equal(accessAfterEdit.get(first.id)?.playable, false);
       assert.equal(accessAfterEdit.get(second.id)?.playable, true);
 
-      await updateProduct(created.id, { name: updated.name, isActive: false, channelIds: [second.id] }, runInTransaction);
+      await updateProduct(created.id, { name: updated.name, isActive: false, channelIds: [second.id], priceMinor: updated.priceMinor, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       const accessAfterDeactivate = new Map((await resolveEffectiveChannelAccess(location.id, now, tx)).map((item) => [item.id, item]));
       assert.equal(accessAfterDeactivate.get(second.id)?.playable, false, "deactivating a Product must remove its commercial access");
       const [afterUpdate] = await tx.select().from(commercialProducts).where(eq(commercialProducts.id, created.id));
       assert.equal(afterUpdate.code, beforeUpdate.code, "Product code remains immutable through the update service");
       assert.equal(afterUpdate.kind, beforeUpdate.kind, "Product kind remains unchanged through the update service");
-      assert.deepEqual(await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, isActive: commercialProducts.isActive }).from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code)), protectedProductsBefore);
+      assert.deepEqual(await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive }).from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code)), protectedProductsBefore);
       assert.deepEqual(protectedProductIds.length
         ? await tx.select({ productId: commercialProductChannels.productId, channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(inArray(commercialProductChannels.productId, protectedProductIds)).orderBy(asc(commercialProductChannels.productId), asc(commercialProductChannels.channelId))
         : [], protectedCompositionBefore);

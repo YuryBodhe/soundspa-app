@@ -31,7 +31,7 @@ import {
   users,
 } from "../schema";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
-import { billingOrderSnapshotReference, quoteBillingRoute, fakeStagingBillingPricingAdapter } from "./billingOrderModel";
+import { billingOrderSnapshotReference } from "./billingOrderModel";
 import { PaymentFoundationError } from "./paymentFoundation";
 import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
@@ -185,6 +185,14 @@ export async function createFakeProviderBillingOrderCheckout(input: {
       tx, order.organizationId, lines.map((line) => line.productId), { lockForShare: true },
     );
 
+    // Price, currency and duration were quoted into this draft's immutable line
+    // snapshot. Reprice only new orders; a catalog edit must not change terms
+    // the customer already reviewed. Legacy drafts without a reference remain
+    // payable at their stored amounts after arithmetic validation below.
+    if (order.quoteReference && order.quoteReference !== billingOrderSnapshotReference(order, lines)) {
+      throw new FakeBillingOrderError("order_stale");
+    }
+
     const [provider] = await tx.select({ displayName: commercialPaymentProviders.displayName, isEnabled: commercialPaymentProviders.isEnabled })
       .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, order.providerCode)).for("share").limit(1);
     if (!provider?.isEnabled) throw new FakeBillingOrderError("route_unavailable");
@@ -249,18 +257,9 @@ export async function createFakeProviderBillingOrderCheckout(input: {
           line.providerCode !== order.providerCode || line.currency !== order.currency) {
         throw new FakeBillingOrderError("route_unavailable");
       }
-      const quote = quoteBillingRoute({
-        routeId: route.id,
-        providerCode: line.providerCode,
-        marketCode: route.marketCode,
-        externalReference: route.externalReference,
-        displayOrder: route.displayOrder,
-        durationMonths: line.durationMonths,
-        env,
-      }, [fakeStagingBillingPricingAdapter]);
-      const amount = quote ? quote.listAmountMinor - quote.discountAmountMinor : null;
-      if (!quote || quote.currency !== order.currency || quote.listAmountMinor !== line.listAmountMinor ||
-          quote.discountAmountMinor !== line.discountAmountMinor || amount !== line.amountMinor) {
+      if (line.listAmountMinor <= BigInt(0) || line.discountAmountMinor < BigInt(0) ||
+          line.discountAmountMinor > line.listAmountMinor ||
+          line.amountMinor !== line.listAmountMinor - line.discountAmountMinor) {
         throw new FakeBillingOrderError("order_stale");
       }
       total += line.amountMinor;

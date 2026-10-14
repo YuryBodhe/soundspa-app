@@ -7,6 +7,9 @@ export const dynamic = "force-dynamic";
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(160),
+  priceMinor: z.number().int().positive().max(2_147_483_647).nullable().optional(),
+  currency: z.literal("RUB").nullable().optional(),
+  billingIntervalMonths: z.literal(1).nullable().optional(),
   isActive: z.boolean(),
   channelIds: z.array(z.string().uuid()).max(250),
 }).strict();

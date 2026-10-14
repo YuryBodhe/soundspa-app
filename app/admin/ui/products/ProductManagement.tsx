@@ -3,10 +3,16 @@
 import { FormEvent, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
 import { productVisibilityConfirmationReducer, type VisibilityConfirmationState } from "./visibilityConfirmation";
+import { productPriceInputFromMinor, productPriceMinorFromInput } from "./productPriceInput";
 
 type Channel = { id: string; name: string; kind: "music" | "ambient"; isPublished: boolean; isArchived: boolean };
 type Visibility = "public" | "private" | "disabled";
-type Product = { id: string; code: string; name: string; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }> };
+type Product = { id: string; code: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }> };
+
+function configuredPrice(product: Product): string {
+  if (product.priceMinor === null || product.currency === null || product.billingIntervalMonths === null) return "Not configured";
+  return `${productPriceInputFromMinor(product.priceMinor)} ${product.currency} / Location / ${product.billingIntervalMonths} month${product.billingIntervalMonths === 1 ? "" : "s"}`;
+}
 
 function selectedChannels(form: HTMLFormElement): string[] {
   return new FormData(form).getAll("channelIds").filter((value): value is string => typeof value === "string");
@@ -38,10 +44,16 @@ export default function ProductManagement({ products, channels }: { products: Pr
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const created = await save("create", "/api/v2/admin/products", "POST", {
-      name: data.get("name"), code: data.get("code"),
-      isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
-    });
+    let created = false;
+    try {
+      const priceMinor = productPriceMinorFromInput(String(data.get("priceAmount") ?? ""));
+      if (priceMinor === null) throw new Error("Enter a Product price.");
+      created = await save("create", "/api/v2/admin/products", "POST", {
+        name: data.get("name"), code: data.get("code"), priceMinor, currency: data.get("currency"),
+        billingIntervalMonths: Number(data.get("billingIntervalMonths")),
+        isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
+      });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Enter a valid Product price."); }
     if (created) form.reset();
   }
 
@@ -49,9 +61,15 @@ export default function ProductManagement({ products, channels }: { products: Pr
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    await save(product.id, `/api/v2/admin/products/${encodeURIComponent(product.id)}`, "PATCH", {
-      name: data.get("name"), isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
-    });
+    try {
+      const priceMinor = productPriceMinorFromInput(String(data.get("priceAmount") ?? ""));
+      const configured = priceMinor !== null;
+      await save(product.id, `/api/v2/admin/products/${encodeURIComponent(product.id)}`, "PATCH", {
+        name: data.get("name"), isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
+        priceMinor, currency: configured ? data.get("currency") : null,
+        billingIntervalMonths: configured ? Number(data.get("billingIntervalMonths")) : null,
+      });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Enter a valid Product price."); }
   }
 
   async function updateVisibility(product: Product, visibility: Visibility, reason: string) {
@@ -79,6 +97,10 @@ export default function ProductManagement({ products, channels }: { products: Pr
         <label>Product name<input name="name" required maxLength={160} /></label>
         <label>Product code<input name="code" required maxLength={80} pattern="[A-Za-z0-9_-]+(\s+[A-Za-z0-9_-]+)*" autoCapitalize="none" /></label>
         <p className="text-dim">Code is normalized to lowercase with hyphens and cannot be changed after creation.</p>
+        <label>Price per Location<input name="priceAmount" inputMode="decimal" required placeholder="1080.00" /></label>
+        <label>Currency<select name="currency" defaultValue="RUB"><option value="RUB">RUB</option></select></label>
+        <label>Billing interval<select name="billingIntervalMonths" defaultValue="1"><option value="1">1 month</option></select></label>
+        <p className="text-dim">Phase 1 supports RUB monthly prices. Enter a positive amount; prices are stored in integer minor units.</p>
         <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked /> Active Product</label>
         <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channels.length ? channelOptions([]) : <p className="text-dim">No Channels exist yet.</p>}</fieldset>
         <button className="btn btn-primary" disabled={pending === "create"}>{pending === "create" ? "Creating…" : "Create Product"}</button>
@@ -89,12 +111,13 @@ export default function ProductManagement({ products, channels }: { products: Pr
       {!products.length && <section className="admin-card"><p className="text-dim">No Products configured.</p></section>}
       {products.map((product) => <details className="admin-card product-management-card" key={product.id}>
         <summary className="product-management-summary">
-          <span><strong>{product.name}</strong><small>{product.code}</small></span>
+          <span><strong>{product.name}</strong><small>{product.code} · {configuredPrice(product)}</small></span>
           <span className={`badge ${product.isActive ? "badge-ok" : "badge-neutral"}`}>{product.isActive ? "ACTIVE" : "INACTIVE"}</span>
           <span className="badge badge-neutral">{product.visibility.toUpperCase()}</span>
         </summary>
         <div className="product-management-content">
           <p><strong>Channels:</strong> {product.channels.length ? product.channels.map((channel) => channel.name).join(", ") : "None"}</p>
+          <p><strong>Price:</strong> {configuredPrice(product)}</p>
           <section className="product-visibility-management" aria-label={`${product.name} purchase visibility`}>
             <h3>Purchase visibility</h3>
             <p className="text-dim">Visibility controls new purchases only. It does not revoke existing trials, subscriptions, Partner Benefits, grants, or pending checkouts.</p>
@@ -115,6 +138,10 @@ export default function ProductManagement({ products, channels }: { products: Pr
           <form className="admin-form product-management-form" onSubmit={(event) => void update(event, product)}>
             <label>Product code<input value={product.code} readOnly aria-readonly="true" /></label>
             <label>Product name<input name="name" required maxLength={160} defaultValue={product.name} /></label>
+            <label>Price per Location<input name="priceAmount" inputMode="decimal" placeholder="1080.00" required={product.priceMinor !== null} defaultValue={product.priceMinor === null ? "" : productPriceInputFromMinor(product.priceMinor)} /></label>
+            <label>Currency<select name="currency" defaultValue={product.currency ?? "RUB"}><option value="RUB">RUB</option></select></label>
+            <label>Billing interval<select name="billingIntervalMonths" defaultValue={String(product.billingIntervalMonths ?? 1)}><option value="1">1 month</option></select></label>
+            {product.priceMinor === null && <p className="text-dim">Legacy price is not configured. Leave the amount blank to keep it unconfigured, or enter a price to configure it.</p>}
             <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked={product.isActive} /> Active Product</label>
             <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channelOptions(product.channelIds)}</fieldset>
             <button className="btn btn-primary" disabled={pending === product.id}>{pending === product.id ? "Saving…" : "Save Product"}</button>

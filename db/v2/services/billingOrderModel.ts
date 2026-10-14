@@ -26,6 +26,10 @@ export type BillingPricingInput = {
   providerCode: string;
   marketCode: string;
   durationMonths: number;
+  /** Null tuple preserves the established flat Fake Provider price for legacy Products. */
+  priceMinor?: number | null;
+  currency?: string | null;
+  billingIntervalMonths?: number | null;
   env: FakeProviderEnvironment;
 };
 
@@ -121,15 +125,33 @@ export function validateBillingOrderRequest(value: unknown): { organizationId: s
   return { organizationId: input.organizationId.toLowerCase(), lines };
 }
 
-/** Product.priceMinor is intentionally not used: it is not provider/market scoped. */
+const MAX_PRODUCT_PRICE_MINOR = 2_147_483_647;
+const MAX_BIGINT = BigInt("9223372036854775807");
+
+/** Fake staging supports RUB monthly catalog pricing; null legacy rows keep the historical amount. */
 export const fakeStagingBillingPricingAdapter: BillingPricingAdapter = {
   providerCode: FAKE_PROVIDER_CODE,
   quote(input) {
     if (!fakeProviderIsConfigured(input.env) || input.marketCode !== FAKE_PROVIDER_MARKET ||
         !Number.isInteger(input.durationMonths) || input.durationMonths < 1 || input.durationMonths > 12) return null;
+    const configured = input.priceMinor !== undefined || input.currency !== undefined || input.billingIntervalMonths !== undefined;
+    let monthlyPrice = FAKE_PAYMENT_AMOUNT_MINOR;
+    if (configured) {
+      if (input.priceMinor === null && input.currency === null && input.billingIntervalMonths === null) {
+        // Existing Products with the fully null legacy tuple keep their current Fake Provider behavior.
+      } else if (!Number.isInteger(input.priceMinor) || (input.priceMinor as number) <= 0 ||
+          (input.priceMinor as number) > MAX_PRODUCT_PRICE_MINOR || input.currency !== FAKE_PAYMENT_CURRENCY ||
+          input.billingIntervalMonths !== 1) {
+        return null;
+      } else {
+        monthlyPrice = BigInt(input.priceMinor as number);
+      }
+    }
+    const amount = BigInt(monthlyPrice) * BigInt(input.durationMonths);
+    if (amount > MAX_BIGINT) return null;
     return {
-      currency: FAKE_PAYMENT_CURRENCY,
-      listAmountMinor: FAKE_PAYMENT_AMOUNT_MINOR * BigInt(input.durationMonths),
+      currency: configured && input.priceMinor !== null && input.priceMinor !== undefined ? input.currency! : FAKE_PAYMENT_CURRENCY,
+      listAmountMinor: amount,
       discountAmountMinor: BigInt(0),
     };
   },
@@ -143,12 +165,18 @@ export function quoteBillingRoute(input: {
   externalReference: string;
   displayOrder: number;
   durationMonths: number;
+  priceMinor?: number | null;
+  currency?: string | null;
+  billingIntervalMonths?: number | null;
   env: FakeProviderEnvironment;
 }, adapters: readonly BillingPricingAdapter[] = [fakeStagingBillingPricingAdapter]): BillingRouteQuoteCandidate | null {
   const result = adapters.find((adapter) => adapter.providerCode === input.providerCode)?.quote({
     providerCode: input.providerCode,
     marketCode: input.marketCode,
     durationMonths: input.durationMonths,
+    priceMinor: input.priceMinor,
+    currency: input.currency,
+    billingIntervalMonths: input.billingIntervalMonths,
     env: input.env,
   });
   if (!result || !/^[A-Z]{3}$/.test(result.currency) || result.listAmountMinor < BigInt(0) ||

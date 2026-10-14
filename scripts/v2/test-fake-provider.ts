@@ -147,7 +147,7 @@ async function main() {
           { organizationId: organization.id, userId: manager.id, role: "manager" },
           { organizationId: outsideOrganization.id, userId: foreignUser.id, role: "owner" },
         ]);
-        const [product] = await tx.insert(schema.commercialProducts).values({ code: `fake-product-${suffix}`, name: "Fake Product", kind: "core", isActive: true }).returning();
+        const [product] = await tx.insert(schema.commercialProducts).values({ code: `fake-product-${suffix}`, name: "Fake Product", kind: "core", priceMinor: 125_005, currency: "RUB", billingIntervalMonths: 1, isActive: true }).returning();
         const [expiredProduct] = await tx.insert(schema.commercialProducts).values({ code: `fake-expired-${suffix}`, name: "Fake Expiry Product", kind: "core", isActive: true }).returning();
         const channels = await tx.select().from(schema.channels).limit(2);
         const [channel, partnerChannel] = channels;
@@ -189,7 +189,7 @@ async function main() {
         const checkout = await fakeProvider.createFakeProviderCheckout({ authenticatedUserId: owner.id, locationId: ownerLocation.id, productId: product.id, routeId: route.id }, now, tx);
         const [pending] = await tx.select().from(schema.commercialPayments).where(eq(schema.commercialPayments.id, checkout.checkoutId));
         assert.equal(pending.status, "pending");
-        assert.equal(pending.amountMinor, BigInt(108_000));
+        assert.equal(pending.amountMinor, BigInt(125_005), "single-location Fake Provider checkout uses the configured Product price exactly");
         assert.equal(pending.currency, "RUB");
         assert.equal(pending.locationId, ownerLocation.id);
         assert.equal(pending.productId, product.id);

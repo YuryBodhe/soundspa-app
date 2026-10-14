@@ -32,7 +32,7 @@ async function assertChannelsExist(tx: V2Transaction, channelIds: string[]) {
 
 export async function listProductManagementData() {
   const [productRows, channelRows, compositionRows, visibilityRows] = await Promise.all([
-    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility })
+    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility })
       .from(commercialProducts).orderBy(asc(commercialProducts.name), asc(commercialProducts.code), asc(commercialProducts.id)),
     v2Db.select({ id: channels.id, name: channels.displayName, kind: channels.kind, isPublished: channels.isPublished, archivedAt: channels.archivedAt })
       .from(channels).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.displayName), asc(channels.id)),
@@ -60,7 +60,7 @@ export async function listProductManagementData() {
 }
 
 export async function createProduct(
-  input: { name: unknown; code: unknown; kind?: unknown; isActive: unknown; channelIds: unknown },
+  input: { name: unknown; code: unknown; kind?: unknown; isActive: unknown; channelIds: unknown; priceMinor: unknown; currency: unknown; billingIntervalMonths: unknown },
   runInTransaction: TransactionRunner = defaultTransaction,
 ) {
   const values = validateCreateProductInput(input);
@@ -71,8 +71,11 @@ export async function createProduct(
         code: values.code,
         name: values.name,
         kind: values.kind,
+        priceMinor: values.priceMinor,
+        currency: values.currency,
+        billingIntervalMonths: values.billingIntervalMonths,
         isActive: values.isActive,
-      }).returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, isActive: commercialProducts.isActive });
+      }).returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive });
       if (values.channelIds.length) {
         await tx.insert(commercialProductChannels).values(values.channelIds.map((channelId) => ({ productId: product.id, channelId })));
       }
@@ -86,7 +89,7 @@ export async function createProduct(
 
 export async function updateProduct(
   productId: string,
-  input: { name: unknown; isActive: unknown; channelIds: unknown },
+  input: { name: unknown; isActive: unknown; channelIds: unknown; priceMinor?: unknown; currency?: unknown; billingIntervalMonths?: unknown },
   runInTransaction: TransactionRunner = defaultTransaction,
 ) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productId)) {
@@ -94,17 +97,26 @@ export async function updateProduct(
   }
   const values = validateUpdateProductInput(input);
   return runInTransaction(async (tx) => {
-    const [existing] = await tx.select({ id: commercialProducts.id }).from(commercialProducts)
+    const [existing] = await tx.select({ id: commercialProducts.id, priceMinor: commercialProducts.priceMinor,
+      currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths }).from(commercialProducts)
       .where(eq(commercialProducts.id, productId)).for("update");
     if (!existing) throw new ProductAdminError("PRODUCT_NOT_FOUND");
+    if (values.price === null && (existing.priceMinor !== null || existing.currency !== null || existing.billingIntervalMonths !== null)) {
+      throw new ProductAdminError("INVALID_INPUT");
+    }
     await assertChannelsExist(tx, values.channelIds);
 
     const [product] = await tx.update(commercialProducts).set({
       name: values.name,
       isActive: values.isActive,
+      ...(values.price === undefined ? {} : {
+        priceMinor: values.price?.priceMinor ?? null,
+        currency: values.price?.currency ?? null,
+        billingIntervalMonths: values.price?.billingIntervalMonths ?? null,
+      }),
       updatedAt: new Date(),
     }).where(eq(commercialProducts.id, productId))
-      .returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, isActive: commercialProducts.isActive });
+      .returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive });
 
     await tx.delete(commercialProductChannels).where(eq(commercialProductChannels.productId, productId));
     if (values.channelIds.length) {

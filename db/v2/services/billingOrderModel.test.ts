@@ -57,6 +57,31 @@ test("Fake Provider pricing uses its trusted RU monthly amount times duration", 
   assert.equal(quote?.currency, "RUB");
   assert.equal(quote?.listAmountMinor, BigInt(324_000));
   assert.equal(quote?.discountAmountMinor, BigInt(0));
+  const legacyNullPrice = quoteBillingRoute({
+    routeId: "legacy-route", providerCode: "fake-staging", marketCode: "RU", externalReference: "legacy-route",
+    displayOrder: 0, durationMonths: 1, priceMinor: null, currency: null, billingIntervalMonths: null, env: stagingEnv,
+  });
+  assert.equal(legacyNullPrice?.listAmountMinor, BigInt(108_000), "fully unconfigured legacy Products retain the historical amount");
+});
+
+test("configured Fake Provider Product prices use integer minor units and calendar-month duration", () => {
+  const base = {
+    routeId: "route-configured", providerCode: "fake-staging", marketCode: "RU", externalReference: "configured",
+    displayOrder: 0, durationMonths: 3, env: stagingEnv,
+  };
+  assert.equal(quoteBillingRoute({ ...base, durationMonths: 1, priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 })?.listAmountMinor, BigInt(108_000));
+  assert.equal(quoteBillingRoute({ ...base, priceMinor: 50_000, currency: "RUB", billingIntervalMonths: 1 })?.listAmountMinor, BigInt(150_000));
+  const twoProducts = [
+    quoteBillingRoute({ ...base, durationMonths: 1, priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 }),
+    quoteBillingRoute({ ...base, routeId: "other", durationMonths: 1, priceMinor: 150_000, currency: "RUB", billingIntervalMonths: 1 }),
+  ];
+  assert.equal(twoProducts.reduce((sum, quote) => sum + (quote?.listAmountMinor ?? BigInt(0)), BigInt(0)), BigInt(258_000));
+  assert.equal(quoteBillingRoute({ ...base, priceMinor: 108_000, currency: "USD", billingIntervalMonths: 1 }), null);
+  assert.equal(quoteBillingRoute({ ...base, priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 2 }), null);
+  assert.equal(quoteBillingRoute({ ...base, priceMinor: null, currency: "RUB", billingIntervalMonths: 1 }), null,
+    "partial legacy tuples fail closed instead of silently using the legacy price");
+  assert.equal(quoteBillingRoute({ ...base, priceMinor: 2_147_483_647, currency: "RUB", billingIntervalMonths: 1 })?.listAmountMinor,
+    BigInt(2_147_483_647) * BigInt(3), "integer multiplication does not round through floating point");
 });
 
 test("provider pricing adapters can supply market-specific quotes without changing generic selection", () => {

@@ -99,8 +99,8 @@ async function main() {
         }).returning();
 
         const products = await tx.insert(schema.commercialProducts).values([
-          { code: `billing-order-basic-${suffix}`, name: "Billing Basic", kind: "core", priceMinor: 1, currency: "USD" },
-          { code: `billing-order-partner-${suffix}`, name: "Billing Partner", kind: "partner" },
+          { code: `billing-order-basic-${suffix}`, name: "Billing Basic", kind: "core", priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 },
+          { code: `billing-order-partner-${suffix}`, name: "Billing Partner", kind: "partner", priceMinor: 150_000, currency: "RUB", billingIntervalMonths: 1 },
           { code: `billing-order-inactive-${suffix}`, name: "Inactive Billing Product", kind: "core", priceMinor: 1, currency: "USD", isActive: false },
         ]).returning();
         const [provider] = await tx.insert(schema.commercialPaymentProviders).values({
@@ -243,8 +243,8 @@ async function main() {
         const orderCountBeforePreview = await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders);
         const preview = await service.previewPrepaidBillingOrder(input, { db: tx, now, env: process.env });
         assert.equal(preview.organization.id, organization.id);
-        assert.equal(preview.totalAmountMinor, "2268000");
-        assert.deepEqual(preview.lines.map((line) => line.amountMinor), ["108000", "216000", "648000", "1296000"]);
+        assert.equal(preview.totalAmountMinor, "3024000");
+        assert.deepEqual(preview.lines.map((line) => line.amountMinor), ["108000", "216000", "900000", "1800000"]);
         assert.equal(preview.quoteValidity.binding, false);
         assert.equal(preview.quoteValidity.revalidatedAtOrderCreation, true);
         assert.equal((await tx.select({ id: schema.commercialBillingOrders.id }).from(schema.commercialBillingOrders)).length,
@@ -279,8 +279,8 @@ async function main() {
         assert.equal(order.status, "draft");
         assert.equal(order.providerCode, "fake-staging");
         assert.equal(order.currency, "RUB");
-        assert.equal(order.totalAmountMinor, "2268000");
-        assert.deepEqual(order.lines.map((line) => line.amountMinor), ["108000", "216000", "648000", "1296000"]);
+        assert.equal(order.totalAmountMinor, "3024000");
+        assert.deepEqual(order.lines.map((line) => line.amountMinor), ["108000", "216000", "900000", "1800000"]);
         assert.equal(order.lines[0].subscriptionId, existingSubscription.id);
         assert.equal(order.lines[0].billingPeriodStartsAt, "2026-10-31T10:00:00.000Z");
         assert.equal(order.lines[0].billingPeriodEndsAt, "2026-11-30T10:00:00.000Z");
@@ -290,7 +290,7 @@ async function main() {
 
         const persistedLines = await tx.select().from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, order.id));
         assert.equal(persistedLines.length, 4);
-        assert.equal(persistedLines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)), BigInt(2_268_000));
+        assert.equal(persistedLines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)), BigInt(3_024_000));
         const [persistedOrder] = await tx.select().from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, order.id));
         assert.equal(persistedOrder.status, "draft");
         assertionCount += 3;
@@ -353,15 +353,29 @@ async function main() {
         }, now, tx), "route_unavailable");
         await tx.update(schema.commercialPaymentRoutes).set({ isEnabled: true }).where(eq(schema.commercialPaymentRoutes.id, routes[1].id));
 
-        const changedPriceOrder = await service.createPrepaidBillingOrder({ ...input, lines: [input.lines[3]] }, {
+        await tx.update(schema.locations).set({ marketCode: "RU" }).where(eq(schema.locations.id, locations[4].id));
+        const changedPriceOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
+          { locationId: locations[4].id, productId: products[1].id, durationMonths: 12 },
+        ] }, {
           db: tx, now, env: process.env,
           pricingAdapters: [{ providerCode: "fake-staging", quote: ({ durationMonths }) => ({
             currency: "RUB", listAmountMinor: BigInt(108_001 * durationMonths), discountAmountMinor: BigInt(0),
           }) }],
         });
-        await assertAggregateError(aggregateFake.createFakeProviderBillingOrderCheckout({
+        const changedPriceCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, billingOrderId: changedPriceOrder.id,
-        }, now, tx), "order_stale");
+        }, now, tx);
+        assert.equal(changedPriceCheckout.amountMinor, 1_296_012, "checkout preserves the exact previously quoted 12-month draft amount");
+
+        const savedPriceOrder = await service.createPrepaidBillingOrder({
+          ...input, lines: [{ locationId: locations[4].id, productId: products[0].id, durationMonths: 1 }],
+        }, { db: tx, now, env: process.env });
+        await tx.update(schema.commercialProducts).set({ priceMinor: 150_000, updatedAt: now }).where(eq(schema.commercialProducts.id, products[0].id));
+        const savedPriceCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: savedPriceOrder.id,
+        }, now, tx);
+        assert.equal(savedPriceCheckout.amountMinor, 108_000, "catalog price edits do not alter an existing draft quote");
+        await tx.update(schema.commercialProducts).set({ priceMinor: 108_000, updatedAt: now }).where(eq(schema.commercialProducts.id, products[0].id));
         assertionCount += 4;
 
         const prepaidOrder = await service.createPrepaidBillingOrder({ ...input, lines: [
@@ -369,7 +383,7 @@ async function main() {
           { locationId: locations[1].id, productId: products[0].id, durationMonths: 3 },
           { locationId: locations[2].id, productId: products[0].id, durationMonths: 12 },
         ] }, { db: tx, now, env: process.env });
-        assert.equal(prepaidOrder.totalAmountMinor, "1728000", "one aggregate order is 17,280 RUB in integer minor units");
+        assert.equal(prepaidOrder.totalAmountMinor, "1728000", "one Product across several Locations is summed in integer minor units");
         assert.deepEqual(prepaidOrder.lines.map((line) => line.amountMinor), ["108000", "324000", "1296000"]);
         const aggregateCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, billingOrderId: prepaidOrder.id,
@@ -459,6 +473,26 @@ async function main() {
         }, confirmationAt, tx);
         assert.equal(settledAggregate.duplicate, false);
         assert.equal(settledAggregate.allocations.length, 3);
+        await tx.update(schema.commercialProducts).set({ priceMinor: 150_000, updatedAt: confirmationAt })
+          .where(eq(schema.commercialProducts.id, products[0].id));
+        const [historicalOrderAfterPriceEdit] = await tx.select({ totalAmountMinor: schema.commercialBillingOrders.totalAmountMinor,
+          currency: schema.commercialBillingOrders.currency, status: schema.commercialBillingOrders.status })
+          .from(schema.commercialBillingOrders).where(eq(schema.commercialBillingOrders.id, prepaidOrder.id));
+        const [historicalPaymentAfterPriceEdit] = await tx.select({ amountMinor: schema.commercialPayments.amountMinor,
+          currency: schema.commercialPayments.currency, status: schema.commercialPayments.status })
+          .from(schema.commercialPayments).where(eq(schema.commercialPayments.billingOrderId, prepaidOrder.id));
+        const historicalLinesAfterPriceEdit = await tx.select({ amountMinor: schema.commercialBillingOrderLines.amountMinor })
+          .from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, prepaidOrder.id));
+        assert.equal(historicalOrderAfterPriceEdit.totalAmountMinor, BigInt(1_728_000));
+        assert.equal(historicalOrderAfterPriceEdit.currency, "RUB");
+        assert.equal(historicalOrderAfterPriceEdit.status, "paid");
+        assert.equal(historicalPaymentAfterPriceEdit.amountMinor, BigInt(1_728_000));
+        assert.equal(historicalPaymentAfterPriceEdit.status, "succeeded");
+        assert.deepEqual(historicalLinesAfterPriceEdit.map((line) => line.amountMinor).sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
+          [BigInt(108_000), BigInt(324_000), BigInt(1_296_000)]);
+        await tx.update(schema.commercialProducts).set({ priceMinor: 108_000, updatedAt: confirmationAt })
+          .where(eq(schema.commercialProducts.id, products[0].id));
+        assertionCount += 6;
         const repeatedSettlement = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
           authenticatedUserId: owner.id, confirmationToken: aggregateCheckout.confirmationToken,
         }, new Date(confirmationAt.getTime() + 1000), tx);
@@ -666,7 +700,8 @@ async function main() {
           startsAt: schema.locationChannelGrants.startsAt, endsAt: schema.locationChannelGrants.endsAt, updatedAt: schema.locationChannelGrants.updatedAt,
         }).from(schema.locationChannelGrants), beforeAdminGrants, "subscription settlement leaves Location Admin Grants unchanged");
         assert.equal((await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)).length, beforeSubscriptions.length + 4);
-        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 8);
+        assert.equal((await tx.select({ id: schema.commercialPayments.id }).from(schema.commercialPayments)).length, 10,
+          "the two frozen-price checkout fixtures each create one payment snapshot");
         assertionCount += 5;
 
         const routeSnapshot = await tx.select({ id: schema.commercialPaymentRoutes.id }).from(schema.commercialPaymentRoutes).where(and(
@@ -707,7 +742,8 @@ async function main() {
           timezone: "Europe/Moscow", marketCode: "RU",
         }).returning();
         const [product] = await tx.insert(schema.commercialProducts).values({
-          code: `billing-race-${raceSuffix}`, name: "Concurrent checkout product", kind: "core", isActive: true,
+          code: `billing-race-${raceSuffix}`, name: "Concurrent checkout product", kind: "core",
+          priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1, isActive: true,
         }).returning();
         const [raceProvider] = await tx.insert(schema.commercialPaymentProviders).values({ code: "fake-staging", displayName: "Staging Fake Provider", isEnabled: true }).returning();
         const [route] = await tx.insert(schema.commercialPaymentRoutes).values({
@@ -750,6 +786,29 @@ async function main() {
       const raceEvents = await v2Db.select({ id: schema.commercialPaymentEvents.id }).from(schema.commercialPaymentEvents)
         .where(eq(schema.commercialPaymentEvents.paymentId, racePayments[0].id));
       assert.equal(raceEvents.length, 1, "concurrent confirmation writes one provider event receipt");
+
+      const priceEditAt = new Date(raceFixture.now.getTime() + 2500);
+      const priceEditRequest = { authenticatedUserId: raceFixture.ownerId,
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId, durationMonths: 1 }] };
+      const [priceQuotedOrder, editedProductRows] = await Promise.all([
+        service.createPrepaidBillingOrder(priceEditRequest, { now: priceEditAt, env: process.env }),
+        v2Db.update(schema.commercialProducts).set({ priceMinor: 150_000, updatedAt: priceEditAt })
+          .where(eq(schema.commercialProducts.id, raceFixture.productId)).returning({ priceMinor: schema.commercialProducts.priceMinor }),
+      ]);
+      assert.equal(editedProductRows[0]?.priceMinor, 150_000);
+      assert.ok(["108000", "150000"].includes(priceQuotedOrder.lines[0].amountMinor),
+        "concurrent price edit and quote observe one complete serialized catalog value");
+      const priceEditCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+        authenticatedUserId: raceFixture.ownerId, billingOrderId: priceQuotedOrder.id,
+      }, priceEditAt);
+      assert.equal(priceEditCheckout.amountMinor, Number(priceQuotedOrder.lines[0].amountMinor),
+        "checkout preserves the concurrent quote's saved Product price");
+      const priceEditSettlement = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
+        authenticatedUserId: raceFixture.ownerId, confirmationToken: priceEditCheckout.confirmationToken,
+      }, new Date(priceEditAt.getTime() + 1000));
+      assert.equal(priceEditSettlement.allocations.length, 1, "the price snapshot settles to one Location/Product entitlement period");
       const distinctOrders = await v2Db.transaction(async (tx) => {
         const [location] = await tx.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
           .where(eq(schema.locations.id, raceFixture.locationId)).limit(1);
@@ -796,7 +855,7 @@ async function main() {
       assert.equal(distinctLines[1].startsAt?.toISOString(), distinctLines[0].endsAt?.toISOString(), "distinct concurrent purchases receive contiguous periods");
       assert.equal((await v2Db.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions)
         .where(eq(schema.locationSubscriptions.locationId, raceFixture.locationId))).length, 1, "distinct prepaid periods extend the same product subscription");
-      assertionCount += 12;
+      assertionCount += 16;
     } finally {
       if (raceOrganizationId) {
         await v2Db.transaction(async (tx) => {
