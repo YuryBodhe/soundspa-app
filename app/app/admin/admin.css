@@ -413,6 +413,93 @@
 .analytics-data-quality { padding: 11px 14px; border-left: 2px solid rgba(195,168,108,.46); color: rgba(255,255,255,.5); font-size: 11px; }
 .analytics-data-quality h2 { margin: 0 0 5px; color: rgba(255,255,255,.7); font-size: 12px; font-weight: 500; }
 .analytics-data-quality ul { display: grid; gap: 3px; margin: 0; padding-left: 17px; }
+
+/* Registration Links management */
+.registration-links-page { display: grid; gap: 18px; }
+.registration-links-alert { margin: 0; padding: 10px 13px; border-left: 2px solid #ff9f0a; border-radius: 7px; background: rgba(255,159,10,.08); color: #ffd29a; }
+.registration-link-create-card { display: grid; gap: 18px; padding: clamp(16px, 2.5vw, 24px); }
+.registration-link-section-heading, .registration-link-list-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.registration-link-section-heading > p { max-width: 340px; margin: 0; text-align: right; font-size: 12px; }
+.registration-link-eyebrow { margin: 0 0 4px; color: rgba(195,168,108,.82); font-size: 10px; font-weight: 600; letter-spacing: .12em; }
+.registration-link-create-form { display: grid; gap: 20px; }
+.registration-product-fieldset, .registration-link-settings { min-width: 0; margin: 0; padding: 0; border: 0; }
+.registration-product-fieldset legend, .registration-link-settings legend { margin-bottom: 10px; color: rgba(255,255,255,.78); font-size: 12px; font-weight: 500; }
+.registration-product-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.registration-product-card { display: grid; align-content: start; gap: 16px; min-width: 0; padding: 14px; border: 1px solid rgba(255,255,255,.09); border-radius: 11px; background: rgba(255,255,255,.018); transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.registration-product-card:has(.registration-product-card-heading input:checked) { border-color: rgba(195,168,108,.55); background: rgba(195,168,108,.075); box-shadow: inset 0 0 0 1px rgba(195,168,108,.12); }
+.registration-product-card-heading { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.registration-product-card-heading input, .registration-link-confirm input { width: 17px; height: 17px; flex: 0 0 17px; margin: 0; accent-color: #c3a86c; }
+.registration-product-card-heading label { color: #f5f5f7; font-size: 14px; font-weight: 550; cursor: pointer; }
+.registration-duration-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: rgba(255,255,255,.7); font-size: 11px; }
+.registration-duration-label span, .registration-link-settings label > span { color: rgba(255,255,255,.42); font-size: 10px; font-weight: 400; }
+.registration-duration-input, .registration-link-settings input, .registration-link-revoke-form input:not([type="checkbox"]), .registration-link-copy-row input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.13); border-radius: 8px; background: rgba(8,8,14,.82); color: #f5f5f7; font: inherit; font-size: 13px; }
+.registration-duration-input:disabled { opacity: .46; }
+.registration-link-settings { padding-top: 16px; border-top: 1px solid rgba(255,255,255,.07); }
+.registration-link-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.registration-link-settings-grid > label, .registration-link-revoke-form > label:not(.registration-link-confirm) { display: grid; gap: 6px; color: rgba(255,255,255,.7); font-size: 11px; }
+.registration-link-settings-grid > label > span { margin-left: 4px; }
+.registration-link-settings-grid > .registration-link-reason { grid-column: 1 / -1; }
+.registration-link-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 2px; }
+.registration-link-submit-row p { margin: 0; font-size: 11px; }
+.registration-link-create-button { min-width: 150px; }
+.registration-link-create-button:disabled, .registration-link-actions .btn:disabled { cursor: wait; opacity: .58; }
+.registration-link-create-form :is(input, button):focus-visible, .registration-link-revoke-form :is(input, button):focus-visible, .registration-link-copy-row :is(input, button):focus-visible, .registration-link-action-disclosure summary:focus-visible { outline: 2px solid #e6d4a8; outline-offset: 3px; }
+.registration-link-create-button:hover:not(:disabled), .registration-link-copy-row .btn:hover:not(:disabled) { filter: brightness(1.08); }
+.registration-link-reveal { display: grid; gap: 12px; margin: 0; padding: 16px; border: 1px solid rgba(195,168,108,.4); border-radius: 11px; background: rgba(195,168,108,.07); }
+.registration-link-reveal > div:first-child p { margin: 5px 0 0; font-size: 11px; }
+.registration-link-copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
+.registration-link-copy-row input { overflow: hidden; text-overflow: ellipsis; color: #e6d4a8; }
+.registration-link-copy-row .btn { min-width: 110px; }
+.registration-link-list { display: grid; gap: 10px; }
+.registration-link-list-heading { margin: 2px 2px 0; }
+.registration-link-list-heading h2 { margin: 0; font-size: 17px; font-weight: 500; }
+.registration-link-list-heading > span { font-size: 11px; }
+.registration-link-empty { margin: 0; padding: 14px 16px; }
+.registration-link-empty p { margin: 0; font-size: 12px; }
+.registration-link-card { display: grid; gap: 14px; padding: 15px 17px; }
+.registration-link-card-header { display: grid; gap: 5px; }
+.registration-link-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.registration-link-title-row h3 { margin: 0; font-size: 14px; font-weight: 550; }
+.registration-link-status { padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,.07); color: rgba(255,255,255,.63); font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.registration-link-status-active { background: rgba(48,209,88,.12); color: #7fe39a; }
+.registration-link-status-revoked, .registration-link-status-disabled { background: rgba(255,159,10,.1); color: #ffc16f; }
+.registration-link-meta { margin: 0; color: rgba(255,255,255,.48); font-size: 10px; }
+.registration-link-summary-grid { display: grid; grid-template-columns: minmax(180px, 1.5fr) repeat(2, minmax(120px, .75fr)) minmax(160px, 1fr); gap: 12px 18px; padding: 12px 0; border-top: 1px solid rgba(255,255,255,.06); border-bottom: 1px solid rgba(255,255,255,.06); }
+.registration-link-summary-grid > div { display: grid; align-content: start; gap: 5px; min-width: 0; }
+.registration-link-meta-label { color: rgba(255,255,255,.42); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
+.registration-link-summary-grid strong { color: rgba(255,255,255,.8); font-size: 11px; font-weight: 500; }
+.registration-link-products { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.registration-link-products li, .registration-link-legacy-products { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 10px; margin: 0; color: rgba(255,255,255,.78); font-size: 11px; }
+.registration-link-products li span, .registration-link-legacy-products span { color: rgba(255,255,255,.48); }
+.registration-link-reason-summary p { margin: 0; color: rgba(255,255,255,.7); font-size: 11px; overflow-wrap: anywhere; }
+.registration-link-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 9px 18px; }
+.registration-link-action-disclosure { min-width: 0; color: rgba(255,255,255,.69); font-size: 11px; }
+.registration-link-action-disclosure summary { width: fit-content; color: #e6d4a8; cursor: pointer; }
+.registration-link-action-disclosure summary:hover { color: #f3e4bc; }
+.registration-link-action-disclosure[open] { flex: 1 1 100%; }
+.registration-link-revoke-form { display: grid; grid-template-columns: minmax(180px, auto) minmax(180px, 1fr) auto; align-items: end; gap: 10px; margin-top: 10px; padding: 12px; border-radius: 9px; background: rgba(0,0,0,.16); }
+.registration-link-confirm { display: flex; align-items: center; gap: 7px; min-height: 36px; color: rgba(255,255,255,.72); font-size: 11px; }
+.registration-link-revoke-form input:not([type="checkbox"]) { min-height: 35px; }
+.registration-link-history { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 12px; padding: 12px; border-radius: 9px; background: rgba(0,0,0,.16); }
+.registration-link-history section { min-width: 0; }
+.registration-link-history h4 { margin: 0 0 7px; color: rgba(255,255,255,.76); font-size: 11px; font-weight: 550; }
+.registration-link-history ul { display: grid; gap: 6px; margin: 0; padding-left: 16px; color: rgba(255,255,255,.62); font-size: 10px; overflow-wrap: anywhere; }
+.registration-link-history p { margin: 0; font-size: 10px; }
+@media (max-width: 760px) {
+  .registration-product-grid { grid-template-columns: 1fr; }
+  .registration-link-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .registration-link-revoke-form { grid-template-columns: 1fr; }
+  .registration-link-history { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .registration-link-section-heading, .registration-link-submit-row { align-items: stretch; flex-direction: column; }
+  .registration-link-section-heading > p { text-align: left; }
+  .registration-link-settings-grid { grid-template-columns: 1fr; }
+  .registration-link-settings-grid > .registration-link-reason { grid-column: auto; }
+  .registration-link-create-button { width: 100%; }
+  .registration-link-copy-row { grid-template-columns: 1fr; }
+  .registration-link-copy-row .btn { width: 100%; }
+}
 @media (max-width: 720px) {
   .monitoring-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitoring-controls { align-items: stretch; flex-direction: column; }
