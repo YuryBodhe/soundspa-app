@@ -1,32 +1,13 @@
 import { sql } from "drizzle-orm";
 import { bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { commercialOfferGrantType, commercialProductKind, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
+import { commercialOfferGrantType, commercialSubscriptionStatus, commercialTrialStatus } from "./enums";
 import { organizations } from "./core/organizations";
 import { users } from "./core/users";
 import { locations } from "./core/locations";
 import { channels } from "./product/channels";
-
-export const commercialProducts = pgTable("commercial_products", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  code: text("code").notNull(),
-  name: text("name").notNull(),
-  kind: commercialProductKind("kind").notNull(),
-  priceMinor: integer("price_minor"),
-  currency: text("currency"),
-  billingIntervalMonths: integer("billing_interval_months"),
-  isActive: boolean("is_active").notNull().default(true),
-  // Purchase visibility is separate from activation/access resolution. Changing
-  // visibility must not revoke any existing commercial entitlement.
-  visibility: text("visibility").$type<"public" | "private" | "disabled">().notNull().default("public"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  check("commercial_products_name_nonempty", sql`length(btrim(${table.name})) > 0`),
-  check("commercial_products_price_pair", sql`(${table.priceMinor} IS NULL AND ${table.currency} IS NULL) OR (${table.priceMinor} >= 0 AND ${table.currency} IS NOT NULL AND length(btrim(${table.currency})) = 3)`),
-  check("commercial_products_interval_positive", sql`${table.billingIntervalMonths} IS NULL OR ${table.billingIntervalMonths} > 0`),
-  check("commercial_products_visibility_valid", sql`${table.visibility} IN ('public', 'private', 'disabled')`),
-  uniqueIndex("commercial_products_code_unique").on(table.code),
-]);
+import { commercialRegistrationLinkRedemptions } from "./core/customerAuth";
+import { commercialProducts } from "./commercialProducts";
+export { commercialProducts };
 
 /** Auditable Organization authorization history for private Product purchases. */
 export const commercialProductOrganizationAuthorizations = pgTable("commercial_product_organization_authorizations", {
@@ -34,7 +15,9 @@ export const commercialProductOrganizationAuthorizations = pgTable("commercial_p
   organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
   productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
   grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
-  grantedByOperator: text("granted_by_operator").notNull(),
+  grantSource: text("grant_source").$type<"operator" | "registration_link">().notNull().default("operator"),
+  grantedByOperator: text("granted_by_operator"),
+  registrationRedemptionId: uuid("registration_redemption_id").references(() => commercialRegistrationLinkRedemptions.id, { onDelete: "restrict" }),
   grantReason: text("grant_reason").notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   revokedByOperator: text("revoked_by_operator"),
@@ -43,7 +26,9 @@ export const commercialProductOrganizationAuthorizations = pgTable("commercial_p
   uniqueIndex("commercial_product_org_authorizations_active_unique")
     .on(table.organizationId, table.productId).where(sql`${table.revokedAt} IS NULL`),
   index("commercial_product_org_authorizations_history_idx").on(table.organizationId, table.productId, table.grantedAt),
-  check("commercial_product_org_authorizations_grant_operator_nonempty", sql`length(btrim(${table.grantedByOperator})) > 0`),
+  uniqueIndex("commercial_product_org_authorizations_redemption_unique").on(table.registrationRedemptionId).where(sql`${table.registrationRedemptionId} IS NOT NULL`),
+  check("commercial_product_org_authorizations_source_valid", sql`(${table.grantSource} = 'operator' AND ${table.grantedByOperator} IS NOT NULL AND length(btrim(${table.grantedByOperator})) > 0 AND ${table.registrationRedemptionId} IS NULL) OR (${table.grantSource} = 'registration_link' AND ${table.grantedByOperator} IS NULL AND ${table.registrationRedemptionId} IS NOT NULL)`),
+  foreignKey({ name: "commercial_product_org_authorizations_redemption_org_product_fk", columns: [table.registrationRedemptionId, table.organizationId, table.productId], foreignColumns: [commercialRegistrationLinkRedemptions.id, commercialRegistrationLinkRedemptions.organizationId, commercialRegistrationLinkRedemptions.productId] }).onDelete("restrict"),
   check("commercial_product_org_authorizations_grant_reason_nonempty", sql`length(btrim(${table.grantReason})) BETWEEN 1 AND 500`),
   check("commercial_product_org_authorizations_revoke_shape", sql`(${table.revokedAt} IS NULL AND ${table.revokedByOperator} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByOperator} IS NOT NULL AND length(btrim(${table.revokedByOperator})) > 0 AND ${table.revokeReason} IS NOT NULL AND length(btrim(${table.revokeReason})) BETWEEN 1 AND 500 AND ${table.revokedAt} >= ${table.grantedAt})`),
 ]);

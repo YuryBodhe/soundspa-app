@@ -182,7 +182,10 @@ async function claimPartnerInviteWithLookup(
         status: "active",
         startsAt: now,
         endsAt: new Date(now.getTime() + (grant.durationDays as number) * DAY_MS),
-      }).onConflictDoNothing({ target: [locationCoreTrials.locationId, locationCoreTrials.productId] }).returning({ id: locationCoreTrials.id });
+      }).onConflictDoNothing({
+        target: [locationCoreTrials.locationId, locationCoreTrials.productId],
+        where: isNull(locationCoreTrials.invalidatedByResetId),
+      }).returning({ id: locationCoreTrials.id });
       // The per-Location/Product unique index is the final concurrency guard
       // across different invites racing to create the same one-time trial.
       trials.push({ productId: product.id, result: createdTrial ? "created" : "skipped_already_used" });

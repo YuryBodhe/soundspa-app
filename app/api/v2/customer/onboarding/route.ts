@@ -22,15 +22,17 @@ export async function GET(request: Request) {
   try {
     const session = await authenticatedSession(request);
     if (!session || !session.user.emailVerifiedAt) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
-    const [{ getCustomerOnboarding, isPartnerSignupContext, hasCompletedPartnerOnboarding }, { listCustomerLocationsWithDevices }] = await Promise.all([
+    const [{ getCustomerOnboarding, isPartnerSignupContext, hasCompletedPartnerOnboarding }, { registrationSignupContext }, { listCustomerLocationsWithDevices }] = await Promise.all([
       import("@/db/v2/services/customerOnboarding"),
+      import("@/db/v2/services/registrationLinks"),
       import("@/db/v2/services/customerDevices"),
     ]);
     const account = await getCustomerOnboarding(session.user.id);
     const partnerContext = await isPartnerSignupContext(session.user.email);
     const partnerCompleted = await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
+    const registrationContext = await registrationSignupContext(session.user.email, session.session.signupIntentId);
     const locations = await listCustomerLocationsWithDevices(session.user.id);
-    return NextResponse.json({ account, partnerContext, partnerCompleted, locations }, { headers: authResponseHeaders() });
+    return NextResponse.json({ account, partnerContext, registrationContext, partnerCompleted, locations }, { headers: authResponseHeaders() });
   } catch {
     return NextResponse.json({ error: "unavailable" }, { status: 503, headers: authResponseHeaders() });
   }
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
     if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
     if (!session.user.emailVerifiedAt) return NextResponse.json({ error: "unverified" }, { status: 403, headers: authResponseHeaders() });
     const { completeOrdinaryCustomerOnboarding, completePartnerCustomerOnboarding, isPartnerSignupContext } = await import("@/db/v2/services/customerOnboarding");
+    const { completeRegistrationLinkCustomerOnboarding, registrationSignupContext } = await import("@/db/v2/services/registrationLinks");
     const onboardingInput = {
       authenticatedUserId: session.user.id,
       signupIntentId: session.session.signupIntentId,
@@ -56,9 +59,10 @@ export async function POST(request: Request) {
       timezone: values.timezone,
     };
     const partnerRequest = await isPartnerSignupContext(session.user.email);
-    const result = await (partnerRequest
-      ? completePartnerCustomerOnboarding(onboardingInput)
-      : completeOrdinaryCustomerOnboarding(onboardingInput));
+    const registrationRequest = await registrationSignupContext(session.user.email, session.session.signupIntentId);
+    const result = await (registrationRequest
+      ? completeRegistrationLinkCustomerOnboarding(onboardingInput)
+      : partnerRequest ? completePartnerCustomerOnboarding(onboardingInput) : completeOrdinaryCustomerOnboarding(onboardingInput));
     const [{ getCustomerOnboarding, hasCompletedPartnerOnboarding }, { listCustomerLocationsWithDevices }] = await Promise.all([
       import("@/db/v2/services/customerOnboarding"),
       import("@/db/v2/services/customerDevices"),
@@ -66,12 +70,13 @@ export async function POST(request: Request) {
     const account = await getCustomerOnboarding(session.user.id);
     const partnerCompleted = partnerRequest || await hasCompletedPartnerOnboarding(session.user.id, session.user.email);
     const locations = await listCustomerLocationsWithDevices(session.user.id);
-    return NextResponse.json({ ...result, account: account ?? result.account, partnerCompleted, locations }, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
+    return NextResponse.json({ ...result, account: account ?? ("account" in result ? result.account : null), partnerCompleted, registrationContext: registrationRequest, locations }, { status: result.status === "completed" ? 201 : 200, headers: authResponseHeaders() });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "invalid" }, { status: 400, headers: authResponseHeaders() });
     if (error && typeof error === "object" && "code" in error) {
       const code = (error as { code: string }).code;
       if (code === "partner_context") return NextResponse.json({ error: "partner_context" }, { status: 409, headers: authResponseHeaders() });
+      if (code === "registration_context") return NextResponse.json({ error: "registration_link_unavailable" }, { status: 409, headers: authResponseHeaders() });
       if (code === "unverified") return NextResponse.json({ error: "unverified" }, { status: 403, headers: authResponseHeaders() });
       if (code === "unauthenticated") return NextResponse.json({ error: "unauthenticated" }, { status: 401, headers: authResponseHeaders() });
       if (code === "validation") return NextResponse.json({ error: "invalid_details" }, { status: 400, headers: authResponseHeaders() });
@@ -79,6 +84,8 @@ export async function POST(request: Request) {
       if (code === "invitation_ambiguous") return NextResponse.json({ error: "partner_invite_ambiguous" }, { status: 409, headers: authResponseHeaders() });
       if (code === "existing_organization") return NextResponse.json({ error: "existing_organization" }, { status: 409, headers: authResponseHeaders() });
       if (code === "claim_failure") return NextResponse.json({ error: "partner_claim_failure" }, { status: 503, headers: authResponseHeaders() });
+      if (code === "link_unavailable" || code === "link_exhausted" || code === "signup_context") return NextResponse.json({ error: "registration_link_unavailable" }, { status: 409, headers: authResponseHeaders() });
+      if (code === "onboarding_failed") return NextResponse.json({ error: "registration_link_unavailable" }, { status: 503, headers: authResponseHeaders() });
     }
     return NextResponse.json({ error: "unavailable" }, { status: 503, headers: authResponseHeaders() });
   }

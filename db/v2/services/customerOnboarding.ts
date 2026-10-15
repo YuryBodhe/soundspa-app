@@ -29,7 +29,7 @@ type OnboardingDetails = {
 };
 
 export class CustomerOnboardingError extends Error {
-  constructor(readonly code: "unauthenticated" | "unverified" | "partner_context" | "invalid" | "already_complete") {
+  constructor(readonly code: "unauthenticated" | "unverified" | "partner_context" | "registration_context" | "invalid" | "already_complete") {
     super(code);
     this.name = "CustomerOnboardingError";
   }
@@ -249,6 +249,12 @@ export async function completeOrdinaryCustomerOnboarding(input: {
         pendingPartnerIntentCondition(),
       )).limit(1);
     if (partnerIntent) throw new CustomerOnboardingError("partner_context");
+    const [registrationIntent] = await tx.select({ id: customerSignupIntents.id }).from(customerSignupIntents)
+      .where(and(
+        eq(customerSignupIntents.email, user.email), isNotNull(customerSignupIntents.registrationLinkId),
+        isNotNull(customerSignupIntents.verifiedAt), pendingPartnerIntentCondition(),
+      )).limit(1);
+    if (registrationIntent) throw new CustomerOnboardingError("registration_context");
 
     const existing = await loadExistingOnboarding(tx, user.id);
     if (existing) return { status: "already_complete" as const, account: existing };

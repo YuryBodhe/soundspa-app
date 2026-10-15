@@ -199,7 +199,7 @@ function ProductVisibilityEditor({ product, pending, onSave }: {
 
 type OrganizationOption = { id: string; name: string; archived: boolean };
 type AuthorizationRecord = {
-  id: string; organizationId: string; organizationName: string; grantedAt: string; grantedByOperator: string; grantReason: string;
+  id: string; organizationId: string; organizationName: string; grantedAt: string; grantedByOperator: string | null; grantSource: "operator" | "registration_link"; registrationRedemptionId: string | null; grantReason: string;
   revokedAt: string | null; revokedByOperator: string | null; revokeReason: string | null; status: "active" | "revoked";
 };
 
@@ -279,7 +279,7 @@ function ProductAuthorizationManagement({ productId, productName }: { productId:
         {!authorizations.length && <p className="text-dim">No Organizations have been authorized.</p>}
         <ul className="product-authorization-history">{authorizations.map((record) => <li key={record.id}>
           <strong>{record.organizationName}</strong> · {record.status === "active" ? "Active" : "Revoked"}<br />
-          Granted {new Date(record.grantedAt).toLocaleString()} by {record.grantedByOperator}: {record.grantReason}
+          Granted {new Date(record.grantedAt).toLocaleString()} {record.grantSource === "registration_link" ? `through Registration Link redemption ${record.registrationRedemptionId}` : `by ${record.grantedByOperator}`}: {record.grantReason}
           {record.revokedAt && <><br />Revoked {new Date(record.revokedAt).toLocaleString()} by {record.revokedByOperator}: {record.revokeReason}</>}
           {record.status === "active" && <form className="admin-form product-management-form" onSubmit={(event) => void revoke(event, record)}>
             <label>Revocation reason<input name="revokeReason" required minLength={12} maxLength={500} /></label>

@@ -30,7 +30,7 @@ type CustomerLocation = {
     createdAt: string;
   }>;
 };
-type LoadResult = { account: Account | null; partnerContext: boolean; partnerCompleted?: boolean; locations?: CustomerLocation[] };
+type LoadResult = { account: Account | null; partnerContext: boolean; registrationContext?: boolean; partnerCompleted?: boolean; locations?: CustomerLocation[] };
 type ActivationLink = { locationId: string; url: string; expiresAt: string };
 type BillingPlan = {
   productId: string; productName: string;
@@ -318,13 +318,14 @@ function Content() {
           : body.error === "partner_invite_unavailable" ? "partnerInviteUnavailable"
             : body.error === "partner_claim_failure" ? "partnerClaimFailure"
             : body.error === "partner_invite_ambiguous" ? "partnerInviteAmbiguous"
-              : body.error === "existing_organization" ? "existingOrganization" : "onboardingUnavailable";
+              : body.error === "existing_organization" ? "existingOrganization"
+                : body.error === "registration_link_unavailable" ? "registrationLinkUnavailable" : "onboardingUnavailable";
         setError(t(errorKey));
         if (body.error === "partner_context") await load();
         return;
       }
-      const completed = await response.json() as { account: Account; partnerCompleted?: boolean; locations?: CustomerLocation[] };
-      setResult({ account: completed.account, partnerContext: false, partnerCompleted: completed.partnerCompleted, locations: completed.locations ?? [] });
+      const completed = await response.json() as { account: Account; partnerCompleted?: boolean; registrationContext?: boolean; locations?: CustomerLocation[] };
+      setResult({ account: completed.account, partnerContext: false, registrationContext: completed.registrationContext, partnerCompleted: completed.partnerCompleted, locations: completed.locations ?? [] });
     } catch { setError(t("onboardingUnavailable")); }
     finally { setSaving(false); }
   }
@@ -537,6 +538,7 @@ function Content() {
         {billingError && !selectedBilling && <p role="alert" className="customer-onboarding-error">{billingError}</p>}
       </> : <>
         {result?.partnerContext && <p role="status">{t("partnerInvitePending")}</p>}
+        {result?.registrationContext && <p role="status">{t("registrationLinkSignupNotice")}</p>}
         <p>{t("onboardingIncomplete")}</p><h2>{t("onboardingTitle")}</h2><p>{t("onboardingDescription")}</p>
         <form onSubmit={submit}>
           <label>{t("organizationName")}<input required maxLength={160} autoComplete="organization" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} /></label>

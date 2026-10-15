@@ -1,6 +1,53 @@
 import { sql } from "drizzle-orm";
-import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./users";
+import { locations } from "./locations";
+import { organizations } from "./organizations";
+import { commercialProducts } from "../commercialProducts";
+
+export type RegistrationLinkPolicySnapshot = {
+  policyKey: "divnitsa";
+  policyVersion: 1;
+  basicProductId: string;
+  divnitsaProductId: string;
+  basicTrialDays: 30;
+  divnitsaTrialDays: 30;
+};
+
+export type RegistrationLinkAuditState = {
+  policyKey: "divnitsa";
+  policyVersion: 1;
+  expiresAt: string | null;
+  maxRedemptions: number | null;
+  disabledAt: string | null;
+};
+
+export const commercialRegistrationLinks = pgTable("commercial_registration_links", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tokenHash: text("token_hash").notNull(),
+  policyKey: text("policy_key").notNull(),
+  policyVersion: integer("policy_version").notNull(),
+  policySnapshot: jsonb("policy_snapshot").$type<RegistrationLinkPolicySnapshot>().notNull(),
+  createdByOperator: text("created_by_operator").notNull(),
+  creationReason: text("creation_reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  maxRedemptions: integer("max_redemptions"),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  disabledByOperator: text("disabled_by_operator"),
+  disableReason: text("disable_reason"),
+}, (table) => [
+  uniqueIndex("commercial_registration_links_token_hash_unique").on(table.tokenHash),
+  index("commercial_registration_links_status_idx").on(table.createdAt, table.expiresAt, table.disabledAt),
+  check("commercial_registration_links_token_hash_sha256", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+  check("commercial_registration_links_policy_valid", sql`${table.policyKey} = 'divnitsa' AND ${table.policyVersion} = 1 AND jsonb_typeof(${table.policySnapshot}) = 'object' AND ${table.policySnapshot}->>'policyKey' = 'divnitsa' AND ${table.policySnapshot}->>'policyVersion' = '1' AND ${table.policySnapshot}->>'basicProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'divnitsaProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'basicTrialDays' = '30' AND ${table.policySnapshot}->>'divnitsaTrialDays' = '30'`),
+  check("commercial_registration_links_operator_nonempty", sql`length(btrim(${table.createdByOperator})) > 0`),
+  check("commercial_registration_links_reason_nonempty", sql`length(btrim(${table.creationReason})) BETWEEN 1 AND 500`),
+  check("commercial_registration_links_max_redemptions_positive", sql`${table.maxRedemptions} IS NULL OR ${table.maxRedemptions} > 0`),
+  check("commercial_registration_links_expiry_after_creation", sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`),
+  check("commercial_registration_links_disabled_after_creation", sql`${table.disabledAt} IS NULL OR ${table.disabledAt} >= ${table.createdAt}`),
+  check("commercial_registration_links_disable_shape", sql`(${table.disabledAt} IS NULL AND ${table.disabledByOperator} IS NULL AND ${table.disableReason} IS NULL) OR (${table.disabledAt} IS NOT NULL AND ${table.disabledByOperator} IS NOT NULL AND length(btrim(${table.disabledByOperator})) > 0 AND ${table.disableReason} IS NOT NULL AND length(btrim(${table.disableReason})) BETWEEN 12 AND 500)`),
+]);
 
 export const customerSignupIntents = pgTable("customer_signup_intents", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -8,6 +55,7 @@ export const customerSignupIntents = pgTable("customer_signup_intents", {
   locale: text("locale").notNull().default("en"),
   inviteTokenHash: text("invite_token_hash"),
   contextTokenHash: text("context_token_hash"),
+  registrationLinkId: uuid("registration_link_id").references(() => commercialRegistrationLinks.id, { onDelete: "restrict" }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -18,8 +66,48 @@ export const customerSignupIntents = pgTable("customer_signup_intents", {
   check("customer_signup_intents_email_normalized", sql`${table.email} IS NULL OR (${table.email} = lower(btrim(${table.email})) AND length(${table.email}) > 0)`),
   check("customer_signup_intents_invite_hash_sha256", sql`${table.inviteTokenHash} IS NULL OR ${table.inviteTokenHash} ~ '^[0-9a-f]{64}$'`),
   check("customer_signup_intents_context_hash_sha256", sql`${table.contextTokenHash} IS NULL OR ${table.contextTokenHash} ~ '^[0-9a-f]{64}$'`),
+  check("customer_signup_intents_invite_registration_exclusive", sql`${table.inviteTokenHash} IS NULL OR ${table.registrationLinkId} IS NULL`),
   uniqueIndex("customer_signup_intents_context_token_hash_unique").on(table.contextTokenHash),
+  uniqueIndex("customer_signup_intents_id_registration_link_unique").on(table.id, table.registrationLinkId),
   index("customer_signup_intents_email_idx").on(table.email),
+]);
+
+export const commercialRegistrationLinkRedemptions = pgTable("commercial_registration_link_redemptions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  registrationLinkId: uuid("registration_link_id").notNull().references(() => commercialRegistrationLinks.id, { onDelete: "restrict" }),
+  signupIntentId: uuid("signup_intent_id").notNull().references(() => customerSignupIntents.id, { onDelete: "restrict" }),
+  verifiedUserId: uuid("verified_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  firstLocationId: uuid("first_location_id").notNull(),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ name: "commercial_registration_link_redemptions_location_org_fk", columns: [table.firstLocationId, table.organizationId], foreignColumns: [locations.id, locations.organizationId] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_registration_link_redemptions_intent_link_fk", columns: [table.signupIntentId, table.registrationLinkId], foreignColumns: [customerSignupIntents.id, customerSignupIntents.registrationLinkId] }).onDelete("restrict"),
+  uniqueIndex("commercial_registration_link_redemptions_intent_unique").on(table.signupIntentId),
+  uniqueIndex("commercial_registration_link_redemptions_user_link_unique").on(table.registrationLinkId, table.verifiedUserId),
+  uniqueIndex("commercial_registration_link_redemptions_id_org_product_unique").on(table.id, table.organizationId, table.productId),
+  index("commercial_registration_link_redemptions_link_time_idx").on(table.registrationLinkId, table.redeemedAt),
+  index("commercial_registration_link_redemptions_org_idx").on(table.organizationId),
+]);
+
+export const commercialRegistrationLinkEvents = pgTable("commercial_registration_link_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  registrationLinkId: uuid("registration_link_id").notNull().references(() => commercialRegistrationLinks.id, { onDelete: "restrict" }),
+  action: text("action").notNull(),
+  operator: text("operator").notNull(),
+  reason: text("reason").notNull(),
+  beforeState: jsonb("before_state").$type<RegistrationLinkAuditState | null>(),
+  afterState: jsonb("after_state").$type<RegistrationLinkAuditState>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("commercial_registration_link_events_link_time_idx").on(table.registrationLinkId, table.createdAt),
+  uniqueIndex("commercial_registration_link_events_created_unique").on(table.registrationLinkId).where(sql`${table.action} = 'created'`),
+  uniqueIndex("commercial_registration_link_events_disabled_unique").on(table.registrationLinkId).where(sql`${table.action} = 'disabled'`),
+  check("commercial_registration_link_events_action_valid", sql`${table.action} IN ('created', 'disabled')`),
+  check("commercial_registration_link_events_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
+  check("commercial_registration_link_events_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 1 AND 500`),
+  check("commercial_registration_link_events_state_shape", sql`jsonb_typeof(${table.afterState}) = 'object' AND (${table.beforeState} IS NULL OR jsonb_typeof(${table.beforeState}) = 'object') AND ((${table.action} = 'created' AND ${table.beforeState} IS NULL AND ${table.afterState}->>'disabledAt' IS NULL) OR (${table.action} = 'disabled' AND ${table.beforeState} IS NOT NULL AND ${table.beforeState}->>'disabledAt' IS NULL AND ${table.afterState}->>'disabledAt' IS NOT NULL))`),
 ]);
 
 export const customerAuthTokens = pgTable("customer_auth_tokens", {

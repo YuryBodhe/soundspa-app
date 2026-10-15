@@ -1,4 +1,4 @@
-export const en = {
+export const en = { registrationLinkSignupNotice: "You are signing up through a Divnitsa invitation. Set up a new Organization and its first Location to continue.", registrationLinkUnavailable: "This Registration Link is unavailable or expired. Ask SoundSpa for a new invitation.",
   brand: "Sound Spa 2", localPrototype: "Local prototype", testMode: "Test mode", nowSelected: "Now selected",
   musicChannels: "Music channels", channels: "channels", ambient: "Ambient", previous: "Previous", next: "Next",
   standard: "Standard", shuffle: "Shuffle", repeatOne: "Repeat one", playing: "Playing", buffering: "Buffering", paused: "Paused", ready: "Ready",

@@ -24,6 +24,12 @@ export async function createSignupAuthRequest(input: { email: string; locale: Lo
 
   if (existing[0]?.emailVerifiedAt) {
     if (!input.contextTokenHash) return null;
+    const [registrationIntent] = await v2Db.update(customerSignupIntents).set({ email: input.email, locale: input.locale, updatedAt: now }).where(and(
+      eq(customerSignupIntents.contextTokenHash, input.contextTokenHash), isNotNull(customerSignupIntents.registrationLinkId),
+      gt(customerSignupIntents.expiresAt, now), isNull(customerSignupIntents.completedAt),
+      or(isNull(customerSignupIntents.email), eq(customerSignupIntents.email, input.email)),
+    )).returning({ id: customerSignupIntents.id });
+    if (registrationIntent) return createAuthToken("login_link", input.locale, { userId: existing[0].id, signupIntentId: registrationIntent.id }, now);
     const [partnerIntent] = await v2Db.update(customerSignupIntents).set({ email: input.email, locale: input.locale, updatedAt: now }).where(and(
       eq(customerSignupIntents.contextTokenHash, input.contextTokenHash), isNotNull(customerSignupIntents.inviteTokenHash),
       gt(customerSignupIntents.expiresAt, now), pendingPartnerIntentCondition(),
@@ -104,7 +110,7 @@ export async function consumeCustomerAuthToken(token: string, now = new Date()) 
         }
         await tx.update(customerSignupIntents).set({
           verifiedAt: now,
-          ...(intent.inviteTokenHash ? {} : { completedAt: now }),
+          ...(intent.inviteTokenHash || intent.registrationLinkId ? {} : { completedAt: now }),
           updatedAt: now,
         })
           .where(eq(customerSignupIntents.id, intent.id));
@@ -113,14 +119,14 @@ export async function consumeCustomerAuthToken(token: string, now = new Date()) 
           .from(users).where(eq(users.id, userId)).limit(1);
         if (!user || user.disabledAt || !user.emailVerifiedAt) return null;
         if (authToken.signupIntentId) {
-          const [partnerIntent] = await tx.select({ id: customerSignupIntents.id }).from(customerSignupIntents).where(and(
+          const [signupIntent] = await tx.select({ id: customerSignupIntents.id, inviteTokenHash: customerSignupIntents.inviteTokenHash, registrationLinkId: customerSignupIntents.registrationLinkId }).from(customerSignupIntents).where(and(
             eq(customerSignupIntents.id, authToken.signupIntentId), eq(customerSignupIntents.email, user.email),
-            isNotNull(customerSignupIntents.inviteTokenHash), pendingPartnerIntentCondition(),
+            or(isNotNull(customerSignupIntents.inviteTokenHash), isNotNull(customerSignupIntents.registrationLinkId)), pendingPartnerIntentCondition(),
             gt(customerSignupIntents.expiresAt, now),
           )).limit(1).for("update");
-          if (!partnerIntent) return null;
+          if (!signupIntent) return null;
           await tx.update(customerSignupIntents).set({ verifiedAt: now, updatedAt: now })
-            .where(eq(customerSignupIntents.id, partnerIntent.id));
+            .where(eq(customerSignupIntents.id, signupIntent.id));
         }
         await tx.update(users).set({ preferredLocale: authToken.locale, updatedAt: now }).where(eq(users.id, userId));
       } else return null;

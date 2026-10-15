@@ -62,7 +62,7 @@ export default async function PartnerOffersPage() {
   return <>
     <div className="admin-page-header">
       <div><p className="monitoring-eyebrow">SOUNDSPA V2 · COMMERCIAL</p><h1 className="admin-page-title">Offers &amp; Invites</h1></div>
-      <div className="admin-page-nav"><Link href="/admin/ui" className="btn btn-sm">Admin</Link></div>
+      <div className="admin-page-nav"><Link href="/admin/ui" className="btn btn-sm">Admin</Link><Link href="/admin/ui/registration-links" className="btn btn-sm">Registration Links</Link></div>
     </div>
     <p className="text-dim">Manage Partner Offers, Invites, and Invite claims.</p>
     <OfferManagement partners={partners} products={products} claimLocations={safeClaimLocations} />

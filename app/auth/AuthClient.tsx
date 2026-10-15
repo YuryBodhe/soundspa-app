@@ -15,6 +15,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   const [token, setToken] = useState("");
   const [consuming, setConsuming] = useState(false);
   const partnerContext = search.get("source") === "partner";
+  const registrationLinkContext = search.get("source") === "registration-link";
   const contextUnavailable = search.get("context") === "unavailable";
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
     try {
       const response = await fetch(mode === "signup" ? "/api/v2/customer-auth/signup" : "/api/v2/customer-auth/request-login", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, locale, ...(mode === "signup" && partnerContext ? { partnerContext: true } : {}) }),
+        body: JSON.stringify({ email, locale, ...(mode === "signup" && partnerContext ? { partnerContext: true } : {}), ...(mode === "signup" && registrationLinkContext ? { registrationLinkContext: true } : {}) }),
       });
       const data = await response.json() as { code?: string };
       if (!response.ok) setError(data.code === "invalid_email" ? t("authInvalidEmail") : t("authInvalidLink"));
@@ -55,13 +56,15 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
     <div className="customer-auth-top"><span className="customer-auth-brand">SOUND SPA</span><AuthLanguageSelector /></div>
     {token ? <><h1>{t("authContinueTitle")}</h1><p>{t("authLinkConfirmation")}</p><button className="customer-auth-submit" type="button" onClick={continueWithToken} disabled={consuming}>{consuming ? t("authSending") : t("authContinue")}</button></> : <>
       {sentEmail ? <div className="customer-auth-email-success" role="status" aria-live="polite">
+        {registrationLinkContext && <p>{t("registrationLinkSignupNotice")}</p>}
         <h1>{t("authCheckEmailTitle")}</h1>
         <p>{t(mode === "signup" ? "authSignupCheckEmailDescription" : "authCheckEmailDescription")}</p>
         <p className="customer-auth-sent-address">{sentEmail}</p>
       </div> : <>
         <h1>{mode === "signup" ? t("authSignupTitle") : t("authLoginTitle")}</h1>
         <p>{mode === "signup" ? t("authSignupDescription") : t("authLoginDescription")}</p>
-        {contextUnavailable && <p role="alert">{t("authPartnerUnavailable")}</p>}
+        {registrationLinkContext && <p role="status">{t("registrationLinkSignupNotice")}</p>}
+        {contextUnavailable && <p role="alert">{t(registrationLinkContext ? "registrationLinkUnavailable" : "authPartnerUnavailable")}</p>}
         <form onSubmit={requestLink}>
           <label>{t("authEmail")}<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
           <button className="customer-auth-submit" type="submit" disabled={loading}>{loading ? t("authSending") : mode === "signup" ? t("authSendVerification") : t("authRequestLogin")}</button>

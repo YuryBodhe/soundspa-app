@@ -4,6 +4,7 @@ import { v2Db } from "../client";
 import {
   commercialProductOrganizationAuthorizations,
   commercialProductVisibilityEvents,
+  commercialRegistrationLinkRedemptions,
   commercialProducts,
   organizations,
 } from "../schema";
@@ -58,12 +59,15 @@ export async function listProductAuthorizationManagementData(productId: string, 
       organizationName: organizations.name,
       grantedAt: commercialProductOrganizationAuthorizations.grantedAt,
       grantedByOperator: commercialProductOrganizationAuthorizations.grantedByOperator,
+      grantSource: commercialProductOrganizationAuthorizations.grantSource,
+      registrationRedemptionId: commercialProductOrganizationAuthorizations.registrationRedemptionId,
       grantReason: commercialProductOrganizationAuthorizations.grantReason,
       revokedAt: commercialProductOrganizationAuthorizations.revokedAt,
       revokedByOperator: commercialProductOrganizationAuthorizations.revokedByOperator,
       revokeReason: commercialProductOrganizationAuthorizations.revokeReason,
     }).from(commercialProductOrganizationAuthorizations)
       .innerJoin(organizations, eq(organizations.id, commercialProductOrganizationAuthorizations.organizationId))
+      .leftJoin(commercialRegistrationLinkRedemptions, eq(commercialRegistrationLinkRedemptions.id, commercialProductOrganizationAuthorizations.registrationRedemptionId))
       .where(eq(commercialProductOrganizationAuthorizations.productId, productId))
       .orderBy(asc(commercialProductOrganizationAuthorizations.grantedAt), asc(commercialProductOrganizationAuthorizations.id)),
   ]);
