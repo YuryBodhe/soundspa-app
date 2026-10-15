@@ -8,6 +8,68 @@ export type BillingMarketSaveErrorCode =
 
 export type BillingMarketSelectionState = "saved" | "missing" | "unsaved" | "saving" | "error";
 
+export type BillingSelectionLocation = {
+  id: string;
+  products: Array<{ productId: string; purchaseEligible: boolean }>;
+};
+export type BillingSelectionLine = { locationId: string; productId: string; durationMonths: number };
+
+export function billingOrderRequestPayload(organizationId: string, lines: readonly BillingSelectionLine[]) {
+  return { organizationId, lines: lines.map(({ locationId, productId, durationMonths }) => ({ locationId, productId, durationMonths })) };
+}
+
+export function billingLineKey(locationId: string, productId: string): string {
+  return `${locationId}:${productId}`;
+}
+
+export function toggleBillingProductSelection(
+  current: Record<string, string[]>, locationId: string, productId: string, checked: boolean,
+): Record<string, string[]> {
+  const selected = new Set(current[locationId] ?? []);
+  if (checked) selected.add(productId);
+  else selected.delete(productId);
+  const next = { ...current };
+  if (selected.size) next[locationId] = [...selected];
+  else delete next[locationId];
+  return next;
+}
+
+export function buildSelectedBillingLines(
+  locations: readonly BillingSelectionLocation[],
+  selectedByLocation: Record<string, string[]>,
+  durations: Record<string, number>,
+): BillingSelectionLine[] {
+  const lines: BillingSelectionLine[] = [];
+  const seen = new Set<string>();
+  for (const location of locations) {
+    const selectedIds = new Set(selectedByLocation[location.id] ?? []);
+    for (const product of location.products) {
+      const productId = product.productId;
+      if (!selectedIds.has(productId) || !product.purchaseEligible) continue;
+      const key = billingLineKey(location.id, productId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const months = durations[key] ?? 1;
+      if (Number.isInteger(months) && months >= 1 && months <= 12) lines.push({ locationId: location.id, productId, durationMonths: months });
+    }
+  }
+  return lines;
+}
+
+export function restoreBillingOrderSelection(
+  lines: readonly Pick<BillingSelectionLine, "locationId" | "productId" | "durationMonths">[],
+): { selectedByLocation: Record<string, string[]>; durations: Record<string, number> } {
+  const selectedByLocation: Record<string, string[]> = {};
+  const durations: Record<string, number> = {};
+  for (const line of lines) {
+    const key = billingLineKey(line.locationId, line.productId);
+    const selected = selectedByLocation[line.locationId] ?? (selectedByLocation[line.locationId] = []);
+    if (!selected.includes(line.productId)) selected.push(line.productId);
+    durations[key] = line.durationMonths;
+  }
+  return { selectedByLocation, durations };
+}
+
 export function formatBillingPeriodRange(startsAt: string, endsAt: string, locale: string): string | null {
   const start = new Date(startsAt);
   const end = new Date(endsAt);

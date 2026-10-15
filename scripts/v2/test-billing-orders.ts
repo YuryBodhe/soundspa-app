@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isIP } from "node:net";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 class Rollback extends Error {}
 
@@ -51,8 +51,8 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole !== "soundspa_v2_test" || dbIdentity.role !== "soundspa_v2_test" ||
-        Number(dbIdentity.migrationCount) !== 22 || dbIdentity.latestMigration !== "1792004696226") {
-      throw new Error("Database is not the expected disposable local database at migration 0021.");
+        Number(dbIdentity.migrationCount) !== 23 || dbIdentity.latestMigration !== "1792025178280") {
+      throw new Error("Database is not the expected disposable local database at migration 0022.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
       "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
@@ -739,6 +739,134 @@ async function main() {
         ));
         assert.equal(routeSnapshot.length, 1);
         assertionCount += 1;
+
+        // Exercise a true multi-Product order for one Location. Basic follows
+        // its active trial, while the private Product independently extends
+        // existing paid coverage. The one aggregate payment must allocate to
+        // both lines and repeated confirmation must not add time twice.
+        const multiProductLocation = locations[5];
+        await tx.update(schema.locations).set({ marketCode: "RU" }).where(eq(schema.locations.id, multiProductLocation.id));
+        const multiProductNow = new Date(now.getTime() + 10_000);
+        const trialEndsAt = new Date("2026-11-08T10:00:00.000Z");
+        const paidEndsAt = new Date("2026-10-23T10:00:00.000Z");
+        await tx.update(schema.commercialProducts).set({ priceMinor: 108_000, visibility: "private" })
+          .where(eq(schema.commercialProducts.id, products[1].id));
+        await tx.insert(schema.commercialProductOrganizationAuthorizations).values({
+          organizationId: organization.id, productId: products[1].id,
+          grantSource: "operator", grantedByOperator: "billing-order-integration-test",
+          grantReason: "Authorize the private Product in an isolated aggregate billing fixture",
+        });
+        await tx.insert(schema.locationCoreTrials).values({
+          locationId: multiProductLocation.id, productId: products[0].id, status: "active",
+          startsAt: new Date("2026-10-01T10:00:00.000Z"), endsAt: trialEndsAt,
+        });
+        const [existingPartnerPeriod] = await tx.insert(schema.locationSubscriptions).values({
+          locationId: multiProductLocation.id, productId: products[1].id, provider: provider.code,
+          status: "active", startsAt: new Date("2026-09-23T10:00:00.000Z"),
+          currentPeriodEndsAt: paidEndsAt, billingAnchorDay: 23, billingAnchorIsEndOfMonth: false,
+        }).returning();
+        const multiProductRequest = {
+          authenticatedUserId: owner.id, organizationId: organization.id,
+          lines: [
+            { locationId: multiProductLocation.id, productId: products[0].id, durationMonths: 1 },
+            { locationId: multiProductLocation.id, productId: products[1].id, durationMonths: 1 },
+          ],
+        };
+        const multiProductQuote = await service.previewPrepaidBillingOrder(multiProductRequest, { db: tx, now: multiProductNow, env: process.env });
+        assert.equal(multiProductQuote.totalAmountMinor, "216000");
+        assert.equal(multiProductQuote.lines.length, 2);
+        assert.ok(multiProductQuote.lines.every((line) => line.locationId === multiProductLocation.id));
+        assert.equal(multiProductQuote.lines[0].billingPeriodStartsAt, trialEndsAt.toISOString());
+        assert.equal(multiProductQuote.lines[0].billingPeriodEndsAt, "2026-12-08T10:00:00.000Z");
+        assert.equal(multiProductQuote.lines[1].billingPeriodStartsAt, paidEndsAt.toISOString());
+        assert.equal(multiProductQuote.lines[1].billingPeriodEndsAt, "2026-11-23T10:00:00.000Z");
+        const independentDurationQuote = await service.previewPrepaidBillingOrder({
+          ...multiProductRequest,
+          lines: [
+            { locationId: multiProductLocation.id, productId: products[0].id, durationMonths: 1 },
+            { locationId: multiProductLocation.id, productId: products[1].id, durationMonths: 3 },
+          ],
+        }, { db: tx, now: multiProductNow, env: process.env });
+        assert.equal(independentDurationQuote.totalAmountMinor, "432000");
+        assert.deepEqual(independentDurationQuote.lines.map((line) => line.durationMonths), [1, 3]);
+        assert.equal(independentDurationQuote.lines[0].billingPeriodEndsAt, "2026-12-08T10:00:00.000Z");
+        assert.equal(independentDurationQuote.lines[1].billingPeriodEndsAt, "2027-01-23T10:00:00.000Z");
+        const multiProductOrder = await service.createPrepaidBillingOrder(multiProductRequest, { db: tx, now: multiProductNow, env: process.env });
+        assert.equal(multiProductOrder.lines.length, 2);
+        assert.equal(new Set(multiProductOrder.lines.map((line) => `${line.locationId}:${line.productId}`)).size, 2);
+        assert.equal(multiProductOrder.totalAmountMinor, "216000");
+        const multiProductCheckout = await aggregateFake.createFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, billingOrderId: multiProductOrder.id,
+        }, multiProductNow, tx);
+        const multiProductPayments = await tx.select().from(schema.commercialPayments)
+          .where(eq(schema.commercialPayments.billingOrderId, multiProductOrder.id));
+        const multiProductAllocations = await tx.select().from(schema.commercialPaymentAllocations)
+          .where(eq(schema.commercialPaymentAllocations.orderId, multiProductOrder.id));
+        assert.equal(multiProductPayments.length, 1);
+        assert.equal(String(multiProductPayments[0].amountMinor), "216000");
+        assert.equal(multiProductAllocations.length, 2);
+        // Make the final line in settlement order temporarily unplannable.
+        // The preceding line must roll back with it, leaving the aggregate
+        // payment pending and safe to retry after the conflicting row clears.
+        const frozenMultiLines = await tx.select({ id: schema.commercialBillingOrderLines.id, locationId: schema.commercialBillingOrderLines.locationId,
+          productId: schema.commercialBillingOrderLines.productId }).from(schema.commercialBillingOrderLines)
+          .where(eq(schema.commercialBillingOrderLines.orderId, multiProductOrder.id))
+          .orderBy(asc(schema.commercialBillingOrderLines.id));
+        const failingLine = frozenMultiLines[frozenMultiLines.length - 1];
+        const [poisonedPeriod] = await tx.insert(schema.locationSubscriptions).values({
+          locationId: failingLine.locationId, productId: failingLine.productId, provider: provider.code,
+          status: "active", startsAt: multiProductNow, currentPeriodEndsAt: null,
+        }).returning();
+        const beforeMultiFailure = await tx.select({ id: schema.locationSubscriptions.id, currentPeriodEndsAt: schema.locationSubscriptions.currentPeriodEndsAt })
+          .from(schema.locationSubscriptions).where(eq(schema.locationSubscriptions.locationId, multiProductLocation.id));
+        await assertAggregateError(aggregateFake.confirmFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, confirmationToken: multiProductCheckout.confirmationToken,
+        }, new Date(multiProductNow.getTime() + 500), tx), "checkout_unavailable");
+        assert.deepEqual(await tx.select({ id: schema.locationSubscriptions.id, currentPeriodEndsAt: schema.locationSubscriptions.currentPeriodEndsAt })
+          .from(schema.locationSubscriptions).where(eq(schema.locationSubscriptions.locationId, multiProductLocation.id)), beforeMultiFailure,
+        "failure processing one Product line rolls back all subscription changes for the other line");
+        const [pendingMultiPayment] = await tx.select({ status: schema.commercialPayments.status }).from(schema.commercialPayments)
+          .where(eq(schema.commercialPayments.billingOrderId, multiProductOrder.id));
+        assert.equal(pendingMultiPayment.status, "pending");
+        await tx.delete(schema.locationSubscriptions).where(eq(schema.locationSubscriptions.id, poisonedPeriod.id));
+        const multiProductSettlement = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, confirmationToken: multiProductCheckout.confirmationToken,
+        }, new Date(multiProductNow.getTime() + 1000), tx);
+        assert.equal(multiProductSettlement.duplicate, false);
+        assert.equal(multiProductSettlement.allocations.length, 2);
+        const paidProducts = await tx.select().from(schema.locationSubscriptions).where(and(
+          eq(schema.locationSubscriptions.locationId, multiProductLocation.id),
+          inArray(schema.locationSubscriptions.productId, [products[0].id, products[1].id]),
+        ));
+        assert.equal(paidProducts.length, 2);
+        const basicPaid = paidProducts.find((row) => row.productId === products[0].id);
+        const partnerPaid = paidProducts.find((row) => row.productId === products[1].id);
+        assert.ok(basicPaid && partnerPaid && basicPaid.id !== partnerPaid.id);
+        assert.equal(basicPaid.startsAt.toISOString(), trialEndsAt.toISOString());
+        assert.equal(basicPaid.currentPeriodEndsAt?.toISOString(), "2026-12-08T10:00:00.000Z");
+        assert.equal(partnerPaid.id, existingPartnerPeriod.id, "same Product extension reuses its paid subscription row");
+        assert.equal(partnerPaid.startsAt.toISOString(), "2026-09-23T10:00:00.000Z");
+        assert.equal(partnerPaid.currentPeriodEndsAt?.toISOString(), "2026-11-23T10:00:00.000Z");
+        assert.notEqual(existingPartnerPeriod.id, basicPaid.id);
+        const settledLinePeriods = await tx.select({ productId: schema.commercialBillingOrderLines.productId,
+          startsAt: schema.commercialBillingOrderLines.billingPeriodStartsAt, endsAt: schema.commercialBillingOrderLines.billingPeriodEndsAt,
+        }).from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, multiProductOrder.id));
+        const basicLinePeriod = settledLinePeriods.find((line) => line.productId === products[0].id);
+        const partnerLinePeriod = settledLinePeriods.find((line) => line.productId === products[1].id);
+        assert.equal(basicLinePeriod?.startsAt?.toISOString(), trialEndsAt.toISOString());
+        assert.equal(partnerLinePeriod?.startsAt?.toISOString(), paidEndsAt.toISOString());
+        assert.equal(partnerLinePeriod?.endsAt?.toISOString(), "2026-11-23T10:00:00.000Z");
+        const replayedMultiProductSettlement = await aggregateFake.confirmFakeProviderBillingOrderCheckout({
+          authenticatedUserId: owner.id, confirmationToken: multiProductCheckout.confirmationToken,
+        }, new Date(multiProductNow.getTime() + 2000), tx);
+        assert.equal(replayedMultiProductSettlement.duplicate, true);
+        const afterReplay = await tx.select({ id: schema.locationSubscriptions.id, currentPeriodEndsAt: schema.locationSubscriptions.currentPeriodEndsAt })
+          .from(schema.locationSubscriptions).where(and(
+            eq(schema.locationSubscriptions.locationId, multiProductLocation.id),
+            inArray(schema.locationSubscriptions.productId, [products[0].id, products[1].id]),
+          ));
+        assert.deepEqual(afterReplay, paidProducts.map(({ id, currentPeriodEndsAt }) => ({ id, currentPeriodEndsAt })));
+        assertionCount += 35;
 
         throw new Rollback("rollback-only");
       });

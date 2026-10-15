@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/app/i18n/I18nProvider";
-import { billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKey, canResumeBillingOrder, canPreviewBillingLines, formatBillingPeriodRange } from "./billingWizardModel";
+import { billingLineKey, billingOrderRequestPayload, buildSelectedBillingLines, restoreBillingOrderSelection, toggleBillingProductSelection, billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKey, canResumeBillingOrder, canPreviewBillingLines, formatBillingPeriodRange } from "./billingWizardModel";
 
 export type BillingWizardPlan = {
   productId: string; productName: string;
@@ -47,7 +47,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>(1);
-  const [selectedProducts, setSelectedProducts] = useState<Record<string, string>>({});
+  const [selectedProducts, setSelectedProducts] = useState<Record<string, string[]>>({});
   const [durations, setDurations] = useState<Record<string, number>>({});
   const [selectionError, setSelectionError] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -75,10 +75,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const organizationLocations = useMemo(() => locations.filter((location) => location.organizationId === organizationId)
     .map((location) => refreshedLocations[location.id] ?? location), [locations, organizationId, refreshedLocations]);
   const purchasableProducts = (location: BillingWizardLocation) => location.products.filter((product) => product.purchaseEligible);
-  const selectedLines = organizationLocations.flatMap((location) => {
-    const productId = selectedProducts[location.id];
-    const product = purchasableProducts(location).find((candidate) => candidate.productId === productId);
-    return product ? [{ location, product, months: durations[location.id] ?? 1 }] : [];
+  const selectedLines = buildSelectedBillingLines(organizationLocations, selectedProducts, durations).flatMap((line) => {
+    const location = organizationLocations.find((candidate) => candidate.id === line.locationId);
+    const product = location && purchasableProducts(location).find((candidate) => candidate.productId === line.productId);
+    return location && product ? [{ location, product, months: line.durationMonths }] : [];
   });
   const matchingPendingOrder = orders.find((item) => canResumeBillingOrder(item.status) && item.lines.some((orderLine) =>
     selectedLines.some(({ location, product }) => location.id === orderLine.locationId && product.productId === orderLine.productId)));
@@ -126,14 +126,9 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   function begin() { reset(); setOpen(true); }
   function close() { setOpen(false); }
   function updateSelection(update: () => void) { setQuote(null); setError(""); update(); }
-  function toggleLocation(location: BillingWizardLocation, checked: boolean) {
+  function toggleProduct(location: BillingWizardLocation, productId: string, checked: boolean) {
     setSelectionError(false);
-    updateSelection(() => setSelectedProducts((current) => {
-      const next = { ...current };
-      if (!checked) delete next[location.id];
-      else if (purchasableProducts(location)[0]) next[location.id] = current[location.id] ?? purchasableProducts(location)[0].productId;
-      return next;
-    }));
+    updateSelection(() => setSelectedProducts((current) => toggleBillingProductSelection(current, location.id, productId, checked)));
   }
   function errorMessage(code: string, lineCount = selectedLines.length) {
     return t(billingOrderErrorKey(code, lineCount) as import("@/app/i18n/types").TranslationKey);
@@ -167,7 +162,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
     try {
       const response = await fetch("/api/v2/customer/billing/orders/preview", {
         method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ organizationId, lines: selectedLines.map(({ location, product, months }) => ({ locationId: location.id, productId: product.productId, durationMonths: months })) }),
+        body: JSON.stringify(billingOrderRequestPayload(organizationId, selectedLines.map(({ location, product, months }) => ({ locationId: location.id, productId: product.productId, durationMonths: months })))),
       });
       const body = await response.json().catch(() => ({})) as Quote & { error?: string };
       if (!response.ok || !body.currency || !Array.isArray(body.lines)) { setError(errorMessage(body.error ?? "unavailable")); return; }
@@ -186,7 +181,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       if (!currentOrder) {
         const response = await fetch("/api/v2/customer/billing/orders", {
           method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ organizationId, lines: selectedLines.map(({ location, product, months }) => ({ locationId: location.id, productId: product.productId, durationMonths: months })) }),
+          body: JSON.stringify(billingOrderRequestPayload(organizationId, selectedLines.map(({ location, product, months }) => ({ locationId: location.id, productId: product.productId, durationMonths: months })))),
         });
         const body = await response.json().catch(() => ({})) as { order?: Order; error?: string };
         if (!response.ok || !body.order) { setError(errorMessage(body.error ?? "unavailable")); setPendingCheckoutConflict(body.error === "checkout_pending"); setOrderStatus(""); await onRefreshOrders?.(); return; }
@@ -203,6 +198,9 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   }
   async function resumeOrder(historyOrder: BillingOrderHistoryItem) {
     if (mutationLock.current || busy || !canResumeBillingOrder(historyOrder.status)) return;
+    const restored = restoreBillingOrderSelection(historyOrder.lines);
+    setSelectedProducts(restored.selectedByLocation);
+    setDurations(restored.durations);
     mutationLock.current = true; setBusy(true); setError(""); setPollingError(""); setOrderStatus(historyOrder.status);
     try {
       const response = await fetch(`/api/v2/customer/billing/orders/${encodeURIComponent(historyOrder.id)}/fake-checkout`, {
@@ -250,11 +248,19 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       <ol className="customer-billing-wizard-steps" aria-label={t("billingWizardProgress")}>{[1, 2, 3].map((item) => <li key={item} aria-current={step === item ? "step" : undefined} className={step === item ? "is-current" : step > item ? "is-complete" : ""}><span>{item}</span><span>{t(item === 1 ? "billingWizardStepSelect" : item === 2 ? "billingWizardStepReview" : "billingWizardStepLink")}</span></li>)}</ol>
       {step === 1 && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepSelect")}</h3>
         {organizationLocations.length === 0 ? <p role="status">{t("billingWizardNoLocations")}</p> : <div className="customer-billing-wizard-location-list">{organizationLocations.map((location) => {
-          const availableProducts = purchasableProducts(location); const checked = Boolean(selectedProducts[location.id]); const product = availableProducts.find((candidate) => candidate.productId === selectedProducts[location.id]); const issue = product ? lineIssue(location, product) : "";
+          const availableProducts = purchasableProducts(location); const selectedForLocation = new Set(selectedProducts[location.id] ?? []); const hasSelection = selectedForLocation.size > 0;
           const selectionState = billingMarketSelectionState({ persistedMarket: location.marketCode, selectedMarket: marketSelections[location.id] ?? "", saving: Boolean(marketSaving[location.id]), error: marketSaveErrors[location.id] ?? "" });
-          return <article className="customer-billing-wizard-location" key={location.id}><label className="customer-billing-wizard-check"><input type="checkbox" checked={checked} disabled={!availableProducts.length || busy} onChange={(event) => toggleLocation(location, event.target.checked)} /><span><strong>{location.name}</strong><small>{product ? statusLabel(product) : availableProducts.length ? t("billingWizardChooseProduct") : t("billingWizardNoEligibleProduct")}</small></span></label>
-            {checked && product && <div className="customer-billing-wizard-line-controls">{availableProducts.length > 1 && <label>{t("billingWizardProduct")}<select disabled={busy} value={product.productId} onChange={(event) => updateSelection(() => setSelectedProducts((current) => ({ ...current, [location.id]: event.target.value })))}>{availableProducts.map((item) => <option key={item.productId} value={item.productId}>{item.productName}</option>)}</select></label>}
-              <label>{t("billingWizardDuration")}<select disabled={busy} value={durations[location.id] ?? 1} onChange={(event) => updateSelection(() => setDurations((current) => ({ ...current, [location.id]: Number(event.target.value) })))}>{Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{durationText(months, locale, t)}</option>)}</select></label>
+          return <article className="customer-billing-wizard-location" key={location.id}><h4 className="customer-billing-wizard-location-title">{location.name}</h4>
+            {availableProducts.length ? <div className="customer-billing-wizard-products">{availableProducts.map((product) => {
+              const checked = selectedForLocation.has(product.productId);
+              const key = billingLineKey(location.id, product.productId);
+              const issue = checked ? lineIssue(location, product) : "";
+              return <div className="customer-billing-wizard-product-row" key={key}>
+                <label className="customer-billing-wizard-check"><input type="checkbox" checked={checked} disabled={busy} onChange={(event) => toggleProduct(location, product.productId, event.target.checked)} /><span><strong>{product.productName}</strong><small>{statusLabel(product)}</small></span></label>
+                {checked && <div className="customer-billing-wizard-line-controls"><label>{t("billingWizardDuration")}<select disabled={busy} value={durations[key] ?? 1} onChange={(event) => updateSelection(() => setDurations((current) => ({ ...current, [key]: Number(event.target.value) })))}>{Array.from({ length: 12 }, (_, index) => index + 1).map((months) => <option key={months} value={months}>{durationText(months, locale, t)}</option>)}</select></label>{issue && <p className="customer-billing-wizard-warning" role="status">{issue}</p>}</div>}
+              </div>;
+            })}</div> : <p className="customer-billing-wizard-detail">{t("billingWizardNoEligibleProduct")}</p>}
+            {hasSelection && <div className="customer-billing-wizard-line-controls">
               <p className="customer-billing-wizard-detail">{t("billingWizardPersistedMarket")}: <strong>{location.marketCode ?? t("billingWizardMarketNotSaved")}</strong></p>
               <label>{t("billingMarketLabel")}<select aria-label={`${t("billingMarketLabel")} · ${location.name}`} disabled={busy || Boolean(marketSaving[location.id]) || !onSaveMarket} value={marketSelections[location.id] ?? location.marketCode ?? ""} onChange={(event) => updateSelection(() => { setMarketSelections((current) => ({ ...current, [location.id]: event.target.value })); setMarketSaveErrors((current) => ({ ...current, [location.id]: "" })); setSavedMarketIds((current) => ({ ...current, [location.id]: false })); })}><option value="">—</option>{supportedMarkets.map((market) => <option key={market} value={market}>{market}</option>)}</select></label>
               {selectionState === "unsaved" && <button type="button" className="customer-billing-secondary" disabled={busy || Boolean(marketSaving[location.id]) || !marketSelections[location.id] || !onSaveMarket} onClick={() => void saveLocationMarket(location)}>{marketSaving[location.id] ? t("billingWizardMarketSaving") : t("billingWizardMarketSave")}</button>}
@@ -263,7 +269,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
               {selectionState === "error" && <p className="customer-onboarding-error" role="alert">{marketSaveErrors[location.id]}</p>}
               {!supportedMarkets.length && <p className="customer-billing-wizard-warning" role="status">{t("billingMarketUnavailable")}</p>}
               {savedMarketIds[location.id] && selectionState === "saved" && <p className="customer-billing-wizard-detail" role="status">{t("billingWizardMarketSaved")}</p>}
-              {issue && <p className="customer-billing-wizard-warning" role="status">{issue}</p>}</div>}
+            </div>}
           </article>;
         })}</div>}
         {selectionError && <p className="customer-onboarding-error" role="alert">{t("billingWizardSelectAtLeastOne")}</p>}
@@ -273,7 +279,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
           const period = line.billingPeriodStartsAt && line.billingPeriodEndsAt
             ? formatBillingPeriodRange(line.billingPeriodStartsAt, line.billingPeriodEndsAt, locale)
             : null;
-          return <li key={line.locationId}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span>{period && <small className="customer-billing-wizard-period-estimate">{t("billingWizardExpectedPeriod").replace("{{period}}", period)}</small>}</li>;
+          return <li key={billingLineKey(line.locationId, line.productId)}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span>{period && <small className="customer-billing-wizard-period-estimate">{t("billingWizardExpectedPeriod").replace("{{period}}", period)}</small>}</li>;
         })}</ul>
         <div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(quote.totalAmountMinor, quote.currency)}</strong></div>
         <p className="customer-billing-wizard-note">{previewOnly ? t("billingWizardPreviewOnly") : t("billingWizardPrepaidNotice")}</p>
@@ -281,7 +287,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       </section>}
       {step === 3 && previewOnly && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepLink")}</h3><div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{t("billingWizardQuoteUnavailable")}</strong></div><p className="customer-billing-wizard-note" role="status">{t("billingWizardPreviewOnly")}</p></section>}
       {step === 3 && checkout && order && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepLink")}</h3>
-        <ul className="customer-billing-wizard-review">{order.lines.map((line) => <li key={line.locationId}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{formatAmount(line.amountMinor, order.currency)}</span></li>)}</ul>
+        <ul className="customer-billing-wizard-review">{order.lines.map((line) => <li key={billingLineKey(line.locationId, line.productId)}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{formatAmount(line.amountMinor, order.currency)}</span></li>)}</ul>
         <div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{formatAmount(order.totalAmountMinor, order.currency)}</strong></div>
         <dl className="customer-billing-wizard-link-details"><dt>{t("billingWizardPaymentStatus")}</dt><dd>{orderStatusLabel(orderStatus || order.status)}</dd><dt>{t("billingWizardExpiry")}</dt><dd>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(checkout.expiresAt))}</dd><dt>{t("billingWizardPaymentLink")}</dt><dd><a href={checkout.checkoutUrl} target="_blank" rel="noopener noreferrer">{t("billingWizardOpenCheckout")}</a></dd></dl>
         <p>{checkout.providerName}</p><p className="customer-billing-wizard-note" role="status">{orderStatus === "paid" ? t("billingWizardPaymentConfirmed") : orderStatus === "expired" ? t("billingWizardOrderExpired") : orderStatus === "canceled" ? t("billingWizardOrderCanceled") : orderStatus === "failed" ? t("billingOrderFailed") : t("billingWizardAwaitingPayment")}</p>

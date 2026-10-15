@@ -648,3 +648,12 @@ input[type="button"]:active {
   outline: 2px solid #d5bd84;
   outline-offset: 3px;
 }
+.customer-billing-wizard-location-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.customer-billing-wizard-products { display: grid; gap: 9px; }
+.customer-billing-wizard-product-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .45fr); align-items: center; gap: 8px 14px; padding: 8px 0; border-top: 1px solid rgba(245,240,230,.07); }
+.customer-billing-wizard-product-row .customer-billing-wizard-line-controls { grid-template-columns: minmax(0, 1fr); padding: 0; }
+.customer-billing-wizard-product-row .customer-billing-wizard-line-controls p { grid-column: auto; }
+@media (max-width: 520px) {
+  .customer-billing-wizard-product-row { grid-template-columns: minmax(0, 1fr); }
+  .customer-billing-wizard-product-row .customer-billing-wizard-line-controls { padding-left: 32px; }
+}
