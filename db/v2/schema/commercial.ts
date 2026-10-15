@@ -109,6 +109,77 @@ export const commercialPartners = pgTable("commercial_partners", {
   uniqueIndex("commercial_partners_code_unique").on(table.code),
 ]);
 
+/** Shared operator-issued Spaquatoria access codes. Only the token hash is persisted. */
+export const commercialSpaquatoriaPromoCodes = pgTable("commercial_spaquatoria_promo_codes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tokenHash: text("token_hash").notNull(),
+  partnerId: uuid("partner_id").notNull().references(() => commercialPartners.id, { onDelete: "restrict" }),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  durationDays: integer("duration_days").notNull(),
+  createdByOperator: text("created_by_operator").notNull(),
+  creationReason: text("creation_reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  maxRedemptions: integer("max_redemptions"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByOperator: text("revoked_by_operator"),
+  revokeReason: text("revoke_reason"),
+}, (table) => [
+  uniqueIndex("commercial_spaquatoria_promo_codes_token_hash_unique").on(table.tokenHash),
+  uniqueIndex("commercial_spaquatoria_promo_codes_id_scope_unique").on(table.id, table.partnerId, table.productId),
+  index("commercial_spaquatoria_promo_codes_status_idx").on(table.createdAt, table.expiresAt, table.revokedAt),
+  check("commercial_spaquatoria_promo_codes_token_hash_sha256", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+  check("commercial_spaquatoria_promo_codes_duration_valid", sql`${table.durationDays} BETWEEN 1 AND 365`),
+  check("commercial_spaquatoria_promo_codes_operator_nonempty", sql`length(btrim(${table.createdByOperator})) > 0`),
+  check("commercial_spaquatoria_promo_codes_reason_nonempty", sql`length(btrim(${table.creationReason})) BETWEEN 12 AND 500`),
+  check("commercial_spaquatoria_promo_codes_max_redemptions_positive", sql`${table.maxRedemptions} IS NULL OR ${table.maxRedemptions} > 0`),
+  check("commercial_spaquatoria_promo_codes_expiry_after_creation", sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`),
+  check("commercial_spaquatoria_promo_codes_revoke_shape", sql`(${table.revokedAt} IS NULL AND ${table.revokedByOperator} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByOperator} IS NOT NULL AND length(btrim(${table.revokedByOperator})) > 0 AND ${table.revokeReason} IS NOT NULL AND length(btrim(${table.revokeReason})) BETWEEN 12 AND 500 AND ${table.revokedAt} >= ${table.createdAt})`),
+]);
+
+/** Append-only operator audit events; state snapshots never contain token material. */
+export const commercialSpaquatoriaPromoCodeEvents = pgTable("commercial_spaquatoria_promo_code_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  promoCodeId: uuid("promo_code_id").notNull().references(() => commercialSpaquatoriaPromoCodes.id, { onDelete: "restrict" }),
+  action: text("action").$type<"created" | "configured" | "revoked">().notNull(),
+  operator: text("operator").notNull(),
+  reason: text("reason").notNull(),
+  beforeState: jsonb("before_state").$type<Record<string, unknown> | null>(),
+  afterState: jsonb("after_state").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("commercial_spaquatoria_promo_code_events_code_time_idx").on(table.promoCodeId, table.createdAt),
+  uniqueIndex("commercial_spaquatoria_promo_code_events_created_unique").on(table.promoCodeId).where(sql`${table.action} = 'created'`),
+  uniqueIndex("commercial_spaquatoria_promo_code_events_revoked_unique").on(table.promoCodeId).where(sql`${table.action} = 'revoked'`),
+  check("commercial_spaquatoria_promo_code_events_action_valid", sql`${table.action} IN ('created', 'configured', 'revoked')`),
+  check("commercial_spaquatoria_promo_code_events_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
+  check("commercial_spaquatoria_promo_code_events_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 12 AND 500`),
+  check("commercial_spaquatoria_promo_code_events_state_shape", sql`jsonb_typeof(${table.afterState}) = 'object' AND (${table.beforeState} IS NULL OR jsonb_typeof(${table.beforeState}) = 'object') AND ((${table.action} = 'created' AND ${table.beforeState} IS NULL) OR (${table.action} <> 'created' AND ${table.beforeState} IS NOT NULL))`),
+]);
+
+/** Successful redemptions consume code capacity; already-covered attempts do not create a row. */
+export const commercialSpaquatoriaPromoRedemptions = pgTable("commercial_spaquatoria_promo_redemptions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  promoCodeId: uuid("promo_code_id").notNull().references(() => commercialSpaquatoriaPromoCodes.id, { onDelete: "restrict" }),
+  verifiedUserId: uuid("verified_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  locationId: uuid("location_id").notNull(),
+  partnerId: uuid("partner_id").notNull(),
+  productId: uuid("product_id").notNull(),
+  requestedDurationDays: integer("requested_duration_days").notNull(),
+  grantedDurationMs: bigint("granted_duration_ms", { mode: "number" }).notNull(),
+  redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_spaquatoria_promo_redemptions_code_location_unique").on(table.promoCodeId, table.locationId),
+  uniqueIndex("commercial_spaquatoria_promo_redemptions_id_scope_unique").on(table.id, table.partnerId, table.productId, table.locationId),
+  index("commercial_spaquatoria_promo_redemptions_code_time_idx").on(table.promoCodeId, table.redeemedAt),
+  index("commercial_spaquatoria_promo_redemptions_org_idx").on(table.organizationId, table.locationId),
+  foreignKey({ name: "commercial_spaquatoria_promo_redemptions_location_org_fk", columns: [table.locationId, table.organizationId], foreignColumns: [locations.id, locations.organizationId] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_spaquatoria_promo_redemptions_code_scope_fk", columns: [table.promoCodeId, table.partnerId, table.productId], foreignColumns: [commercialSpaquatoriaPromoCodes.id, commercialSpaquatoriaPromoCodes.partnerId, commercialSpaquatoriaPromoCodes.productId] }).onDelete("restrict"),
+  check("commercial_spaquatoria_promo_redemptions_requested_duration_valid", sql`${table.requestedDurationDays} BETWEEN 1 AND 365`),
+  check("commercial_spaquatoria_promo_redemptions_granted_duration_valid", sql`${table.grantedDurationMs} BETWEEN 1 AND ${table.requestedDurationDays}::bigint * 86400000`),
+]);
+
 export const commercialPartnerBenefits = pgTable("commercial_partner_benefits", {
   id: uuid("id").defaultRandom().primaryKey(),
   partnerId: uuid("partner_id").notNull(),
@@ -116,13 +187,16 @@ export const commercialPartnerBenefits = pgTable("commercial_partner_benefits", 
   locationId: uuid("location_id").notNull(),
   startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
   endsAt: timestamp("ends_at", { withTimezone: true }),
+  promoRedemptionId: uuid("promo_redemption_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("commercial_partner_benefits_unique_period").on(table.partnerId, table.productId, table.locationId, table.startsAt),
+  index("commercial_partner_benefits_promo_redemption_idx").on(table.promoRedemptionId),
   foreignKey({ name: "commercial_partner_benefits_partner_fk", columns: [table.partnerId], foreignColumns: [commercialPartners.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_benefits_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_benefits_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_partner_benefits_promo_redemption_fk", columns: [table.promoRedemptionId, table.partnerId, table.productId, table.locationId], foreignColumns: [commercialSpaquatoriaPromoRedemptions.id, commercialSpaquatoriaPromoRedemptions.partnerId, commercialSpaquatoriaPromoRedemptions.productId, commercialSpaquatoriaPromoRedemptions.locationId] }).onDelete("restrict"),
   check("commercial_partner_benefits_window", sql`${table.endsAt} IS NULL OR ${table.endsAt} > ${table.startsAt}`),
 ]);
 

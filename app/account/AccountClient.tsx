@@ -5,6 +5,7 @@ import { I18nProvider, useI18n } from "@/app/i18n/I18nProvider";
 import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
+import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
@@ -514,6 +515,7 @@ function Content() {
                   {orphanBenefits.map((benefit) => <article className="customer-account-product-row" key={benefit.id}><div><strong>{benefit.productName}</strong><span>{benefit.partnerName} · {t("billingPartnerStatus")}</span></div><div>{benefit.endsAt ? <small>{t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt))}</small> : <small>{t("partnerAccessActive")}</small>}</div></article>)}
                 </div>
               </details>
+              <SpaquatoriaPromoRedeemer locationId={location.id} onRedeemed={() => load(true)} />
             </section>;
           })}
           </div>

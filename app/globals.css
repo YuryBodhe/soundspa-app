@@ -493,6 +493,7 @@ input[type="button"]:active {
   .customer-account-header button { flex: 1 1 auto; }
   .customer-account-product-details li { align-items: flex-start; flex-direction: column; }
   .customer-account-product-details li > span:last-child { text-align: left; }
+  .customer-spaquatoria-promo-controls { align-items: stretch; flex-direction: column; }
   .customer-billing-wizard-dialog { position: fixed; inset: auto 0 0; width: 100%; max-width: none; max-height: 92dvh; margin: 0; padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 16px 16px 0 0; }
   .customer-billing-wizard-steps { gap: 5px; }
   .customer-billing-wizard-steps li { display: grid; justify-items: center; gap: 5px; text-align: center; font-size: 11px; }
@@ -570,6 +571,12 @@ input[type="button"]:active {
 .customer-account-product-row > div:last-child { text-align: right; }
 .customer-account-product-row strong { font-size: 13px; font-weight: 500; }
 .customer-account-product-row span, .customer-account-product-row small { color: rgba(245,240,230,.65); font-size: 12px; overflow-wrap: anywhere; }
+.customer-spaquatoria-promo-form { padding: 10px 2px 12px; border-bottom: 1px solid rgba(245,240,230,.08); }
+.customer-spaquatoria-promo-form label { display: grid; gap: 6px; color: rgba(245,240,230,.72); font-size: 12px; }
+.customer-spaquatoria-promo-controls { display: flex; gap: 8px; min-width: 0; }
+.customer-spaquatoria-promo-controls input { min-width: 0; flex: 1; }
+.customer-spaquatoria-promo-form p { margin: 7px 0 0; color: rgba(245,240,230,.72); font-size: 12px; }
+.customer-spaquatoria-promo-form :focus-visible { outline: 2px solid #d5bd84; outline-offset: 2px; }
 .customer-account-shell .customer-billing-wizard-open { min-height: 46px; margin: 12px 0 8px; padding: 10px 16px; border: 0; color: #101010; background: #eee; font-size: 15px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .customer-account-shell .customer-billing-wizard-open:hover { background: #fff; }
 .customer-account-bottom-disclosure { margin: 0; padding: 0; border: 0; border-bottom: 1px solid rgba(245,240,230,.08); border-radius: 0; background: transparent; }
