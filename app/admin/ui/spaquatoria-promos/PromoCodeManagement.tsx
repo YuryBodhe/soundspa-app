@@ -23,11 +23,22 @@ export default function PromoCodeManagement({ promoCodes }: { promoCodes: Promo[
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [oneTimeCode, setOneTimeCode] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState("");
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(oneTimeCode);
+      setCopyFeedback("Copied!");
+      window.setTimeout(() => setCopyFeedback(""), 2000);
+    } catch {
+      setCopyFeedback("Could not copy. Select the code and copy it manually.");
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>, url: string, method: string, payload: unknown, busyKey: string, reveal = false) {
     event.preventDefault();
     const form = event.currentTarget;
-    setBusy(busyKey); setError(""); setOneTimeCode("");
+    setBusy(busyKey); setError(""); setOneTimeCode(""); setCopyFeedback("");
     try {
       const response = await fetch(url, { method, credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json().catch(() => ({})) as { code?: string };
@@ -74,7 +85,7 @@ export default function PromoCodeManagement({ promoCodes }: { promoCodes: Promo[
 
   return <>
     {error && <p role="alert" className="partner-offer-feedback">{error}</p>}
-    {oneTimeCode && <section className="admin-card" role="status"><h2 className="admin-card-title">Copy this Spaquatoria promo code now</h2><p>The raw code is shown once. It will not appear in history or after this page is refreshed.</p><input aria-label="Promo code" readOnly value={oneTimeCode} onFocus={(event) => event.currentTarget.select()} /></section>}
+    {oneTimeCode && <section className="admin-card" aria-labelledby="one-time-promo-title"><h2 id="one-time-promo-title" className="admin-card-title">Copy this Spaquatoria promo code now</h2><p>The raw code is shown once. It will not appear in history or after this page is refreshed.</p><div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}><input aria-label="Promo code" readOnly value={oneTimeCode} onFocus={(event) => event.currentTarget.select()} style={{ flex: "1 1 280px", minWidth: 0 }} /><button type="button" className="btn btn-primary" onClick={() => void copyCode()}>Copy code</button></div>{copyFeedback && <p role="status" aria-live="polite" className="partner-offer-feedback">{copyFeedback}</p>}</section>}
     <section className="admin-card"><h2 className="admin-card-title">Create promo code</h2><p className="text-dim">Grants finite Spaquatoria access only. It does not create a subscription or change Basic access.</p>
       <form className="partner-offer-create-form" onSubmit={(event) => void create(event)}>
         <label>Duration in days<input name="durationDays" type="number" min="1" max="365" step="1" required defaultValue="30" /></label>
