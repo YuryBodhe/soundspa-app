@@ -10,6 +10,7 @@ const createSchema = z.object({
   code: z.string().trim().min(2).max(80),
   // Accept legacy clients that still send Kind, while the operator UI omits it.
   kind: z.enum(["core", "partner", "addon"]).optional(),
+  catalogVisibility: z.enum(["public", "assigned"]).optional(),
   priceMinor: z.number().int().positive().max(2_147_483_647),
   currency: z.literal("RUB"),
   billingIntervalMonths: z.literal(1),

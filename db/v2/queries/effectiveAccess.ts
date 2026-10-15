@@ -2,13 +2,14 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { v2Db } from "../client";
 import { channels, channelTracks, locations, organizations, locationServiceAccess, locationChannelEntitlements, locationChannelGrants } from "../schema";
 import { evaluateCatalogAccess } from "../accessPolicy";
-import { resolveCommercialProductAccess } from "./commercialAccess";
+import { resolveCommercialProductChannelAccess } from "./commercialAccess";
 
 export type EffectiveAccessSource = "trial" | "subscription" | "partner_benefit" | "included" | "preview" | "custom" | "admin";
 export type EffectiveChannelAccess = {
   id: string; slug: string; displayName: string; kind: "music" | "ambient";
   description: string | null; imageKey: string | null; playable: boolean; suspended: boolean;
   accessSources: EffectiveAccessSource[]; underlyingSources: EffectiveAccessSource[];
+  productAccessSources: Record<string, EffectiveAccessSource[]>;
   accessExpiries: { preview?: Date; custom?: Date; admin?: Date };
   tracks: { id: string; storageKey: string; originalFilename: string; sizeBytes: bigint; sortOrder: number }[];
 };
@@ -29,20 +30,29 @@ export async function resolveEffectiveChannelAccess(locationId: string, serverNo
     .leftJoin(locationChannelEntitlements, and(eq(locationChannelEntitlements.locationId, locations.id), eq(locationChannelEntitlements.channelId, channels.id)))
     .leftJoin(locationChannelGrants, and(eq(locationChannelGrants.locationId, locations.id), eq(locationChannelGrants.channelId, channels.id), eq(locationChannelGrants.source, "admin")))
     .leftJoin(channelTracks, and(eq(channelTracks.channelId, channels.id), eq(channelTracks.isEnabled, true)))
-    .where(and(eq(locations.id, locationId), isNull(locations.archivedAt))).orderBy(asc(channels.sortOrder), asc(channels.id), asc(channelTracks.sortOrder), asc(channelTracks.id)), resolveCommercialProductAccess(locationId, serverNow, db)]);
+    .where(and(eq(locations.id, locationId), isNull(locations.archivedAt))).orderBy(asc(channels.sortOrder), asc(channels.id), asc(channelTracks.sortOrder), asc(channelTracks.id)), resolveCommercialProductChannelAccess(locationId, serverNow, db)]);
   const result = new Map<string, EffectiveChannelAccess>();
   for (const row of rows) {
     const sourcePolicy = evaluateCatalogAccess({ accessType: row.accessType, enabled: row.enabled, expiresAt: row.expiresAt, commercialActive: row.commercialActive, suspended: false, now: serverNow });
     const underlying = new Set<EffectiveAccessSource>();
-    for (const source of commercialAccess.get(row.id) ?? []) underlying.add(source);
+    const productAccessSources: Record<string, EffectiveAccessSource[]> = {};
+    for (const [productId, channelsForProduct] of commercialAccess) {
+      const sources = channelsForProduct.get(row.id);
+      if (!sources?.size) continue;
+      productAccessSources[productId] = [...sources];
+      for (const source of sources) underlying.add(source);
+    }
     if (sourcePolicy.playable && row.accessType === "included") underlying.add("included");
     if (sourcePolicy.playable && row.accessType === "preview") underlying.add("preview");
     if (sourcePolicy.playable && row.accessType === "subscribed") underlying.add("custom");
     const adminValid = row.adminEnabled === true && (!row.adminStartsAt || row.adminStartsAt <= serverNow) && (!row.adminEndsAt || row.adminEndsAt > serverNow);
     if (adminValid) underlying.add("admin");
-    const item = result.get(row.id) ?? { id: row.id, slug: row.slug, displayName: row.displayName, kind: row.kind, description: row.description, imageKey: row.imageKey, playable: false, suspended: row.suspended, accessSources: [], underlyingSources: [], accessExpiries: {}, tracks: [] };
+    const item = result.get(row.id) ?? { id: row.id, slug: row.slug, displayName: row.displayName, kind: row.kind, description: row.description, imageKey: row.imageKey, playable: false, suspended: row.suspended, accessSources: [], underlyingSources: [], productAccessSources: {}, accessExpiries: {}, tracks: [] };
     item.underlyingSources = sourceOrder.filter((source) => item.underlyingSources.includes(source) || underlying.has(source));
     item.accessSources = item.underlyingSources;
+    for (const [productId, sources] of Object.entries(productAccessSources)) {
+      item.productAccessSources[productId] = [...new Set([...(item.productAccessSources[productId] ?? []), ...sources])];
+    }
     if (row.expiresAt && row.accessType === "preview" && row.expiresAt > serverNow) item.accessExpiries.preview = row.expiresAt;
     if (adminValid && row.adminEndsAt) item.accessExpiries.admin = row.adminEndsAt;
     item.playable = item.underlyingSources.length > 0 && !row.suspended;

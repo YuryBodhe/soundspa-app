@@ -10,7 +10,8 @@ type Channel = { id: string; name: string; kind: "music" | "ambient"; isPublishe
 type Visibility = "public" | "private" | "disabled";
 type RouteState = { marketCode: string; providerCode: string; externalReference: string; isEnabled: boolean; displayOrder: number };
 type PaymentRoute = RouteState & { id: string; productId: string; providerName: string; providerEnabled: boolean; createdAt: Date | string; updatedAt: Date | string; history: Array<{ id: string; action: string; operator: string; reason: string; beforeState: RouteState | null; afterState: RouteState; createdAt: Date | string }> };
-type Product = { id: string; code: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null; isActive: boolean; visibility: Visibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }>; paymentRoutes: PaymentRoute[] };
+type CatalogVisibility = "public" | "assigned";
+type Product = { id: string; code: string; name: string; priceMinor: number | null; currency: string | null; billingIntervalMonths: number | null; isActive: boolean; visibility: Visibility; catalogVisibility: CatalogVisibility; visibilityHistory: Array<{ previousVisibility: Visibility; newVisibility: Visibility; operator: string; reason: string; changedAt: Date | string }>; channelIds: string[]; channels: Array<{ id: string; name: string; kind: "music" | "ambient" }>; paymentRoutes: PaymentRoute[] };
 type PaymentRouteProvider = { code: string; name: string; markets: readonly string[] };
 
 function configuredPrice(product: Product): string {
@@ -56,6 +57,7 @@ export default function ProductManagement({ products, channels, paymentRouteProv
         name: data.get("name"), code: data.get("code"), priceMinor, currency: data.get("currency"),
         billingIntervalMonths: Number(data.get("billingIntervalMonths")),
         isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
+        catalogVisibility: data.get("catalogVisibility"),
       });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Enter a valid Product price."); }
     if (created) form.reset();
@@ -70,6 +72,7 @@ export default function ProductManagement({ products, channels, paymentRouteProv
       const configured = priceMinor !== null;
       await save(product.id, `/api/v2/admin/products/${encodeURIComponent(product.id)}`, "PATCH", {
         name: data.get("name"), isActive: data.get("isActive") === "on", channelIds: selectedChannels(form),
+        catalogVisibility: data.get("catalogVisibility"),
         priceMinor, currency: configured ? data.get("currency") : null,
         billingIntervalMonths: configured ? Number(data.get("billingIntervalMonths")) : null,
       });
@@ -106,6 +109,12 @@ export default function ProductManagement({ products, channels, paymentRouteProv
         <label>Billing interval<select name="billingIntervalMonths" defaultValue="1"><option value="1">1 month</option></select></label>
         <p className="text-dim">Phase 1 supports RUB monthly prices. Enter a positive amount; prices are stored in integer minor units.</p>
         <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked /> Active Product</label>
+        <label>Customer catalog
+          <select name="catalogVisibility" defaultValue="assigned">
+            <option value="public">Public — list for every authorized Location</option>
+            <option value="assigned">Assigned — list after Product access or authorization</option>
+          </select>
+        </label>
         <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channels.length ? channelOptions([]) : <p className="text-dim">No Channels exist yet.</p>}</fieldset>
         <button className="btn btn-primary" disabled={pending === "create"}>{pending === "create" ? "Creating…" : "Create Product"}</button>
       </form>
@@ -118,6 +127,7 @@ export default function ProductManagement({ products, channels, paymentRouteProv
           <span><strong>{product.name}</strong><small>{product.code} · {configuredPrice(product)}</small></span>
           <span className={`badge ${product.isActive ? "badge-ok" : "badge-neutral"}`}>{product.isActive ? "ACTIVE" : "INACTIVE"}</span>
           <span className="badge badge-neutral">{product.visibility.toUpperCase()}</span>
+          <span className="badge badge-neutral">CATALOG {product.catalogVisibility.toUpperCase()}</span>
         </summary>
         <div className="product-management-content">
           <p><strong>Channels:</strong> {product.channels.length ? product.channels.map((channel) => channel.name).join(", ") : "None"}</p>
@@ -148,6 +158,12 @@ export default function ProductManagement({ products, channels, paymentRouteProv
             <label>Billing interval<select name="billingIntervalMonths" defaultValue={String(product.billingIntervalMonths ?? 1)}><option value="1">1 month</option></select></label>
             {product.priceMinor === null && <p className="text-dim">Legacy price is not configured. Leave the amount blank to keep it unconfigured, or enter a price to configure it.</p>}
             <label className="product-active-option"><input type="checkbox" name="isActive" defaultChecked={product.isActive} /> Active Product</label>
+            <label>Customer catalog
+              <select name="catalogVisibility" defaultValue={product.catalogVisibility}>
+                <option value="public">Public — list for every authorized Location</option>
+                <option value="assigned">Assigned — list after Product access or authorization</option>
+              </select>
+            </label>
             <fieldset className="product-channel-fieldset"><legend>Channel composition</legend>{channelOptions(product.channelIds)}</fieldset>
             <button className="btn btn-primary" disabled={pending === product.id}>{pending === product.id ? "Saving…" : "Save Product"}</button>
           </form>

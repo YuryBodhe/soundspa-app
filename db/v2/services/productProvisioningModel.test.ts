@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyProductProvisioning, hasExpectedProductIdentity } from "./productProvisioningModel";
+import {
+  classifyProductProvisioning,
+  hasExpectedProductIdentity,
+  SOUNDSPA_PRODUCT_INITIAL_CATALOG_VISIBILITY,
+  soundSpaProductProvisioningUpdate,
+} from "./productProvisioningModel";
+
+test("new canonical SoundSpa Basic provisioning is public while reruns preserve operator visibility", () => {
+  assert.equal(SOUNDSPA_PRODUCT_INITIAL_CATALOG_VISIBILITY, "public");
+  const rerunPatch = soundSpaProductProvisioningUpdate(new Date("2026-10-15T00:00:00.000Z"));
+  assert.deepEqual(rerunPatch, { name: "SoundSpa Basic", updatedAt: new Date("2026-10-15T00:00:00.000Z") });
+  assert.equal("catalogVisibility" in rerunPatch, false, "reruns must not overwrite operator-configured visibility");
+});
 
 test("canonical Product provisioning identity uses stable code and name, not Kind", () => {
   const legacyKindProduct = { code: "soundspa", name: "SoundSpa Basic", isActive: true, kind: "partner" };

@@ -1,4 +1,5 @@
 export type ProductKind = "core" | "partner" | "addon";
+export type ProductCatalogVisibility = "public" | "assigned";
 export type ProductAdminErrorCode = "INVALID_INPUT" | "PRODUCT_CODE_EXISTS" | "PRODUCT_NOT_FOUND" | "CHANNEL_NOT_FOUND";
 export type ProductPrice = { priceMinor: number; currency: "RUB"; billingIntervalMonths: 1 };
 const MAX_PRICE_MINOR = 2_147_483_647;
@@ -19,6 +20,12 @@ export function normalizeProductCode(value: unknown): string {
     throw new ProductAdminError("INVALID_INPUT");
   }
   return code;
+}
+
+function catalogVisibility(value: unknown, fallback: ProductCatalogVisibility = "assigned"): ProductCatalogVisibility {
+  if (value === undefined) return fallback;
+  if (value !== "public" && value !== "assigned") throw new ProductAdminError("INVALID_INPUT");
+  return value;
 }
 
 function productName(value: unknown): string {
@@ -56,6 +63,7 @@ export function validateCreateProductInput(input: {
   name: unknown;
   code: unknown;
   kind?: unknown;
+  catalogVisibility?: unknown;
   isActive: unknown;
   channelIds: unknown;
   priceMinor?: unknown;
@@ -67,6 +75,7 @@ export function validateCreateProductInput(input: {
     name: productName(input.name),
     code: normalizeProductCode(input.code),
     kind: productKind(input.kind),
+    catalogVisibility: catalogVisibility(input.catalogVisibility),
     isActive: input.isActive,
     channelIds: channelIds(input.channelIds),
     ...productPrice(input.priceMinor, input.currency, input.billingIntervalMonths, false)!,
@@ -77,6 +86,7 @@ export function validateUpdateProductInput(input: {
   name: unknown;
   isActive: unknown;
   channelIds: unknown;
+  catalogVisibility?: unknown;
   priceMinor?: unknown;
   currency?: unknown;
   billingIntervalMonths?: unknown;
@@ -86,6 +96,7 @@ export function validateUpdateProductInput(input: {
     name: productName(input.name),
     isActive: input.isActive,
     channelIds: channelIds(input.channelIds),
+    ...(input.catalogVisibility === undefined ? {} : { catalogVisibility: catalogVisibility(input.catalogVisibility) }),
     ...(input.priceMinor === undefined && input.currency === undefined && input.billingIntervalMonths === undefined
       ? {}
       : { price: productPrice(input.priceMinor, input.currency, input.billingIntervalMonths, true) }),

@@ -12,6 +12,14 @@ export type ExpectedProductIdentity = {
 
 export type ProductProvisioningDecision = "create" | "reuse" | "conflict";
 
+/** Visibility for the canonical Basic Product on first provisioning only. */
+export const SOUNDSPA_PRODUCT_INITIAL_CATALOG_VISIBILITY = "public" as const;
+
+/** Keep the canonical label fresh without overwriting operator-managed fields. */
+export function soundSpaProductProvisioningUpdate(updatedAt: Date) {
+  return { name: "SoundSpa Basic", updatedAt };
+}
+
 /** Provisioning identity intentionally excludes the legacy Product Kind field. */
 export function hasExpectedProductIdentity(
   product: ProductProvisioningIdentity | null | undefined,

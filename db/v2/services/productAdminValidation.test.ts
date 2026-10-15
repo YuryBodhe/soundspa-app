@@ -22,7 +22,8 @@ test("Product code is normalized and bounded", () => {
 test("create validates Product fields and preserves selected channel identities", () => {
   assert.deepEqual(validateCreateProductInput({
     name: "  Divnitsa  ", code: "DIVNITSA", kind: "partner", isActive: true, channelIds: [channelId], priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1,
-  }), { name: "Divnitsa", code: "divnitsa", kind: "partner", isActive: true, channelIds: [channelId], priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 });
+  }), { name: "Divnitsa", code: "divnitsa", kind: "partner", catalogVisibility: "assigned", isActive: true, channelIds: [channelId], priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1 });
+  assert.equal(validateCreateProductInput({ name: "Public Product", code: "public-product", isActive: true, channelIds: [], catalogVisibility: "public", priceMinor: 50_000, currency: "RUB", billingIntervalMonths: 1 }).catalogVisibility, "public");
   assert.deepEqual(validateCreateProductInput({
     name: "Empty composition", code: "empty-composition", kind: "addon", isActive: false, channelIds: [], priceMinor: 50_000, currency: "RUB", billingIntervalMonths: 1,
   }).channelIds, []);
@@ -45,6 +46,9 @@ test("updates accept only editable Product fields and reject invalid identities"
   assert.deepEqual(validateUpdateProductInput({ name: " Changed ", isActive: false, channelIds: [channelId] }), {
     name: "Changed", isActive: false, channelIds: [channelId],
   });
+  assert.equal(validateUpdateProductInput({ name: "Changed", isActive: true, channelIds: [], catalogVisibility: "public" }).catalogVisibility, "public");
+  assert.throws(() => validateUpdateProductInput({ name: "Changed", isActive: true, channelIds: [], catalogVisibility: "private" }),
+    (error: unknown) => error instanceof ProductAdminError && error.code === "INVALID_INPUT");
   assert.equal(isProductId(channelId), true);
   assert.equal(isProductId("not-a-product"), false);
   assert.throws(() => validateUpdateProductInput({ name: " ", isActive: true, channelIds: [] }),

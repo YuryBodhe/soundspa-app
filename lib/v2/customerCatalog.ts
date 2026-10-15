@@ -1,7 +1,10 @@
 import { resolveEffectiveChannelAccess } from "@/db/v2/queries/effectiveAccess";
-import { filterVisibleChannels, getHiddenChannelIds } from "@/db/v2/queries/locationChannelVisibility";
+import { getHiddenChannelIds } from "@/db/v2/queries/locationChannelVisibility";
 import { resolveImageUrl, resolveMediaUrl } from "@/app/v2/mediaUrls";
 import { getChannelLocalizedTitles } from "@/db/v2/queries/channelTranslations";
+import { getCustomerCatalogProductPolicy } from "@/db/v2/queries/customerCatalogPolicy";
+import { filterCustomerCatalogChannels } from "./customerCatalogModel";
+export { filterCustomerCatalogChannels } from "./customerCatalogModel";
 
 /** Customer-safe catalog shape shared by the device API and operator preview. */
 export type CustomerCatalogChannel = {
@@ -20,11 +23,12 @@ export type CustomerCatalogChannel = {
 };
 
 export async function getLocationCustomerCatalog(locationId: string, now = new Date()): Promise<CustomerCatalogChannel[]> {
-  const [effectiveAccess, hiddenChannelIds] = await Promise.all([
+  const [effectiveAccess, hiddenChannelIds, productPolicy] = await Promise.all([
     resolveEffectiveChannelAccess(locationId, now),
     getHiddenChannelIds(locationId),
+    getCustomerCatalogProductPolicy(locationId),
   ]);
-  const visible = filterVisibleChannels(effectiveAccess, hiddenChannelIds); const titles = await getChannelLocalizedTitles(visible.map((channel) => channel.id));
+  const visible = filterCustomerCatalogChannels(effectiveAccess, hiddenChannelIds, productPolicy); const titles = await getChannelLocalizedTitles(visible.map((channel) => channel.id));
   return visible.map((channel) => ({
     id: channel.id,
     slug: channel.slug,

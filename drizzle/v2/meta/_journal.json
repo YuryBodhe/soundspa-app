@@ -176,6 +176,13 @@
       "when": 1792049901337,
       "tag": "0024_universal_registration_links",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792069806105,
+      "tag": "0025_graceful_shatterstar",
+      "breakpoints": true
     }
   ]
 }

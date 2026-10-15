@@ -33,7 +33,7 @@ async function assertChannelsExist(tx: V2Transaction, channelIds: string[]) {
 
 export async function listProductManagementData() {
   const [productRows, channelRows, compositionRows, visibilityRows] = await Promise.all([
-    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility })
+    v2Db.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility, catalogVisibility: commercialProducts.catalogVisibility })
       .from(commercialProducts).orderBy(asc(commercialProducts.name), asc(commercialProducts.code), asc(commercialProducts.id)),
     v2Db.select({ id: channels.id, name: channels.displayName, kind: channels.kind, isPublished: channels.isPublished, archivedAt: channels.archivedAt })
       .from(channels).orderBy(asc(channels.kind), asc(channels.sortOrder), asc(channels.displayName), asc(channels.id)),
@@ -66,7 +66,7 @@ export async function listProductManagementData() {
 }
 
 export async function createProduct(
-  input: { name: unknown; code: unknown; kind?: unknown; isActive: unknown; channelIds: unknown; priceMinor: unknown; currency: unknown; billingIntervalMonths: unknown },
+  input: { name: unknown; code: unknown; kind?: unknown; isActive: unknown; channelIds: unknown; priceMinor: unknown; currency: unknown; billingIntervalMonths: unknown; catalogVisibility?: unknown },
   runInTransaction: TransactionRunner = defaultTransaction,
 ) {
   const values = validateCreateProductInput(input);
@@ -81,7 +81,8 @@ export async function createProduct(
         currency: values.currency,
         billingIntervalMonths: values.billingIntervalMonths,
         isActive: values.isActive,
-      }).returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive });
+        catalogVisibility: values.catalogVisibility,
+      }).returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, catalogVisibility: commercialProducts.catalogVisibility });
       if (values.channelIds.length) {
         await tx.insert(commercialProductChannels).values(values.channelIds.map((channelId) => ({ productId: product.id, channelId })));
       }
@@ -95,7 +96,7 @@ export async function createProduct(
 
 export async function updateProduct(
   productId: string,
-  input: { name: unknown; isActive: unknown; channelIds: unknown; priceMinor?: unknown; currency?: unknown; billingIntervalMonths?: unknown },
+  input: { name: unknown; isActive: unknown; channelIds: unknown; priceMinor?: unknown; currency?: unknown; billingIntervalMonths?: unknown; catalogVisibility?: unknown },
   runInTransaction: TransactionRunner = defaultTransaction,
 ) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productId)) {
@@ -120,9 +121,10 @@ export async function updateProduct(
         currency: values.price?.currency ?? null,
         billingIntervalMonths: values.price?.billingIntervalMonths ?? null,
       }),
+      ...(values.catalogVisibility === undefined ? {} : { catalogVisibility: values.catalogVisibility }),
       updatedAt: new Date(),
     }).where(eq(commercialProducts.id, productId))
-      .returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive });
+      .returning({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, kind: commercialProducts.kind, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, catalogVisibility: commercialProducts.catalogVisibility });
 
     await tx.delete(commercialProductChannels).where(eq(commercialProductChannels.productId, productId));
     if (values.channelIds.length) {

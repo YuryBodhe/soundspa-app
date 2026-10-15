@@ -28,9 +28,11 @@ async function main() {
   try {
     await v2Db.transaction(async (tx) => {
       const runInTransaction = <T>(operation: (inner: typeof tx) => Promise<T>) => tx.transaction(operation);
-      const protectedProductsBefore = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive })
+      const protectedProductsBefore = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, catalogVisibility: commercialProducts.catalogVisibility })
         .from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code));
       const protectedProductIds = protectedProductsBefore.map((product) => product.id);
+      const canonicalBasic = protectedProductsBefore.find((product) => product.code === "soundspa");
+      if (canonicalBasic) assert.equal(canonicalBasic.catalogVisibility, "public", "migration keeps canonical SoundSpa Basic visible before any assignment");
       const protectedCompositionBefore = protectedProductIds.length
         ? await tx.select({ productId: commercialProductChannels.productId, channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(inArray(commercialProductChannels.productId, protectedProductIds)).orderBy(asc(commercialProductChannels.productId), asc(commercialProductChannels.channelId))
         : [];
@@ -52,6 +54,7 @@ async function main() {
       assert.equal(created.billingIntervalMonths, 1);
       const defaultKindProduct = await createProduct({ name: "Default Kind Product", code: `default-kind-${suffix}`, isActive: true, channelIds: [], priceMinor: 50_000, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
       assert.equal(defaultKindProduct.kind, "core", "omitting Kind stores the server-selected compatibility value");
+      assert.equal(defaultKindProduct.catalogVisibility, "assigned", "new Products default to assigned customer-catalog visibility");
       const [legacyUnconfigured] = await tx.insert(commercialProducts).values({
         code: `legacy-unconfigured-${suffix}`, name: "Legacy unconfigured Product", kind: "core",
       }).returning();
@@ -75,9 +78,10 @@ async function main() {
       const accessAfterActivate = new Map((await resolveEffectiveChannelAccess(location.id, now, tx)).map((item) => [item.id, item]));
       assert.equal(accessAfterActivate.get(first.id)?.playable, true, "active trial should include the active Product composition");
 
-      const updated = await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [second.id], priceMinor: 125_500, currency: "RUB", billingIntervalMonths: 1 }, runInTransaction);
+      const updated = await updateProduct(created.id, { name: "Updated Test Product", isActive: true, channelIds: [second.id], priceMinor: 125_500, currency: "RUB", billingIntervalMonths: 1, catalogVisibility: "public" }, runInTransaction);
       assert.equal(updated.name, "Updated Test Product");
       assert.equal(updated.priceMinor, 125_500, "price edits affect the Product catalog configuration");
+      assert.equal(updated.catalogVisibility, "public", "catalog visibility can be edited independently");
       await assert.rejects(updateProduct(created.id, { name: updated.name, isActive: true, channelIds: [second.id], priceMinor: null, currency: null, billingIntervalMonths: null }, runInTransaction),
         (error: unknown) => error instanceof ProductAdminError && error.code === "INVALID_INPUT",
         "a configured Product cannot be cleared into the legacy fallback pricing mode");
@@ -95,7 +99,7 @@ async function main() {
       const [afterUpdate] = await tx.select().from(commercialProducts).where(eq(commercialProducts.id, created.id));
       assert.equal(afterUpdate.code, beforeUpdate.code, "Product code remains immutable through the update service");
       assert.equal(afterUpdate.kind, beforeUpdate.kind, "Product kind remains unchanged through the update service");
-      assert.deepEqual(await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive }).from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code)), protectedProductsBefore);
+      assert.deepEqual(await tx.select({ id: commercialProducts.id, code: commercialProducts.code, name: commercialProducts.name, priceMinor: commercialProducts.priceMinor, currency: commercialProducts.currency, billingIntervalMonths: commercialProducts.billingIntervalMonths, isActive: commercialProducts.isActive, catalogVisibility: commercialProducts.catalogVisibility }).from(commercialProducts).where(inArray(commercialProducts.code, ["soundspa", "spaquatoria"])).orderBy(asc(commercialProducts.code)), protectedProductsBefore);
       assert.deepEqual(protectedProductIds.length
         ? await tx.select({ productId: commercialProductChannels.productId, channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(inArray(commercialProductChannels.productId, protectedProductIds)).orderBy(asc(commercialProductChannels.productId), asc(commercialProductChannels.channelId))
         : [], protectedCompositionBefore);
