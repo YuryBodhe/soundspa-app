@@ -5,7 +5,7 @@ import { organizations } from "./core/organizations";
 import { users } from "./core/users";
 import { locations } from "./core/locations";
 import { channels } from "./product/channels";
-import { commercialRegistrationLinkRedemptions } from "./core/customerAuth";
+import { commercialRegistrationLinkGrants, commercialRegistrationLinkRedemptions } from "./core/customerAuth";
 import { commercialProducts } from "./commercialProducts";
 export { commercialProducts };
 
@@ -188,15 +188,19 @@ export const commercialPartnerBenefits = pgTable("commercial_partner_benefits", 
   startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
   endsAt: timestamp("ends_at", { withTimezone: true }),
   promoRedemptionId: uuid("promo_redemption_id"),
+  registrationLinkGrantId: uuid("registration_link_grant_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("commercial_partner_benefits_unique_period").on(table.partnerId, table.productId, table.locationId, table.startsAt),
   index("commercial_partner_benefits_promo_redemption_idx").on(table.promoRedemptionId),
+  index("commercial_partner_benefits_registration_link_grant_idx").on(table.registrationLinkGrantId),
   foreignKey({ name: "commercial_partner_benefits_partner_fk", columns: [table.partnerId], foreignColumns: [commercialPartners.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_benefits_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_benefits_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_benefits_promo_redemption_fk", columns: [table.promoRedemptionId, table.partnerId, table.productId, table.locationId], foreignColumns: [commercialSpaquatoriaPromoRedemptions.id, commercialSpaquatoriaPromoRedemptions.partnerId, commercialSpaquatoriaPromoRedemptions.productId, commercialSpaquatoriaPromoRedemptions.locationId] }).onDelete("restrict"),
+  foreignKey({ name: "commercial_partner_benefits_registration_link_grant_fk", columns: [table.registrationLinkGrantId, table.partnerId, table.productId, table.locationId], foreignColumns: [commercialRegistrationLinkGrants.id, commercialRegistrationLinkGrants.partnerId, commercialRegistrationLinkGrants.productId, commercialRegistrationLinkGrants.locationId] }).onDelete("restrict"),
+  check("commercial_partner_benefits_promo_registration_source_exclusive", sql`${table.promoRedemptionId} IS NULL OR ${table.registrationLinkGrantId} IS NULL`),
   check("commercial_partner_benefits_window", sql`${table.endsAt} IS NULL OR ${table.endsAt} > ${table.startsAt}`),
 ]);
 
@@ -210,11 +214,13 @@ export const locationCoreTrials = pgTable("location_core_trials", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   invalidatedByResetId: uuid("invalidated_by_reset_id").references(() => commercialBillingResets.id, { onDelete: "restrict" }),
+  registrationLinkGrantId: uuid("registration_link_grant_id"),
 }, (table) => [
   uniqueIndex("location_core_trials_location_product_unique").on(table.locationId, table.productId).where(sql`${table.invalidatedByResetId} IS NULL`),
   index("location_core_trials_reset_idx").on(table.invalidatedByResetId),
   foreignKey({ name: "location_core_trials_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
   foreignKey({ name: "location_core_trials_product_fk", columns: [table.productId], foreignColumns: [commercialProducts.id] }).onDelete("restrict"),
+  foreignKey({ name: "location_core_trials_registration_link_grant_fk", columns: [table.registrationLinkGrantId, table.productId, table.locationId], foreignColumns: [commercialRegistrationLinkGrants.id, commercialRegistrationLinkGrants.productId, commercialRegistrationLinkGrants.locationId] }).onDelete("restrict"),
   check("location_core_trials_window", sql`${table.endsAt} > ${table.startsAt}`),
 ]);
 

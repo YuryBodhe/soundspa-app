@@ -21,11 +21,11 @@ const [{ v2Db, v2Pool }, schema, links, auth, { completeOrdinaryCustomerOnboardi
 ]);
 const identity = (await v2Pool.query<{ database: string; role: string; address: string | null; version: string; migrations: number; latest: string }>(`SELECT current_database() AS database,current_user AS role,inet_server_addr()::text AS address,current_setting('server_version_num') AS version,(SELECT count(*)::int FROM drizzle_v2.__drizzle_migrations) AS migrations,(SELECT max(created_at)::text FROM drizzle_v2.__drizzle_migrations) AS latest`)).rows[0];
 const address = identity?.address?.split("/")[0] ?? "";
-if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 23 || identity.latest !== "1792025178280") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0022.");
+if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 25 || identity.latest !== "1792049901337") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0024.");
 const clean = await v2Pool.query<{ total: string }>(`SELECT
  (SELECT count(*) FROM organizations)+(SELECT count(*) FROM users)+(SELECT count(*) FROM locations)+
  (SELECT count(*) FROM commercial_products)+(SELECT count(*) FROM commercial_product_organization_authorizations)+
- (SELECT count(*) FROM commercial_registration_links)+(SELECT count(*) FROM commercial_registration_link_redemptions)+
+ (SELECT count(*) FROM commercial_registration_links)+(SELECT count(*) FROM commercial_registration_link_redemptions)+(SELECT count(*) FROM commercial_registration_link_grants)+
  (SELECT count(*) FROM commercial_billing_orders)+(SELECT count(*) FROM commercial_payments)+
  (SELECT count(*) FROM location_core_trials)+(SELECT count(*) FROM location_subscriptions)+
  (SELECT count(*) FROM commercial_partner_benefits)+(SELECT count(*) FROM location_channel_entitlements) AS total`);
@@ -49,24 +49,24 @@ const assertUnavailableAtEndpoint = async (token: string, label: string) => {
   check(response.status === 400 && body === JSON.stringify({ ok: false, code: "registration_link_unavailable" }) &&
     !body.includes(token) && !response.headers.has("set-cookie"), `${label} link fails generically without exposing token material`);
 };
-async function startSignup(token: string, email: string) {
+async function startSignup(token: string, email: string, at = now) {
   const contextHash = sha256(randomUUID());
-  const intent = await links.beginRegistrationLinkSignup(token, "en", contextHash, now);
-  const issued = await auth.createSignupAuthRequest({ email, locale: "en", contextTokenHash: contextHash, now });
+  const intent = await links.beginRegistrationLinkSignup(token, "en", contextHash, at);
+  const issued = await auth.createSignupAuthRequest({ email, locale: "en", contextTokenHash: contextHash, now: at });
   assert(issued?.purpose === "verify_email");
   return { intentId: intent.id, email, authToken: issued.token };
 }
-async function verifySignup(pending: Awaited<ReturnType<typeof startSignup>>) {
-  const consumed = await auth.consumeCustomerAuthToken(pending.authToken, now);
+async function verifySignup(pending: Awaited<ReturnType<typeof startSignup>>, at = now) {
+  const consumed = await auth.consumeCustomerAuthToken(pending.authToken, at);
   assert(consumed?.sessionToken);
-  assert.equal(await auth.consumeCustomerAuthToken(pending.authToken, now), null, "a verified email token cannot be replayed");
+  assert.equal(await auth.consumeCustomerAuthToken(pending.authToken, at), null, "a verified email token cannot be replayed");
   assertions++;
-  const session = await auth.getCustomerSession(consumed.sessionToken, now);
+  const session = await auth.getCustomerSession(consumed.sessionToken, at);
   assert(session?.session.signupIntentId === pending.intentId);
   return { intentId: pending.intentId, userId: session.user.id, email: pending.email, sessionToken: consumed.sessionToken };
 }
-async function newSignup(token: string, email: string) {
-  return verifySignup(await startSignup(token, email));
+async function newSignup(token: string, email: string, at = now) {
+  return verifySignup(await startSignup(token, email, at), at);
 }
 function tokenFromLink(url: string) {
   const token = new URLSearchParams(new URL(url).hash.slice(1)).get("token");
@@ -77,6 +77,11 @@ function tokenFromLink(url: string) {
 try {
   const [basic] = await v2Db.insert(schema.commercialProducts).values({ code: "soundspa", name: "SoundSpa Basic", kind: "core", isActive: true, visibility: "public" }).returning();
   const [divnitsa] = await v2Db.insert(schema.commercialProducts).values({ code: "divnitsa", name: "Divnitsa", kind: "partner", isActive: true, visibility: "private" }).returning();
+  const [spaquatoria] = await v2Db.insert(schema.commercialProducts).values({ code: "spaquatoria", name: "Spaquatoria", kind: "partner", isActive: true, visibility: "private" }).returning();
+  const [spaPartner, otherPartner] = await v2Db.insert(schema.commercialPartners).values([
+    { code: "spaquatoria", name: "Spaquatoria", isActive: true },
+    { code: `other-${suffix}`, name: "Other Partner", isActive: true },
+  ]).returning();
   const maxLimited = await links.createRegistrationLink({ operator: process.env.V2_ADMIN_USERNAME, reason: "Disposable concurrent redemption limit test", expiresAt: new Date(now.getTime() + 3 * trialMs), maxRedemptions: 1, publicOrigin: "https://test.soundspa.example" });
   const token = tokenFromLink(maxLimited.url);
   const tokenHash = sha256(token);
@@ -120,6 +125,85 @@ try {
   check((await v2Db.select().from(schema.commercialBillingOrders)).length === 0 && (await v2Db.select().from(schema.commercialPayments)).length === 0 && (await v2Db.select().from(schema.locationSubscriptions)).length === 0 && (await v2Db.select().from(schema.locationChannelEntitlements)).length === 0, "redemption creates no orders, payments, paid subscriptions, or playback entitlements");
   const repeated = await complete(winningUser, "Ignored repeated Organization");
   check(repeated.status === "already_complete" && repeated.organizationId === organizationId, "repeated onboarding returns the same completed redemption");
+
+  const calendarNow = new Date("2024-01-31T12:34:56.789Z");
+  const makeUniversal = async (selected: { productId: string; durationMonths: number }[], label: string, maxRedemptions?: number) => {
+    const created = await links.createRegistrationLink({ operator: process.env.V2_ADMIN_USERNAME, reason: `Universal ${label} registration test`, products: selected, maxRedemptions, publicOrigin: "https://test.soundspa.example" });
+    return { ...created, token: tokenFromLink(created.url) };
+  };
+  const finishUniversal = async (token: string, label: string) => {
+    const pendingSignup = await newSignup(token, `universal-${label}-${suffix}@example.invalid`, calendarNow);
+    const result = await links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: pendingSignup.userId, signupIntentId: pendingSignup.intentId, organizationName: `Universal ${label} ${suffix}`, locationName: `${label} Location`, timezone: "UTC" }, calendarNow);
+    if (result.status !== "completed") throw new Error(`Universal test redemption did not complete: ${label}`);
+    return { pendingSignup, result };
+  };
+  const universalBasic = await makeUniversal([{ productId: basic.id, durationMonths: 1 }], "Basic only");
+  const { pendingSignup: universalBasicSignup, result: universalBasicResult } = await finishUniversal(universalBasic.token, "basic");
+  check(universalBasicResult.grants?.length === 1 && universalBasicResult.grants[0]?.productCode === "soundspa", "Basic-only universal link grants exactly Basic");
+  const basicOnlyLocation = universalBasicResult.account.location!.id;
+  const basicOnlyTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, basicOnlyLocation));
+  check(basicOnlyTrials.length === 1 && basicOnlyTrials[0].productId === basic.id && basicOnlyTrials[0].endsAt.toISOString() === "2024-02-29T12:34:56.789Z", "Basic-only uses one UTC calendar month at a month-end boundary");
+  check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, universalBasicResult.account.organization!.id))).length === 0, "Basic-only does not grant private-product purchase authorization");
+  const universalBasicReplay = await links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: universalBasicSignup.userId, signupIntentId: universalBasicSignup.intentId, organizationName: "Ignored replay", locationName: "Ignored", timezone: "UTC" }, calendarNow);
+  const [universalBasicRedemption] = await v2Db.select().from(schema.commercialRegistrationLinkRedemptions).where(eq(schema.commercialRegistrationLinkRedemptions.signupIntentId, universalBasicSignup.intentId));
+  check(universalBasicReplay.status === "already_complete" && (await v2Db.select().from(schema.commercialRegistrationLinkGrants).where(eq(schema.commercialRegistrationLinkGrants.redemptionId, universalBasicRedemption.id))).length === 1, "universal replay is idempotent and does not duplicate Product access");
+
+  const universalMixed = await makeUniversal([{ productId: basic.id, durationMonths: 1 }, { productId: spaquatoria.id, durationMonths: 3 }], "Basic and Spaquatoria");
+  const { result: mixedResult } = await finishUniversal(universalMixed.token, "basic-spaquatoria");
+  check(mixedResult.grants?.length === 2, "Basic and Spaquatoria produce two independently tracked grants");
+  const mixedLocation = mixedResult.account.location!.id;
+  const mixedTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, mixedLocation));
+  const mixedBenefits = await v2Db.select().from(schema.commercialPartnerBenefits).where(eq(schema.commercialPartnerBenefits.locationId, mixedLocation));
+  check(mixedTrials.length === 1 && mixedTrials[0].productId === basic.id && mixedTrials[0].registrationLinkGrantId !== null, "mixed registration creates only the selected Basic trial with provenance");
+  check(mixedBenefits.length === 1 && mixedBenefits[0].partnerId === spaPartner.id && mixedBenefits[0].productId === spaquatoria.id && mixedBenefits[0].endsAt?.toISOString() === "2024-04-30T12:34:56.789Z" && mixedBenefits[0].registrationLinkGrantId !== null, "Spaquatoria receives a separate three-calendar-month Partner Benefit");
+  await assert.rejects(v2Db.insert(schema.commercialPartnerBenefits).values({
+    partnerId: otherPartner.id, productId: spaquatoria.id, locationId: mixedLocation,
+    startsAt: new Date("2024-01-31T12:34:56.789Z"), endsAt: new Date("2024-04-30T12:34:56.789Z"),
+    registrationLinkGrantId: mixedBenefits[0].registrationLinkGrantId,
+  }), (error: unknown) => {
+    let current: unknown = error;
+    for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+      if ("code" in current && current.code === "23503") return true;
+      current = "cause" in current ? current.cause : null;
+    }
+    return false;
+  });
+  assertions++;
+  check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, mixedResult.account.organization!.id))).length === 0, "Basic plus Spaquatoria creates no Divnitsa purchase authorization");
+
+  const universalBasicDiv = await makeUniversal([{ productId: basic.id, durationMonths: 1 }, { productId: divnitsa.id, durationMonths: 2 }], "Basic and Divnitsa");
+  const { result: basicDivResult } = await finishUniversal(universalBasicDiv.token, "basic-divnitsa");
+  const basicDivLocation = basicDivResult.account.location!.id;
+  const basicDivTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, basicDivLocation));
+  check(basicDivResult.grants?.length === 2 && basicDivTrials.length === 2 && basicDivTrials.every((trial) => trial.registrationLinkGrantId !== null), "Basic plus Divnitsa creates exactly two sourced trial rows");
+  check(basicDivTrials.find((trial) => trial.productId === basic.id)?.endsAt.toISOString() === "2024-02-29T12:34:56.789Z" && basicDivTrials.find((trial) => trial.productId === divnitsa.id)?.endsAt.toISOString() === "2024-03-31T12:34:56.789Z", "Basic and Divnitsa retain independent UTC calendar-month durations");
+  const [universalDivAuth] = await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, basicDivResult.account.organization!.id));
+  check(universalDivAuth?.productId === divnitsa.id && universalDivAuth.grantSource === "registration_link" && universalDivAuth.grantedByOperator === null, "only selected Divnitsa receives persistent private-product authorization");
+  check((await v2Db.select().from(schema.commercialPartnerBenefits).where(eq(schema.commercialPartnerBenefits.locationId, basicDivLocation))).length === 0, "Basic plus Divnitsa creates no Spaquatoria benefit");
+
+  const universalSpaOnly = await makeUniversal([{ productId: spaquatoria.id, durationMonths: 1 }], "Spaquatoria only");
+  const { result: spaOnlyResult } = await finishUniversal(universalSpaOnly.token, "spaquatoria-only");
+  const spaOnlyLocation = spaOnlyResult.account.location!.id;
+  check(spaOnlyResult.grants?.length === 1 && (await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, spaOnlyLocation))).length === 0, "Spaquatoria-only registration receives no automatic Basic or Divnitsa trial");
+  check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, spaOnlyResult.account.organization!.id))).length === 0, "Spaquatoria-only registration creates no private-product authorization");
+
+  const universalDivOnly = await makeUniversal([{ productId: divnitsa.id, durationMonths: 1 }], "Divnitsa only");
+  const { result: divOnlyResult } = await finishUniversal(universalDivOnly.token, "divnitsa-only");
+  const divOnlyLocation = divOnlyResult.account.location!.id;
+  const divOnlyTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, divOnlyLocation));
+  check(divOnlyResult.grants?.length === 1 && divOnlyTrials.length === 1 && divOnlyTrials[0].productId === divnitsa.id, "Divnitsa-only registration does not add an unselected Basic trial");
+  const [divOnlyAuth] = await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, divOnlyResult.account.organization!.id));
+  check(divOnlyAuth?.productId === divnitsa.id && divOnlyAuth.grantSource === "registration_link", "Divnitsa-only registration gets its required persistent purchase authorization");
+
+  check((await v2Db.select().from(schema.commercialBillingOrders)).length === 0 && (await v2Db.select().from(schema.commercialPayments)).length === 0 && (await v2Db.select().from(schema.locationSubscriptions)).length === 0 && (await v2Db.select().from(schema.locationChannelEntitlements)).length === 0, "universal registrations create no orders, payments, subscriptions, or paid entitlement records");
+
+  const universalLimited = await makeUniversal([{ productId: basic.id, durationMonths: 1 }], "concurrency", 1);
+  const concurrentUniversalUsers = await Promise.all([
+    newSignup(universalLimited.token, `universal-concurrent-a-${suffix}@example.invalid`),
+    newSignup(universalLimited.token, `universal-concurrent-b-${suffix}@example.invalid`),
+  ]);
+  const concurrentUniversal = await Promise.allSettled(concurrentUniversalUsers.map((input, index) => links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: input.userId, signupIntentId: input.intentId, organizationName: `Universal concurrent ${index} ${suffix}`, locationName: "Concurrent", timezone: "UTC" }, now)));
+  check(concurrentUniversal.filter((item) => item.status === "fulfilled" && item.value.status === "completed").length === 1 && concurrentUniversal.filter((item) => item.status === "rejected" && item.reason && typeof item.reason === "object" && "code" in item.reason && item.reason.code === "link_exhausted").length === 1, "universal link row locking enforces a one-redemption limit under concurrency");
 
   const disableTest = await links.createRegistrationLink({ operator: process.env.V2_ADMIN_USERNAME, reason: "Disposable disable before redemption", publicOrigin: "https://test.soundspa.example" });
   const disableToken = tokenFromLink(disableTest.url);

@@ -55,6 +55,11 @@ test("Registration Link creation requires operator authorization and same origin
     }));
     assert.equal(invalidJson.status, 400);
     assert.deepEqual(await invalidJson.json(), { ok: false, code: "invalid_json" });
+    const invalidProducts = await POST(new Request("https://soundspa.test/api/v2/admin/registration-links", {
+      method: "POST", headers: { Authorization: authorization, Origin: "https://soundspa.test", "Content-Type": "application/json" }, body: JSON.stringify({ products: [], reason: "Invalid empty product selection" }),
+    }));
+    assert.equal(invalidProducts.status, 400);
+    assert.deepEqual(await invalidProducts.json(), { ok: false, code: "invalid_input" });
   } finally {
     if (previous.username === undefined) delete process.env.V2_ADMIN_USERNAME; else process.env.V2_ADMIN_USERNAME = previous.username;
     if (previous.password === undefined) delete process.env.V2_ADMIN_PASSWORD; else process.env.V2_ADMIN_PASSWORD = previous.password;

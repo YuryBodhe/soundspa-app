@@ -1,6 +1,17 @@
 import { isSameOriginMutation, operatorAuthResponse, operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
 
 export const dynamic = "force-dynamic";
+function validProductsShape(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 3) return false;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Record<string, unknown>;
+    if (typeof row.productId !== "string" || !/^[0-9a-f-]{36}$/i.test(row.productId) || ids.has(row.productId) || !Number.isInteger(row.durationMonths) || Number(row.durationMonths) < 1 || Number(row.durationMonths) > 12) return false;
+    ids.add(row.productId);
+  }
+  return true;
+}
 export async function GET(request: Request) {
   const status = operatorAuthStatus(request.headers.get("authorization"));
   if (status !== 200) return operatorAuthResponse(status);
@@ -24,9 +35,11 @@ export async function POST(request: Request) {
     const body = JSON.parse(raw) as unknown;
     if (!body || typeof body !== "object" || Array.isArray(body)) return Response.json({ ok: false, code: "invalid_input" }, { status: 400 });
     const values = body as Record<string, unknown>;
+    const products = values.products;
+    if (products !== undefined && !validProductsShape(products)) return Response.json({ ok: false, code: "invalid_input" }, { status: 400, headers: { "Cache-Control": "no-store" } });
     const { createRegistrationLink } = await import("../../../../../db/v2/services/registrationLinks");
     const created = await createRegistrationLink({
-      reason: values.reason, expiresAt: values.expiresAt, maxRedemptions: values.maxRedemptions,
+      reason: values.reason, expiresAt: values.expiresAt, maxRedemptions: values.maxRedemptions, ...(products === undefined ? {} : { products }),
       publicOrigin: process.env.V2_PUBLIC_ORIGIN?.trim() || new URL(request.url).origin,
     });
     return Response.json({ ok: true, ...created }, { status: 201, headers: { "Cache-Control": "no-store", "Pragma": "no-cache" } });
@@ -35,6 +48,7 @@ export async function POST(request: Request) {
     if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "invalid") return Response.json({ ok: false, code: "invalid_input" }, { status: 400 });
     if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "validation") return Response.json({ ok: false, code: "invalid_details" }, { status: 400 });
     if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "operator_unavailable") return Response.json({ ok: false, code: "operator_unavailable" }, { status: 503 });
+    if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "unavailable") return Response.json({ ok: false, code: "product_unavailable" }, { status: 409, headers: { "Cache-Control": "no-store" } });
     console.error("[V2 registration links] Creation failed.");
     return Response.json({ ok: false, code: "create_failed" }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }

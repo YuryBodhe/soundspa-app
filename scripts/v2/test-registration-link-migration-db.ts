@@ -62,9 +62,11 @@ try {
   assert.equal(revoked.revoked_by_operator, "legacy-revoker");
   assert.equal(revoked.revoke_reason, "Historical revocation retained");
   const after = await v2Pool.query<{ migrationCount: number; latest: string }>(`SELECT (SELECT count(*)::int FROM drizzle_v2.__drizzle_migrations) AS "migrationCount", (SELECT max(created_at)::text FROM drizzle_v2.__drizzle_migrations) AS latest`);
-  assert.equal(after.rows[0]?.migrationCount, 23);
-  assert.equal(after.rows[0]?.latest, "1792025178280");
-  console.info("V2 Registration Link migration PASS: applied 0022 once and preserved active/revoked legacy operator identities, source, and revocation history.");
+  assert.equal(after.rows[0]?.migrationCount, 25);
+  assert.equal(after.rows[0]?.latest, "1792049901337");
+  const universalObjects = await v2Pool.query<{ present: boolean }>(`SELECT to_regclass('public.commercial_registration_link_grants') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='location_core_trials' AND column_name='registration_link_grant_id') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='commercial_partner_benefits' AND column_name='registration_link_grant_id') AS present`);
+  assert.equal(universalObjects.rows[0]?.present, true);
+  console.info("V2 Registration Link migration PASS: applied remaining migrations through 0024 and preserved active/revoked legacy operator identities and revocation history.");
 } finally {
   await v2Pool.end();
 }

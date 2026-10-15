@@ -5,7 +5,7 @@ import { locations } from "./locations";
 import { organizations } from "./organizations";
 import { commercialProducts } from "../commercialProducts";
 
-export type RegistrationLinkPolicySnapshot = {
+export type LegacyDivnitsaRegistrationLinkPolicySnapshot = {
   policyKey: "divnitsa";
   policyVersion: 1;
   basicProductId: string;
@@ -14,9 +14,27 @@ export type RegistrationLinkPolicySnapshot = {
   divnitsaTrialDays: 30;
 };
 
-export type RegistrationLinkAuditState = {
-  policyKey: "divnitsa";
+export type UniversalRegistrationLinkProduct = {
+  productId: string;
+  productCode: "soundspa" | "divnitsa" | "spaquatoria";
+  productName: string;
+  accessType: "trial" | "partner_benefit";
+  durationMonths: number;
+  partnerId?: string;
+};
+
+export type UniversalRegistrationLinkPolicySnapshot = {
+  policyKey: "universal";
   policyVersion: 1;
+  products: UniversalRegistrationLinkProduct[];
+};
+
+export type RegistrationLinkPolicySnapshot = LegacyDivnitsaRegistrationLinkPolicySnapshot | UniversalRegistrationLinkPolicySnapshot;
+
+export type RegistrationLinkAuditState = {
+  policyKey: "divnitsa" | "universal";
+  policyVersion: 1;
+  products?: UniversalRegistrationLinkProduct[];
   expiresAt: string | null;
   maxRedemptions: number | null;
   disabledAt: string | null;
@@ -40,7 +58,7 @@ export const commercialRegistrationLinks = pgTable("commercial_registration_link
   uniqueIndex("commercial_registration_links_token_hash_unique").on(table.tokenHash),
   index("commercial_registration_links_status_idx").on(table.createdAt, table.expiresAt, table.disabledAt),
   check("commercial_registration_links_token_hash_sha256", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
-  check("commercial_registration_links_policy_valid", sql`${table.policyKey} = 'divnitsa' AND ${table.policyVersion} = 1 AND jsonb_typeof(${table.policySnapshot}) = 'object' AND ${table.policySnapshot}->>'policyKey' = 'divnitsa' AND ${table.policySnapshot}->>'policyVersion' = '1' AND ${table.policySnapshot}->>'basicProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'divnitsaProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'basicTrialDays' = '30' AND ${table.policySnapshot}->>'divnitsaTrialDays' = '30'`),
+  check("commercial_registration_links_policy_valid", sql`jsonb_typeof(${table.policySnapshot}) = 'object' AND ${table.policySnapshot}->>'policyKey' = ${table.policyKey} AND ${table.policySnapshot}->>'policyVersion' = ${table.policyVersion}::text AND ((${table.policyKey} = 'divnitsa' AND ${table.policyVersion} = 1 AND ${table.policySnapshot}->>'basicProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'divnitsaProductId' ~ '^[0-9a-f-]{36}$' AND ${table.policySnapshot}->>'basicTrialDays' = '30' AND ${table.policySnapshot}->>'divnitsaTrialDays' = '30') OR (${table.policyKey} = 'universal' AND ${table.policyVersion} = 1 AND jsonb_typeof(${table.policySnapshot}->'products') = 'array' AND jsonb_array_length(${table.policySnapshot}->'products') BETWEEN 1 AND 3))`),
   check("commercial_registration_links_operator_nonempty", sql`length(btrim(${table.createdByOperator})) > 0`),
   check("commercial_registration_links_reason_nonempty", sql`length(btrim(${table.creationReason})) BETWEEN 1 AND 500`),
   check("commercial_registration_links_max_redemptions_positive", sql`${table.maxRedemptions} IS NULL OR ${table.maxRedemptions} > 0`),
@@ -79,7 +97,7 @@ export const commercialRegistrationLinkRedemptions = pgTable("commercial_registr
   verifiedUserId: uuid("verified_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
   firstLocationId: uuid("first_location_id").notNull(),
-  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  productId: uuid("product_id").references(() => commercialProducts.id, { onDelete: "restrict" }),
   redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   foreignKey({ name: "commercial_registration_link_redemptions_location_org_fk", columns: [table.firstLocationId, table.organizationId], foreignColumns: [locations.id, locations.organizationId] }).onDelete("restrict"),
@@ -87,8 +105,34 @@ export const commercialRegistrationLinkRedemptions = pgTable("commercial_registr
   uniqueIndex("commercial_registration_link_redemptions_intent_unique").on(table.signupIntentId),
   uniqueIndex("commercial_registration_link_redemptions_user_link_unique").on(table.registrationLinkId, table.verifiedUserId),
   uniqueIndex("commercial_registration_link_redemptions_id_org_product_unique").on(table.id, table.organizationId, table.productId),
+  uniqueIndex("commercial_registration_link_redemptions_id_org_location_unique").on(table.id, table.organizationId, table.firstLocationId),
   index("commercial_registration_link_redemptions_link_time_idx").on(table.registrationLinkId, table.redeemedAt),
   index("commercial_registration_link_redemptions_org_idx").on(table.organizationId),
+]);
+
+/** Immutable per-Product access granted by a universal Registration Link redemption. */
+export const commercialRegistrationLinkGrants = pgTable("commercial_registration_link_grants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  redemptionId: uuid("redemption_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  locationId: uuid("location_id").notNull(),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  partnerId: uuid("partner_id"),
+  accessType: text("access_type").$type<"trial" | "partner_benefit">().notNull(),
+  durationMonths: integer("duration_months").notNull(),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("commercial_registration_link_grants_redemption_product_unique").on(table.redemptionId, table.productId),
+  uniqueIndex("commercial_registration_link_grants_id_product_location_unique").on(table.id, table.productId, table.locationId),
+  uniqueIndex("commercial_registration_link_grants_id_partner_product_location_unique").on(table.id, table.partnerId, table.productId, table.locationId),
+  index("commercial_registration_link_grants_org_location_idx").on(table.organizationId, table.locationId),
+  foreignKey({ name: "commercial_registration_link_grants_redemption_scope_fk", columns: [table.redemptionId, table.organizationId, table.locationId], foreignColumns: [commercialRegistrationLinkRedemptions.id, commercialRegistrationLinkRedemptions.organizationId, commercialRegistrationLinkRedemptions.firstLocationId] }).onDelete("restrict"),
+  check("commercial_registration_link_grants_access_type_valid", sql`${table.accessType} IN ('trial', 'partner_benefit')`),
+  check("commercial_registration_link_grants_partner_access_shape", sql`(${table.accessType} = 'trial' AND ${table.partnerId} IS NULL) OR (${table.accessType} = 'partner_benefit' AND ${table.partnerId} IS NOT NULL)`),
+  check("commercial_registration_link_grants_duration_valid", sql`${table.durationMonths} BETWEEN 1 AND 12`),
+  check("commercial_registration_link_grants_window", sql`${table.endsAt} > ${table.startsAt}`),
 ]);
 
 export const commercialRegistrationLinkEvents = pgTable("commercial_registration_link_events", {

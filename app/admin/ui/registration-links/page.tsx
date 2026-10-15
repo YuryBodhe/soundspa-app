@@ -6,8 +6,9 @@ import RegistrationLinksManagement from "./RegistrationLinksManagement";
 export const dynamic = "force-dynamic";
 export default async function RegistrationLinksPage() {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
-  const { listRegistrationLinks } = await import("../../../../db/v2/services/registrationLinks");
-  const links = (await listRegistrationLinks()).map((link) => ({
+  const { listRegistrationLinks, listRegistrationLinkProducts } = await import("../../../../db/v2/services/registrationLinks");
+  const [listedLinks, products] = await Promise.all([listRegistrationLinks(), listRegistrationLinkProducts()]);
+  const links = listedLinks.map((link) => ({
     ...link,
     createdAt: link.createdAt.toISOString(), expiresAt: link.expiresAt?.toISOString() ?? null,
     disabledAt: link.disabledAt?.toISOString() ?? null,
@@ -16,7 +17,7 @@ export default async function RegistrationLinksPage() {
   }));
   return <>
     <div className="admin-page-header"><div><p className="monitoring-eyebrow">SOUNDSPA V2 · COMMERCIAL</p><h1 className="admin-page-title">Registration Links</h1></div><div className="admin-page-nav"><Link href="/admin/ui" className="btn btn-sm">Admin</Link><Link href="/admin/ui/spaquatoria-promos" className="btn btn-sm">Spaquatoria Promo Codes</Link></div></div>
-    <p className="text-dim">Divnitsa onboarding links are for new Organizations. Revoking a link prevents future redemptions; completed access is retained.</p>
-    <RegistrationLinksManagement links={links} />
+    <p className="text-dim">Registration links apply the selected Product access to a new Organization’s first Location. Revoking a link prevents future redemptions; completed access is retained.</p>
+    <RegistrationLinksManagement links={links} products={products} />
   </>;
 }

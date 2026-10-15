@@ -169,6 +169,13 @@
       "when": 1792039656234,
       "tag": "0023_lyrical_deadpool",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792049901337,
+      "tag": "0024_universal_registration_links",
+      "breakpoints": true
     }
   ]
 }

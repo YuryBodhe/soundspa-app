@@ -25,14 +25,15 @@ async function main() {
   )).rows[0];
   const address = identity?.address?.split("/")[0] ?? "";
   if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") ||
-      isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.count !== 24 || identity.latest !== "1792039656234") {
-    throw new Error("Refusing Spaquatoria promo integration test: expected isolated PostgreSQL 16 at migration 0023.");
+      isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.count !== 25 || identity.latest !== "1792049901337") {
+    throw new Error("Refusing Spaquatoria promo integration test: expected isolated PostgreSQL 16 at migration 0024.");
   }
   const clean = await v2Pool.query<{ total: string }>(`SELECT
     (SELECT count(*) FROM organizations)+(SELECT count(*) FROM users)+(SELECT count(*) FROM locations)+
     (SELECT count(*) FROM commercial_products)+(SELECT count(*) FROM commercial_partners)+
     (SELECT count(*) FROM commercial_spaquatoria_promo_codes)+(SELECT count(*) FROM commercial_spaquatoria_promo_code_events)+
     (SELECT count(*) FROM commercial_spaquatoria_promo_redemptions)+(SELECT count(*) FROM commercial_partner_benefits)+
+    (SELECT count(*) FROM commercial_registration_link_grants)+(SELECT count(*) FROM commercial_registration_links)+(SELECT count(*) FROM commercial_registration_link_redemptions)+
     (SELECT count(*) FROM commercial_billing_orders)+(SELECT count(*) FROM commercial_payments)+
     (SELECT count(*) FROM location_subscriptions)+(SELECT count(*) FROM location_core_trials) AS total`);
   if (clean.rows[0]?.total !== "0") throw new Error("Disposable Spaquatoria promo database must start without application or billing fixtures; discard it after this test.");
