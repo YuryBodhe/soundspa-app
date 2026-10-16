@@ -16,12 +16,14 @@ type PolicyDb = Pick<typeof v2Db, "select">;
 
 export type CustomerCatalogProductPolicy = {
   productChannelIds: Map<string, Set<string>>;
+  productDisplayNames: Map<string, string>;
   publicProductIds: Set<string>;
   assignedProductIds: Set<string>;
 };
 
 const emptyPolicy = (): CustomerCatalogProductPolicy => ({
   productChannelIds: new Map(),
+  productDisplayNames: new Map(),
   publicProductIds: new Set(),
   assignedProductIds: new Set(),
 });
@@ -35,7 +37,11 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
   const [location] = await db.select({ organizationId: locations.organizationId }).from(locations).where(eq(locations.id, locationId)).limit(1);
   if (!location) return emptyPolicy();
 
-  const products = await db.select({ id: commercialProducts.id, catalogVisibility: commercialProducts.catalogVisibility }).from(commercialProducts);
+  const products = await db.select({
+    id: commercialProducts.id,
+    name: commercialProducts.name,
+    catalogVisibility: commercialProducts.catalogVisibility,
+  }).from(commercialProducts);
   if (!products.length) return emptyPolicy();
   const productIds = products.map(({ id }) => id);
   // Transaction-backed executors use one pg client; keep queries sequential.
@@ -68,6 +74,7 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
 
   return {
     productChannelIds,
+    productDisplayNames: new Map(products.map(({ id, name }) => [id, name])),
     publicProductIds: new Set(products.filter((product) => product.catalogVisibility === "public").map(({ id }) => id)),
     assignedProductIds,
   };

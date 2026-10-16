@@ -268,8 +268,53 @@
   transition: border-color 0.25s, transform 0.25s;
 }
 .card:hover { border-color: rgba(255, 255, 255, 0.13); transform: translateY(-1px); }
+.card:focus-visible { outline: 2px solid #d4c9b0; outline-offset: 3px; }
 .musicCardActive { border-color: rgba(145, 175, 205, 0.3); }
 .ambientCardActive { border-color: rgba(138, 158, 130, 0.4); }
+.tooltipRoot { position: relative; display: inline-flex; flex: 0 0 auto; }
+.tooltipBubble {
+  position: absolute;
+  z-index: 5;
+  top: 7px;
+  left: 7px;
+  right: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(212, 201, 176, 0.3);
+  border-radius: 7px;
+  background: rgba(7, 7, 10, 0.96);
+  color: #e0d5c0;
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translateY(-3px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+  visibility: hidden;
+}
+.tooltipBubbleVisible { opacity: 1; transform: translateY(0); visibility: visible; }
+.lockedDialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(80vh, 620px);
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid rgba(212, 201, 176, 0.24);
+  border-radius: 14px;
+  background: #101014;
+  color: #d4c9b0;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.65);
+}
+.lockedDialog::backdrop { background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(3px); }
+.lockedDialogHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.lockedDialogTitle { margin: 0; color: #8a9e82; font-size: 10px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; }
+.lockedDialogChannel { margin: 8px 0 0; color: #e0d5c0; font-family: "Cormorant Garamond", serif; font-size: 25px; line-height: 1.15; }
+.lockedDialogClose { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 50%; background: transparent; color: inherit; font: inherit; font-size: 22px; cursor: pointer; }
+.lockedDialogDescription, .lockedDialogFallback { margin: 18px 0 0; color: #c8c0b0; font-size: 14px; line-height: 1.55; }
+.lockedDialogProductsLabel { margin: 16px 0 6px; color: #8b867b; font-size: 11px; letter-spacing: 0.04em; }
+.lockedDialogProducts { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #e0d5c0; font-size: 14px; line-height: 1.45; }
+.lockedDialogActions { display: flex; justify-content: flex-end; margin-top: 22px; }
+.lockedDialogContinue { min-height: 44px; padding: 0 16px; border: 1px solid rgba(212, 201, 176, 0.36); border-radius: 8px; background: rgba(212, 201, 176, 0.1); color: #e0d5c0; font: inherit; font-size: 13px; cursor: pointer; }
+.lockedDialog button:focus-visible { outline: 2px solid #d4c9b0; outline-offset: 3px; }
 
 .cardImage { position: relative; display: block; width: 100%; height: 120px; overflow: hidden; }
 .cardImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -375,4 +420,4 @@
   .statusDotPlaying,
   .statusDotBuffering { animation-duration: 0.001ms; animation-iteration-count: 1; }
 }
-.cardLocked { opacity: 0.55; cursor: not-allowed; }
+.cardLocked { opacity: 0.62; cursor: pointer; }

@@ -19,6 +19,7 @@ export type CustomerCatalogChannel = {
   suspended: boolean;
   accessSources: string[];
   accessExpiries: Record<string, string>;
+  catalogProducts: Array<{ id: string; name: string }>;
   tracks: Array<{ id: string; url: string; sizeBytes: string; originalFilename?: string }>;
 };
 
@@ -40,6 +41,7 @@ export async function getLocationCustomerCatalog(locationId: string, now = new D
     suspended: channel.suspended,
     accessSources: channel.accessSources,
     accessExpiries: Object.fromEntries(Object.entries(channel.accessExpiries).map(([key, value]) => [key, value.toISOString()])),
+    catalogProducts: channel.catalogProducts,
     localizedTitles: titles.get(channel.id) ?? {}, tracks: channel.playable ? channel.tracks.map((track) => ({
       id: track.id,
       url: resolveMediaUrl(channel.kind, track.storageKey),

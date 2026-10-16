@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngine";
 import { Mp3Engine, type Mp3EngineState, type PlaybackMode } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
@@ -12,6 +12,8 @@ import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled,
 import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
 import { useI18n } from "../i18n/useI18n";
 import { resolveChannelTitle } from "./channelTitle";
+import { Tooltip } from "./Tooltip";
+import { activatePlayerChannelCard } from "@/lib/v2/playerChannelInteraction";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -40,32 +42,36 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   </details>;
 }
 
-function MusicCard({ channel, active, playing, onSelect }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void }) {
+function MusicCard({ channel, active, playing, onSelect, onLocked }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
-  return (
-    <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
+  const locked = channel.playable === false;
+  const card = (
+    <button type="button" className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active && playing ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{title}</span><span className={s.cardMood}>{channel.playable === false ? t("locked") : channel.mood}</span></span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{title}</span><span className={s.cardMood}>{locked ? t("locked") : channel.mood}</span></span>
     </button>
   );
+  return locked ? <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip> : card;
 }
 
-function AmbientCard({ channel, active, onSelect }: { channel: PlayerChannel; active: boolean; onSelect: () => void }) {
+function AmbientCard({ channel, active, onSelect, onLocked }: { channel: PlayerChannel; active: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
-  return (
-    <button type="button" disabled={channel.playable === false} className={`${s.card} ${channel.playable === false ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={onSelect} aria-pressed={active}>
+  const locked = channel.playable === false;
+  const card = (
+    <button type="button" className={`${s.card} ${locked ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
         <span className={`${s.playingIndicator} ${active ? s.playingIndicatorVisible : ""}`}><i /><i /><i /><i /></span>
       </span>
-      <span className={s.cardBody}><span className={s.cardTitle}>{title}</span>{channel.playable === false && <span className={s.cardMood}>{t("locked")}</span>}</span>
+      <span className={s.cardBody}><span className={s.cardTitle}>{title}</span>{locked && <span className={s.cardMood}>{t("locked")}</span>}</span>
     </button>
   );
+  return locked ? <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip> : card;
 }
 
 function WaveVisualization({ playing }: { playing: boolean }) {
@@ -83,6 +89,9 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
 
 export default function V2Player({ catalog, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t, locale } = useI18n();
+  const dialogTitleId = useId();
+  const dialogChannelNameId = useId();
+  const dialogDescriptionId = useId();
   const musicChannels = useMemo(() => catalog.filter((c) => c.kind === "music"), [catalog]);
   const playableMusicChannels = useMemo(() => musicChannels.filter((c) => c.playable !== false && c.tracks.length), [musicChannels]);
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
@@ -101,10 +110,38 @@ export default function V2Player({ catalog, organizationName, locationName, moni
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
+  const [lockedChannel, setLockedChannel] = useState<PlayerChannel | null>(null);
+  const lockedDialogRef = useRef<HTMLDialogElement | null>(null);
+  const lockedDialogCloseRef = useRef<HTMLButtonElement | null>(null);
+  const lockedChannelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId && channel.playable !== false && channel.tracks.length) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
   const ambientVolume = Math.round(ambientPlayback.volume * 100);
+
+  useEffect(() => {
+    if (!lockedChannel) return;
+    const dialog = lockedDialogRef.current;
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    lockedDialogCloseRef.current?.focus();
+  }, [lockedChannel]);
+
+  const showLockedChannelInfo = (channel: PlayerChannel, trigger: HTMLButtonElement) => {
+    lockedChannelTriggerRef.current = trigger;
+    setLockedChannel(channel);
+  };
+
+  const restoreLockedChannelFocus = () => {
+    setLockedChannel(null);
+    const trigger = lockedChannelTriggerRef.current;
+    lockedChannelTriggerRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus();
+    });
+  };
+
+  const lockedProductNames = (lockedChannel?.catalogProducts ?? []).filter((product) => product.id && product.name.trim());
 
   const monitoringContextRef = useRef({ playback, ambientPlayback, activeChannelId, activeAmbientChannelId: null as string | null, musicChannelId: null as string | null, musicTrackId: null as string | null });
   monitoringContextRef.current = {
@@ -338,7 +375,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
         <section className={s.section}>
           <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("musicChannels")}</div><div className={s.sectionCount}>{musicChannels.length} {t("channels")}</div></div>
           <div className={s.cardsRow} data-testid="music-row">
-            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} onSelect={() => selectMusic(channel)} />)}
+            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
 
@@ -350,10 +387,37 @@ export default function V2Player({ catalog, organizationName, locationName, moni
             <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
-            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} onSelect={() => toggleAmbient(channel)} />)}
+            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} onSelect={() => toggleAmbient(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
       </main>
+
+      <dialog
+        ref={lockedDialogRef}
+        className={s.lockedDialog}
+        aria-labelledby={`${dialogTitleId} ${dialogChannelNameId}`}
+        aria-describedby={dialogDescriptionId}
+        onClose={restoreLockedChannelFocus}
+        onClick={(event) => { if (event.target === event.currentTarget) event.currentTarget.close(); }}
+      >
+        {lockedChannel && <>
+          <div className={s.lockedDialogHeader}>
+            <div>
+              <h2 id={dialogTitleId} className={s.lockedDialogTitle}>{t("lockedChannelDialogTitle")}</h2>
+              <p id={dialogChannelNameId} className={s.lockedDialogChannel}>{resolveChannelTitle(lockedChannel.title, lockedChannel.localizedTitles, locale)}</p>
+            </div>
+            <button ref={lockedDialogCloseRef} type="button" className={s.lockedDialogClose} onClick={() => lockedDialogRef.current?.close()} aria-label={t("lockedChannelDialogClose")}>×</button>
+          </div>
+          <p id={dialogDescriptionId} className={s.lockedDialogDescription}>{t("lockedChannelDialogSubscriptionRequired")}</p>
+          {lockedProductNames.length > 0 ? <>
+            <p className={s.lockedDialogProductsLabel}>{t("lockedChannelDialogProductsLabel")}</p>
+            <ul className={s.lockedDialogProducts}>{lockedProductNames.map((product) => <li key={product.id}>{product.name}</li>)}</ul>
+          </> : <p className={s.lockedDialogFallback}>{t("lockedChannelDialogNoProducts")}</p>}
+          <div className={s.lockedDialogActions}>
+            <button type="button" className={s.lockedDialogContinue} onClick={() => lockedDialogRef.current?.close()}>{t("lockedChannelDialogContinueListening")}</button>
+          </div>
+        </>}
+      </dialog>
 
       <footer className={s.footer}><div><div className={s.footerLabel}>{t("prototypeAccess")}</div><div className={s.footerText}>{t("noAccount")}</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
     </div>
