@@ -248,7 +248,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const displayOrderDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
   return <>
-    <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
+    <section className="customer-account-billing-section" aria-labelledby={`customer-account-billing-title-${organizationId}`}>
+      <h2 id={`customer-account-billing-title-${organizationId}`}>{t("accountSubscriptionsPayments")}</h2>
+      <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
+    </section>
     <details className="customer-billing-orders customer-account-bottom-disclosure">
       <summary>{t("billingOrdersTitle")}</summary>
       <div className="customer-billing-orders-content">

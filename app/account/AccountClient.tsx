@@ -7,7 +7,7 @@ import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
 import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
-import { accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationCountKey, accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 import { playerUpgradeLoginPath, removePlayerUpgradeContextParams } from "@/lib/v2/playerUpgradeContext";
@@ -518,8 +518,13 @@ function Content() {
       {playerHandoffMessage && <p role="status" className="customer-billing-notice">{t(playerHandoffMessage === "invalid" ? "playerUpgradeInvalidLocation" : playerHandoffMessage === "some_unavailable" ? "playerUpgradeSomeUnavailable" : "playerUpgradeUnavailable")}</p>}
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
-        {organizationEntries.map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
-          {organizationEntries.length === 1 ? <><h1 className="customer-account-org-title">{group.organizationName}</h1><p className="customer-account-subtitle">{t("authAccountTitle")}</p></> : <h2>{group.organizationName}</h2>}
+        {organizationEntries.map(([organizationId, group], organizationIndex) => <section className="customer-account-organization" key={organizationId}>
+          {organizationEntries.length === 1 ? <><h1 className="customer-account-org-title">{group.organizationName}</h1><p className="customer-account-subtitle">{t("accountDashboardSubtitle")}</p></> : <h2 className="customer-account-org-title">{group.organizationName}</h2>}
+          {organizationIndex === 0 && <section className="customer-account-player-entry" aria-labelledby="customer-account-player-title">
+            <div><h2 id="customer-account-player-title">{t("accountPlayerTitle")}</h2><p>{t("accountPlayerHelp")}</p></div>
+            <a href="/player" target="_blank" rel="noopener noreferrer">{t("accountOpenPlayer")} <span aria-hidden="true">↗</span></a>
+          </section>}
+          <div className="customer-account-locations-heading"><h2>{t("accountLocationsTitle")}</h2><span>{t(accountLocationCountKey(locale, group.locations.length)).replace("{{count}}", String(group.locations.length))}</span></div>
           {group.canCreateLocations && <div className="customer-account-add-location">
             {addingLocationOrganizationId === organizationId ? <form onSubmit={(event) => void createLocation(event, organizationId)}>
               <label>{t("addLocationName")}<input required maxLength={160} autoComplete="organization-title" value={newLocationName} onChange={(event) => setNewLocationName(event.target.value)} /></label>
@@ -556,9 +561,9 @@ function Content() {
                     <div>{plan.status !== "trial" && plan.trialActive && plan.trialEndsAt ? <small>{trialSummaryText(plan)}</small> : null}{plan.accessExpiresAt && !(plan.status === "trial" && plan.trialEndsAt) ? <small>{plan.status === "subscription" ? t("billingPaidThrough").replace("{{date}}", displayDate(plan.accessExpiresAt)) : t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}</small> : null}{plan.status !== "partner" && billingLocation.partnerBenefits.filter((benefit) => benefit.productId === plan.productId).map((benefit) => <small key={benefit.id}>{benefit.partnerName}</small>)}{plan.scheduledPaidPeriods.map((period, index) => <small key={`${period.startsAt}-${index}`}>{t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · {t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}</small>)}{plan.status === "subscription" && plan.subscriptionId && !plan.subscriptionCanceled && <button type="button" className="customer-billing-secondary customer-account-cancel-renewal" onClick={() => openBilling(billingLocation, plan)}>{t("billingCancelSubscription")}</button>}</div>
                   </article>)}
                   {orphanBenefits.map((benefit) => <article className="customer-account-product-row" key={benefit.id}><div><strong>{benefit.productName}</strong><span>{benefit.partnerName} · {t("billingPartnerStatus")}</span></div><div>{benefit.endsAt ? <small>{t("billingAccessExpires").replace("{{date}}", displayDate(benefit.endsAt))}</small> : <small>{t("partnerAccessActive")}</small>}</div></article>)}
+                  <SpaquatoriaPromoRedeemer locationId={location.id} onRedeemed={() => load(true)} />
                 </div>
               </details>
-              <SpaquatoriaPromoRedeemer locationId={location.id} onRedeemed={() => load(true)} />
             </section>;
           })}
           </div>

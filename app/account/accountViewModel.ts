@@ -17,6 +17,10 @@ export type AccountPartnerBenefit = {
 
 export type AccountLocationPlan = AccountPlanSnapshot & { productName: string };
 
+export function accountLocationCountKey(locale: string, count: number): "accountLocationCount" | "accountLocationCountOne" {
+  return locale === "en" && count === 1 ? "accountLocationCountOne" : "accountLocationCount";
+}
+
 /** Periods in this list are supplied by the billing API as future, non-invalidated paid coverage. */
 export function accountScheduledPaidPeriodRanges(
   periods: readonly { startsAt: string; endsAt: string }[] | undefined,

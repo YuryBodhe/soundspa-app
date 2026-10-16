@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { accountLocationPresentation, accountPlanPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationCountKey, accountLocationPresentation, accountPlanPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 
 const now = Date.parse("2026-10-09T15:16:28.704Z");
+
+test("English Location count uses singular only for one while other locales keep their count format", () => {
+  assert.equal(accountLocationCountKey("en", 1), "accountLocationCountOne");
+  assert.equal(accountLocationCountKey("en", 0), "accountLocationCount");
+  assert.equal(accountLocationCountKey("en", 2), "accountLocationCount");
+  for (const locale of ["ru", "vi", "th"]) {
+    assert.equal(accountLocationCountKey(locale, 1), "accountLocationCount");
+    assert.equal(accountLocationCountKey(locale, 2), "accountLocationCount");
+  }
+});
 
 test("post-reset trial presentation does not use the preserved historical paid period", () => {
   const view = accountPlanPresentation({
@@ -175,9 +185,34 @@ test("compact Account labels and organization billing action are localized in ev
     assert.match(dictionary, /accountNextPaidPeriod:/);
     assert.match(dictionary, /accountNextPaidPeriods:/);
     assert.match(dictionary, /billingOrdersTitle: 'Order history'|billingOrdersTitle: 'История заказов'|billingOrdersTitle: 'Lịch sử đơn hàng'|billingOrdersTitle: 'ประวัติคำสั่งซื้อ'/);
+  for (const key of ["accountDashboardSubtitle:", "accountPlayerTitle:", "accountPlayerHelp:", "accountOpenPlayer:", "accountLocationsTitle:", "accountLocationCount:", "accountLocationCountOne:", "accountSubscriptionsPayments:"]) {
+      assert.ok(dictionary.includes(key), `missing ${key}`);
+    }
   }
   const ru = await readFile(new URL("../i18n/dictionaries/ru.ts", import.meta.url), "utf8");
   assert.match(ru, /accountNextPaidPeriod: 'Следующий оплаченный период: \{\{period\}\}'/);
+});
+
+test("mobile Billing Wizard step labels use readable type and can wrap within narrow columns", async () => {
+  const css = await readFile(new URL("../globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.customer-account-shell \.customer-billing-wizard-steps li \{ font-size: 15px; \}/);
+  assert.match(css, /\.customer-billing-wizard-steps \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(css, /\.customer-billing-wizard-steps li > span:last-child \{ min-width: 0; overflow-wrap: anywhere; \}/);
+});
+
+test("Account dashboard offers a browser-profile player link and keeps promo redemption inside Location details", async () => {
+  const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
+  const wizard = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
+  const locationDetailsStart = account.indexOf('<details className="customer-account-location-details">');
+  const locationDetailsEnd = account.indexOf("</details>", locationDetailsStart);
+  const locationDetails = account.slice(locationDetailsStart, locationDetailsEnd);
+  assert.match(account, /<a href="\/player" target="_blank" rel="noopener noreferrer">\{t\("accountOpenPlayer"\)\}/);
+  assert.match(account, /accountPlayerHelp/);
+  assert.match(account, /accountLocationsTitle/);
+  assert.match(account, /customer-account-device-disclosure/);
+  assert.match(wizard, /billingOrdersTitle/);
+  assert.match(wizard, /accountSubscriptionsPayments/);
+  assert.match(locationDetails, /<SpaquatoriaPromoRedeemer locationId=\{location\.id\}/);
 });
 
 test("the billing API exposes only future, non-invalidated paid periods to Account", async () => {
