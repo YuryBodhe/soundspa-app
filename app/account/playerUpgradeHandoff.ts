@@ -1,3 +1,5 @@
+import { isPlayerUpgradeUuid, parsePlayerUpgradeContext } from "@/lib/v2/playerUpgradeContext";
+
 export type PlayerUpgradeBillingLocation = {
   id: string;
   organizationId: string;
@@ -30,14 +32,17 @@ export function resolvePlayerUpgradeHandoff(search: string, locations: PlayerUpg
   const params = new URLSearchParams(search);
   if (params.get("source") !== "player-upgrade") return { status: "not_requested" };
 
-  const locationId = params.get("locationId")?.trim() ?? "";
-  const location = locationId ? locations.find((candidate) => candidate.id === locationId) : undefined;
+  const context = parsePlayerUpgradeContext(search);
+  const rawLocationId = params.get("locationId")?.trim() ?? "";
+  if (!isPlayerUpgradeUuid(rawLocationId)) return { status: "invalid_location" };
+  const locationId = rawLocationId.toLowerCase();
+  const location = locations.find((candidate) => candidate.id.toLowerCase() === locationId);
   if (!location) return { status: "invalid_location" };
 
-  const requestedProductIds = [...new Set(params.getAll("productId").map((id) => id.trim()).filter(Boolean))];
-  if (requestedProductIds.length === 0) return { status: "unavailable" };
+  if (!context) return { status: "unavailable" };
+  const requestedProductIds = context.productIds;
   const eligibleProductIds = requestedProductIds.filter((productId) =>
-    location.products.some((product) => product.productId === productId && product.purchaseEligible),
+    location.products.some((product) => product.productId.toLowerCase() === productId && product.purchaseEligible),
   );
   if (eligibleProductIds.length === 0) return { status: "unavailable" };
 

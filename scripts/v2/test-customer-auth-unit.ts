@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import {
   AUTH_TOKEN_TTL_MS, CUSTOMER_SESSION_TTL_MS, SIGNUP_INTENT_TTL_MS,
-  allowAuthRequest, authResponseHeaders, newHashedOpaqueToken, normalizeCustomerEmail, resolveAuthLocale, sha256,
+  allowAuthRequest, authEmailUrl, authResponseHeaders, newHashedOpaqueToken, normalizeCustomerEmail, resolveAuthLocale, sha256,
 } from "../../lib/v2/customerAuthCore";
+import { parsePlayerUpgradeContext, playerUpgradeAccountPath } from "../../lib/v2/playerUpgradeContext";
 import { renderCustomerAuthEmail } from "../../lib/v2/customerAuthEmails";
 import { en } from "../../app/i18n/dictionaries/en";
 import { ru } from "../../app/i18n/dictionaries/ru";
@@ -47,6 +48,25 @@ assert.equal(renderCustomerAuthEmail("verify_email", null, "https://test.example
 assert.equal(AUTH_TOKEN_TTL_MS, 30 * 60_000);
 assert.equal(SIGNUP_INTENT_TTL_MS, 24 * 60 * 60_000);
 assert.equal(CUSTOMER_SESSION_TTL_MS, 30 * 24 * 60 * 60_000);
+const playerContext = parsePlayerUpgradeContext("?source=player-upgrade&locationId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&productId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb&productId=cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+assert.ok(playerContext);
+const originalPublicOrigin = process.env.V2_PUBLIC_ORIGIN;
+delete process.env.V2_PUBLIC_ORIGIN;
+try {
+  const emailUrl = new URL(authEmailUrl(new Request("https://soundspa.example/api/v2/customer-auth/request-login"), auth.token, playerContext));
+  assert.equal(emailUrl.origin, "https://soundspa.example");
+  assert.equal(emailUrl.pathname, "/login");
+  assert.equal(emailUrl.search, "", "the token and handoff stay out of query parameters");
+  const emailFragment = new URLSearchParams(emailUrl.hash.slice(1));
+  assert.equal(emailFragment.get("token"), auth.token);
+  assert.equal(emailFragment.get("source"), "player-upgrade");
+  assert.equal(emailFragment.get("locationId"), playerContext.locationId);
+  assert.deepEqual(emailFragment.getAll("productId"), playerContext.productIds);
+  assert.equal(playerUpgradeAccountPath(parsePlayerUpgradeContext(emailUrl.hash)!), "/account?source=player-upgrade&locationId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa&productId=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb&productId=cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+} finally {
+  if (originalPublicOrigin === undefined) delete process.env.V2_PUBLIC_ORIGIN;
+  else process.env.V2_PUBLIC_ORIGIN = originalPublicOrigin;
+}
 const headers = new Headers(authResponseHeaders());
 assert.equal(headers.get("Cache-Control"), "no-store");
 assert.equal(headers.get("Referrer-Policy"), "no-referrer");

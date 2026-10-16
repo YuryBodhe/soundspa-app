@@ -3,6 +3,7 @@ import { isSameOriginMutation } from "@/lib/v2/adminOperator";
 import { allowAuthRequest, authEmailUrl, authResponseHeaders, clientRateKey, normalizeCustomerEmail, resolveAuthLocale } from "@/lib/v2/customerAuthCore";
 import { renderCustomerAuthEmail } from "@/lib/v2/customerAuthEmails";
 import { ResendCustomerMailSender } from "@/lib/v2/customerMail";
+import { parsePlayerUpgradeContextFields } from "@/lib/v2/playerUpgradeContext";
 
 const generic = { ok: true };
 export async function POST(request: Request) {
@@ -11,15 +12,23 @@ export async function POST(request: Request) {
   try {
     const raw = await request.text();
     if (raw.length > 4096) return NextResponse.json({ code: "invalid_request" }, { status: 400, headers: authResponseHeaders() });
-    const body = JSON.parse(raw) as { email?: unknown; locale?: unknown };
+    const body = JSON.parse(raw) as { email?: unknown; locale?: unknown; playerUpgradeContext?: unknown };
     const email = normalizeCustomerEmail(body.email);
     if (!email) return NextResponse.json({ code: "invalid_email" }, { status: 400, headers: authResponseHeaders() });
     const locale = resolveAuthLocale(body.locale, request.headers.get("accept-language"));
+    const contextBody = body.playerUpgradeContext;
+    const playerUpgradeContext = contextBody && typeof contextBody === "object"
+      ? parsePlayerUpgradeContextFields(
+        (contextBody as Record<string, unknown>).source,
+        (contextBody as Record<string, unknown>).locationId,
+        (contextBody as Record<string, unknown>).productIds,
+      )
+      : null;
     const { createLoginAuthRequest } = await import("@/db/v2/services/customerAuth");
     const issued = await createLoginAuthRequest({ email, locale });
     if (issued) {
       try {
-        await new ResendCustomerMailSender().send({ to: email, message: renderCustomerAuthEmail("login_link", locale, authEmailUrl(request, issued.token)) });
+        await new ResendCustomerMailSender().send({ to: email, message: renderCustomerAuthEmail("login_link", locale, authEmailUrl(request, issued.token, playerUpgradeContext)) });
       } catch {
         // Keep account and provider details out of logs and responses.
       }

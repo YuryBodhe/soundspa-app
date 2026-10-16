@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Locale } from "@/app/i18n/types";
+import { parsePlayerUpgradeContext, playerUpgradeContextParams, type PlayerUpgradeContext } from "./playerUpgradeContext";
 
 export const CUSTOMER_SESSION_COOKIE = "soundspa_v2_customer";
 export const SIGNUP_CONTEXT_COOKIE = "soundspa_v2_signup_context";
@@ -66,8 +67,15 @@ export function authResponseHeaders(extra: HeadersInit = {}): HeadersInit {
   return { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", ...extra };
 }
 
-export function authEmailUrl(request: Request, token: string): string {
+export function authEmailUrl(request: Request, token: string, playerUpgradeContext?: PlayerUpgradeContext | null): string {
   const configured = process.env.V2_PUBLIC_ORIGIN;
   const origin = configured ? new URL(configured).origin : new URL(request.url).origin;
-  return `${origin}/login#token=${encodeURIComponent(token)}`;
+  const hash = new URLSearchParams({ token });
+  if (playerUpgradeContext) {
+    const validated = parsePlayerUpgradeContext(playerUpgradeContextParams(playerUpgradeContext).toString());
+    if (validated) {
+      for (const [key, value] of playerUpgradeContextParams(validated)) hash.append(key, value);
+    }
+  }
+  return `${origin}/login#${hash.toString()}`;
 }

@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { useI18n } from "@/app/i18n/I18nProvider";
 import { AuthLanguageSelector } from "./AuthLanguageSelector";
+import { parsePlayerUpgradeContext, playerUpgradeAccountPath, type PlayerUpgradeContext } from "@/lib/v2/playerUpgradeContext";
 
 export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   const { locale, t } = useI18n();
@@ -14,6 +15,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState("");
   const [consuming, setConsuming] = useState(false);
+  const [playerUpgradeContext, setPlayerUpgradeContext] = useState<PlayerUpgradeContext | null>(null);
   const partnerContext = search.get("source") === "partner";
   const registrationLinkContext = search.get("source") === "registration-link";
   const contextUnavailable = search.get("context") === "unavailable";
@@ -21,6 +23,8 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
   useEffect(() => {
     const hash = new URLSearchParams(window.location.hash.slice(1));
     const authToken = hash.get("token");
+    const context = parsePlayerUpgradeContext(window.location.hash);
+    if (context) setPlayerUpgradeContext(context);
     if (!authToken) return;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     setToken(authToken);
@@ -30,9 +34,10 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
     event.preventDefault();
     setLoading(true); setError(""); setSentEmail("");
     try {
+      const handoff = mode === "login" ? parsePlayerUpgradeContext(search.toString()) ?? playerUpgradeContext : null;
       const response = await fetch(mode === "signup" ? "/api/v2/customer-auth/signup" : "/api/v2/customer-auth/request-login", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, locale, ...(mode === "signup" && partnerContext ? { partnerContext: true } : {}), ...(mode === "signup" && registrationLinkContext ? { registrationLinkContext: true } : {}) }),
+        body: JSON.stringify({ email, locale, ...(handoff ? { playerUpgradeContext: handoff } : {}), ...(mode === "signup" && partnerContext ? { partnerContext: true } : {}), ...(mode === "signup" && registrationLinkContext ? { registrationLinkContext: true } : {}) }),
       });
       const data = await response.json() as { code?: string };
       if (!response.ok) setError(data.code === "invalid_email" ? t("authInvalidEmail") : t("authInvalidLink"));
@@ -47,7 +52,7 @@ export function AuthClient({ mode }: { mode: "signup" | "login" }) {
     try {
       const response = await fetch("/api/v2/customer-auth/consume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
       if (!response.ok) setError(t("authInvalidLink"));
-      else window.location.assign("/account");
+      else window.location.assign(playerUpgradeContext ? playerUpgradeAccountPath(playerUpgradeContext) : "/account");
     } catch { setError(t("authInvalidLink")); }
     finally { setConsuming(false); setToken(""); }
   }

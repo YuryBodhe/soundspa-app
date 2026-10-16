@@ -10,6 +10,7 @@ import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
+import { playerUpgradeLoginPath, removePlayerUpgradeContextParams } from "@/lib/v2/playerUpgradeContext";
 
 type Account = {
   email: string;
@@ -99,6 +100,7 @@ function Content() {
   const playerHandoffConsumedRef = useRef(false);
   const [playerHandoff, setPlayerHandoff] = useState<PlayerUpgradeHandoff | null>(null);
   const [playerHandoffMessage, setPlayerHandoffMessage] = useState<"invalid" | "unavailable" | "some_unavailable" | null>(null);
+  const [loginHref, setLoginHref] = useState("/login");
   const loadVersion = useRef(0);
   const loadInFlight = useRef<Promise<void> | null>(null);
   const loadController = useRef<AbortController | null>(null);
@@ -408,6 +410,9 @@ function Content() {
   const account = result?.account;
   const complete = Boolean(account?.organization && account.location);
   useEffect(() => {
+    setLoginHref(playerUpgradeLoginPath(window.location.search));
+  }, []);
+  useEffect(() => {
     if (!loaded || playerHandoffConsumedRef.current) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("source") !== "player-upgrade") {
@@ -415,16 +420,30 @@ function Content() {
       return;
     }
     playerHandoffConsumedRef.current = true;
-    // Keep the existing login experience. Phase 1 does not carry hints through magic-link authentication.
+    // Do not consume or clear hints until authentication has completed on this Account page.
     if (!account) return;
-    if (!billing) { setPlayerHandoffMessage("unavailable"); return; }
-    const result = resolvePlayerUpgradeHandoff(window.location.search, billing.locations);
-    if (result.status === "invalid_location") { setPlayerHandoffMessage("invalid"); return; }
-    if (result.status === "unavailable") { setPlayerHandoffMessage("unavailable"); return; }
+    const currentSearch = window.location.search;
+    if (!billing) {
+      setPlayerHandoffMessage("unavailable");
+      window.history.replaceState(null, "", `${window.location.pathname}${removePlayerUpgradeContextParams(currentSearch)}${window.location.hash}`);
+      return;
+    }
+    const result = resolvePlayerUpgradeHandoff(currentSearch, billing.locations);
+    if (result.status === "invalid_location") {
+      setPlayerHandoffMessage("invalid");
+      window.history.replaceState(null, "", `${window.location.pathname}${removePlayerUpgradeContextParams(currentSearch)}${window.location.hash}`);
+      return;
+    }
+    if (result.status === "unavailable") {
+      setPlayerHandoffMessage("unavailable");
+      window.history.replaceState(null, "", `${window.location.pathname}${removePlayerUpgradeContextParams(currentSearch)}${window.location.hash}`);
+      return;
+    }
     if (result.status === "ready") {
       setPlayerHandoff(result.handoff);
       if (result.handoff.unavailableProductCount > 0) setPlayerHandoffMessage("some_unavailable");
     }
+    window.history.replaceState(null, "", `${window.location.pathname}${removePlayerUpgradeContextParams(currentSearch)}${window.location.hash}`);
   }, [loaded, account, billing]);
   const displayDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
   const futurePaidPeriodText = (plan: BillingPlan) => plan.scheduledPaidPeriods
@@ -495,7 +514,7 @@ function Content() {
 
   return <main className="customer-auth-page customer-account-page"><section className="customer-auth-card customer-onboarding-card customer-account-shell"><header className="customer-account-header"><div className="customer-account-identity"><span className="customer-auth-brand">SOUND SPA</span>{account && <strong>{account.email}</strong>}</div>{account && <div className="customer-account-controls"><AuthLanguageSelector /><button type="button" className="customer-billing-secondary" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? t("accountRefreshing") : t("accountRefresh")}</button><button type="button" className="customer-billing-secondary" onClick={logout}>{t("authLogout")}</button></div>}</header>
     {(!complete || organizationEntries.length !== 1) && <h1>{t("authAccountTitle")}</h1>}
-    {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href="/login">{t("authLoginLink")}</Link></> : <>
+    {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href={loginHref}>{t("authLoginLink")}</Link></> : <>
       {playerHandoffMessage && <p role="status" className="customer-billing-notice">{t(playerHandoffMessage === "invalid" ? "playerUpgradeInvalidLocation" : playerHandoffMessage === "some_unavailable" ? "playerUpgradeSomeUnavailable" : "playerUpgradeUnavailable")}</p>}
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
