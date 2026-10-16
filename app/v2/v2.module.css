@@ -314,6 +314,8 @@
 .lockedDialogProducts { display: grid; gap: 5px; margin: 0; padding-left: 20px; color: #e0d5c0; font-size: 14px; line-height: 1.45; }
 .lockedDialogActions { display: flex; justify-content: flex-end; margin-top: 22px; }
 .lockedDialogContinue { min-height: 44px; padding: 0 16px; border: 1px solid rgba(212, 201, 176, 0.36); border-radius: 8px; background: rgba(212, 201, 176, 0.1); color: #e0d5c0; font: inherit; font-size: 13px; cursor: pointer; }
+.lockedDialogSubscription { display: inline-flex; align-items: center; text-decoration: none; border-color: rgba(212, 178, 104, 0.62); background: rgba(212, 178, 104, 0.18); color: #f0d497; }
+.lockedDialogSubscription:focus-visible, .lockedDialogContinue:focus-visible { outline: 2px solid #f0d497; outline-offset: 3px; }
 .lockedDialog button:focus-visible { outline: 2px solid #d4c9b0; outline-offset: 3px; }
 
 .cardImage { position: relative; display: block; width: 100%; height: 120px; overflow: hidden; }

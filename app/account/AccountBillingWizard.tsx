@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/app/i18n/I18nProvider";
 import { billingLineKey, billingOrderRequestPayload, buildSelectedBillingLines, restoreBillingOrderSelection, toggleBillingProductSelection, billingMarketSelectionState, billingOrderErrorKey, billingOrderStatusKey, canResumeBillingOrder, canPreviewBillingLines, formatBillingPeriodRange } from "./billingWizardModel";
+import { buildPlayerUpgradeWizardSelection, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 
 export type BillingWizardPlan = {
   productId: string; productName: string;
@@ -34,6 +35,7 @@ type Props = {
   onRefreshOrders?: () => Promise<void> | void;
   onPaymentConfirmed?: () => Promise<void> | void;
   previewOnly?: boolean;
+  playerHandoff?: PlayerUpgradeHandoff;
 };
 type WizardStep = 1 | 2 | 3;
 
@@ -43,7 +45,7 @@ function durationText(months: number, locale: string, t: (key: import("@/app/i18
   return t(key).replace("{{count}}", String(months));
 }
 
-export default function AccountBillingWizard({ organizationId, organizationName, locations, supportedMarkets = [], onSaveMarket, orders = [], ordersUnavailable = false, onRefreshOrders, onPaymentConfirmed, previewOnly = false }: Props) {
+export default function AccountBillingWizard({ organizationId, organizationName, locations, supportedMarkets = [], onSaveMarket, orders = [], ordersUnavailable = false, onRefreshOrders, onPaymentConfirmed, previewOnly = false, playerHandoff }: Props) {
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>(1);
@@ -64,7 +66,10 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const [refreshedLocations, setRefreshedLocations] = useState<Record<string, BillingWizardLocation>>({});
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [handoffLocationId, setHandoffLocationId] = useState<string | null>(null);
+  const [handoffProductIds, setHandoffProductIds] = useState<string[]>([]);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const handoffConsumedRef = useRef(false);
   const mutationLock = useRef(false);
   const paymentRefreshLock = useRef(false);
   const statusRequestLock = useRef(false);
@@ -111,6 +116,18 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   }, [open]);
 
   useEffect(() => {
+    if (!playerHandoff || handoffConsumedRef.current) return;
+    const location = organizationLocations.find((candidate) => candidate.id === playerHandoff.locationId);
+    if (!location || location.organizationId !== organizationId) return;
+    handoffConsumedRef.current = true;
+    reset();
+    setHandoffLocationId(playerHandoff.locationId);
+    setHandoffProductIds(playerHandoff.eligibleProductIds);
+    setSelectedProducts(buildPlayerUpgradeWizardSelection(playerHandoff));
+    setOpen(true);
+  }, [playerHandoff, organizationId, organizationLocations]);
+
+  useEffect(() => {
     if (!open || !order?.id || !checkout || ["paid", "canceled", "expired", "failed"].includes(orderStatus)) return;
     void statusRefreshRef.current?.();
     const timer = window.setInterval(() => void statusRefreshRef.current?.(), 3000);
@@ -121,6 +138,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
     setStep(1); setSelectedProducts({}); setDurations({}); setSelectionError(false);
     setQuote(null); setOrder(null); setCheckout(null); setOrderStatus(""); setPollingError(""); setPendingCheckoutConflict(false); setError(""); setCopied(false);
     setMarketSelections({}); setMarketSaveErrors({}); setSavedMarketIds({}); setRefreshedLocations({});
+    setHandoffLocationId(null); setHandoffProductIds([]);
     mutationLock.current = false; paymentRefreshLock.current = false;
   }
   function begin() { reset(); setOpen(true); }
@@ -247,6 +265,8 @@ export default function AccountBillingWizard({ organizationId, organizationName,
       <div className="customer-billing-wizard-header"><div><p className="customer-billing-wizard-eyebrow">{t("billingWizardOrganization")}</p><h2 id={`billing-wizard-title-${organizationId}`}>{t("billingWizardTitle")}</h2><p>{organizationName}</p></div><button data-wizard-initial-focus type="button" className="customer-billing-secondary" onClick={close} aria-label={t("billingWizardClose")}>×</button></div>
       <ol className="customer-billing-wizard-steps" aria-label={t("billingWizardProgress")}>{[1, 2, 3].map((item) => <li key={item} aria-current={step === item ? "step" : undefined} className={step === item ? "is-current" : step > item ? "is-complete" : ""}><span>{item}</span><span>{t(item === 1 ? "billingWizardStepSelect" : item === 2 ? "billingWizardStepReview" : "billingWizardStepLink")}</span></li>)}</ol>
       {step === 1 && <section className="customer-billing-wizard-content"><h3>{t("billingWizardStepSelect")}</h3>
+        {handoffLocationId && handoffProductIds.length === 1 && <p className="customer-billing-wizard-note" role="status">{t("playerUpgradePrefilled")}</p>}
+        {handoffLocationId && handoffProductIds.length > 1 && <p className="customer-billing-wizard-note" role="status">{t("playerUpgradeChooseProduct").replace("{{products}}", organizationLocations.find((location) => location.id === handoffLocationId)?.products.filter((product) => handoffProductIds.includes(product.productId) && product.purchaseEligible).map((product) => product.productName).join(", ") ?? "")}</p>}
         {organizationLocations.length === 0 ? <p role="status">{t("billingWizardNoLocations")}</p> : <div className="customer-billing-wizard-location-list">{organizationLocations.map((location) => {
           const availableProducts = purchasableProducts(location); const selectedForLocation = new Set(selectedProducts[location.id] ?? []); const hasSelection = selectedForLocation.size > 0;
           const selectionState = billingMarketSelectionState({ persistedMarket: location.marketCode, selectedMarket: marketSelections[location.id] ?? "", saving: Boolean(marketSaving[location.id]), error: marketSaveErrors[location.id] ?? "" });

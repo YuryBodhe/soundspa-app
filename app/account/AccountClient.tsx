@@ -9,6 +9,7 @@ import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
+import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 
 type Account = {
   email: string;
@@ -95,6 +96,9 @@ function Content() {
   const [marketChoices, setMarketChoices] = useState<Record<string, string>>({});
   const [marketSavingId, setMarketSavingId] = useState<string | null>(null);
   const billingCloseRef = useRef<HTMLButtonElement>(null);
+  const playerHandoffConsumedRef = useRef(false);
+  const [playerHandoff, setPlayerHandoff] = useState<PlayerUpgradeHandoff | null>(null);
+  const [playerHandoffMessage, setPlayerHandoffMessage] = useState<"invalid" | "unavailable" | "some_unavailable" | null>(null);
   const loadVersion = useRef(0);
   const loadInFlight = useRef<Promise<void> | null>(null);
   const loadController = useRef<AbortController | null>(null);
@@ -403,6 +407,25 @@ function Content() {
   async function logout() { await fetch("/api/v2/customer-auth/logout", { method: "POST" }); window.location.assign("/login"); }
   const account = result?.account;
   const complete = Boolean(account?.organization && account.location);
+  useEffect(() => {
+    if (!loaded || playerHandoffConsumedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("source") !== "player-upgrade") {
+      playerHandoffConsumedRef.current = true;
+      return;
+    }
+    playerHandoffConsumedRef.current = true;
+    // Keep the existing login experience. Phase 1 does not carry hints through magic-link authentication.
+    if (!account) return;
+    if (!billing) { setPlayerHandoffMessage("unavailable"); return; }
+    const result = resolvePlayerUpgradeHandoff(window.location.search, billing.locations);
+    if (result.status === "invalid_location") { setPlayerHandoffMessage("invalid"); return; }
+    if (result.status === "unavailable") { setPlayerHandoffMessage("unavailable"); return; }
+    if (result.status === "ready") {
+      setPlayerHandoff(result.handoff);
+      if (result.handoff.unavailableProductCount > 0) setPlayerHandoffMessage("some_unavailable");
+    }
+  }, [loaded, account, billing]);
   const displayDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
   const futurePaidPeriodText = (plan: BillingPlan) => plan.scheduledPaidPeriods
     .map((period) => `${t("billingPaidStarts").replace("{{date}}", displayDate(period.startsAt))} · ${t("billingPaidThrough").replace("{{date}}", displayDate(period.endsAt))}`)
@@ -473,6 +496,7 @@ function Content() {
   return <main className="customer-auth-page customer-account-page"><section className="customer-auth-card customer-onboarding-card customer-account-shell"><header className="customer-account-header"><div className="customer-account-identity"><span className="customer-auth-brand">SOUND SPA</span>{account && <strong>{account.email}</strong>}</div>{account && <div className="customer-account-controls"><AuthLanguageSelector /><button type="button" className="customer-billing-secondary" disabled={refreshing} onClick={() => void load(true)}>{refreshing ? t("accountRefreshing") : t("accountRefresh")}</button><button type="button" className="customer-billing-secondary" onClick={logout}>{t("authLogout")}</button></div>}</header>
     {(!complete || organizationEntries.length !== 1) && <h1>{t("authAccountTitle")}</h1>}
     {!loaded ? <p>{t("authSending")}</p> : !account ? <><p>{t("authSignInRequired")}</p><Link href="/login">{t("authLoginLink")}</Link></> : <>
+      {playerHandoffMessage && <p role="status" className="customer-billing-notice">{t(playerHandoffMessage === "invalid" ? "playerUpgradeInvalidLocation" : playerHandoffMessage === "some_unavailable" ? "playerUpgradeSomeUnavailable" : "playerUpgradeUnavailable")}</p>}
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
         {organizationEntries.map(([organizationId, group]) => <section className="customer-account-organization" key={organizationId}>
@@ -529,6 +553,7 @@ function Content() {
             ordersUnavailable={billingOrdersUnavailable}
             onRefreshOrders={() => load(true)}
             onPaymentConfirmed={() => load(true)}
+            playerHandoff={playerHandoff?.organizationId === organizationId ? playerHandoff : undefined}
           />}
           <details className="customer-account-bottom-disclosure customer-account-device-disclosure">
             <summary>{t("customerDevices")}</summary>

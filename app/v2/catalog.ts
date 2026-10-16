@@ -9,6 +9,14 @@ export type PlayerChannel = {
   catalogProducts?: Array<{ id: string; name: string }>;
 };
 
+/** Build an account handoff from customer-safe catalog membership hints. */
+export function playerUpgradeAccountHref(locationId: string | undefined, productIds: string[]): string | null {
+  if (!locationId?.trim()) return null;
+  const params = new URLSearchParams({ source: "player-upgrade", locationId: locationId.trim() });
+  for (const productId of [...new Set(productIds.map((id) => id.trim()).filter(Boolean))]) params.append("productId", productId);
+  return `/account?${params.toString()}`;
+}
+
 // Existing visual captions only: these do not define catalog entries/playlists.
 const musicCaptions: Record<string, string> = {
   divnitsa: "Deep relaxation", relax: "Calm and restorative", "432": "Soft and meditative",

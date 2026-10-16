@@ -221,3 +221,14 @@ test("the wizard renders its request error in only one place", async () => {
   const source = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
   assert.equal((source.match(/\{error\s*&&/g) ?? []).length, 1);
 });
+
+test("player handoff opens once without changing manual wizard reset or requesting a quote", async () => {
+  const source = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
+  assert.match(source, /const handoffConsumedRef = useRef\(false\)/);
+  assert.match(source, /if \(!playerHandoff \|\| handoffConsumedRef\.current\) return/);
+  assert.match(source, /handoffConsumedRef\.current = true/);
+  assert.match(source, /function begin\(\) \{ reset\(\); setOpen\(true\); \}/);
+  assert.match(source, /setSelectedProducts\(\{\}\); setDurations\(\{\}\)/);
+  const handoffEffect = source.slice(source.indexOf("if (!playerHandoff || handoffConsumedRef.current) return"), source.indexOf("}, [playerHandoff, organizationId, organizationLocations])"));
+  assert.doesNotMatch(handoffEffect, /requestQuote|orders\/preview|billing\/orders/);
+});

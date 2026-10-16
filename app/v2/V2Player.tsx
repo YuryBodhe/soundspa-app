@@ -6,7 +6,7 @@ import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngi
 import { Mp3Engine, type Mp3EngineState, type PlaybackMode } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
 import { useWaveCanvas } from "./useWaveCanvas";
-import type { PlayerChannel } from "./catalog";
+import { playerUpgradeAccountHref, type PlayerChannel } from "./catalog";
 import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
 import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
@@ -87,7 +87,7 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
   </header>;
 }
 
-export default function V2Player({ catalog, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
+export default function V2Player({ catalog, locationId, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; locationId?: string; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t, locale } = useI18n();
   const dialogTitleId = useId();
   const dialogChannelNameId = useId();
@@ -142,6 +142,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
   };
 
   const lockedProductNames = (lockedChannel?.catalogProducts ?? []).filter((product) => product.id && product.name.trim());
+  const subscriptionHref = playerUpgradeAccountHref(locationId, lockedProductNames.map((product) => product.id));
 
   const monitoringContextRef = useRef({ playback, ambientPlayback, activeChannelId, activeAmbientChannelId: null as string | null, musicChannelId: null as string | null, musicTrackId: null as string | null });
   monitoringContextRef.current = {
@@ -414,6 +415,7 @@ export default function V2Player({ catalog, organizationName, locationName, moni
             <ul className={s.lockedDialogProducts}>{lockedProductNames.map((product) => <li key={product.id}>{product.name}</li>)}</ul>
           </> : <p className={s.lockedDialogFallback}>{t("lockedChannelDialogNoProducts")}</p>}
           <div className={s.lockedDialogActions}>
+            {subscriptionHref && <a className={`${s.lockedDialogContinue} ${s.lockedDialogSubscription}`} href={subscriptionHref} target="_blank" rel="noopener noreferrer">{t("lockedChannelDialogViewSubscription")}</a>}
             <button type="button" className={s.lockedDialogContinue} onClick={() => lockedDialogRef.current?.close()}>{t("lockedChannelDialogContinueListening")}</button>
           </div>
         </>}
