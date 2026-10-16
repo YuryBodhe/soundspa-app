@@ -1,19 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { accountLocationCountKey, accountLocationPresentation, accountPlanPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationPresentation, accountPlanPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
 
 const now = Date.parse("2026-10-09T15:16:28.704Z");
-
-test("English Location count uses singular only for one while other locales keep their count format", () => {
-  assert.equal(accountLocationCountKey("en", 1), "accountLocationCountOne");
-  assert.equal(accountLocationCountKey("en", 0), "accountLocationCount");
-  assert.equal(accountLocationCountKey("en", 2), "accountLocationCount");
-  for (const locale of ["ru", "vi", "th"]) {
-    assert.equal(accountLocationCountKey(locale, 1), "accountLocationCount");
-    assert.equal(accountLocationCountKey(locale, 2), "accountLocationCount");
-  }
-});
 
 test("post-reset trial presentation does not use the preserved historical paid period", () => {
   const view = accountPlanPresentation({
@@ -130,7 +120,7 @@ test("Account reloads cancel older responses and listens for tab and page restor
   assert.match(source, /document\.addEventListener\("visibilitychange"/);
 });
 
-test("Account presents one organization-level billing action and compact Location summaries", async () => {
+test("Account keeps billing actions and histories while collapsed salon rows stay compact", async () => {
   const wizard = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
   const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../globals.css", import.meta.url), "utf8");
@@ -146,10 +136,14 @@ test("Account presents one organization-level billing action and compact Locatio
   assert.match(account, /<details className="customer-account-location-details">/);
   assert.match(account, /customer-account-device-disclosure/);
   assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
-  assert.match(account, /locationPlanSummary\(plan, overview\.summaryProducts\.length > 1\)/);
-  assert.match(account, /accountScheduledPaidPeriodRanges\(plan\.scheduledPaidPeriods, displayDate\)/);
-  assert.match(account, /accountNextPaidPeriod/);
-  assert.match(account, /accountNextPaidPeriods/);
+  const summaries = [...account.matchAll(/<summary className="customer-account-location-summary">([\s\S]*?)<\/summary>/g)].map((match) => match[1]);
+  assert.ok(summaries.length > 0);
+  for (const summary of summaries) {
+    assert.match(summary, /customer-account-location-name/);
+    assert.match(summary, /customer-account-chevron/);
+    assert.doesNotMatch(summary, /customer-account-access-pill|customer-account-location-meta|billingAccessExpires|partnerName/);
+  }
+  assert.match(account, /plan\.scheduledPaidPeriods\.map/);
   assert.match(account, /plan\.status === "trial" && plan\.trialEndsAt \? trialSummaryText\(plan\)/);
   assert.match(account, /plan\.status !== "partner" && billingLocation\.partnerBenefits/);
   assert.match(account, /plan\.accessExpiresAt && !\(plan\.status === "trial" && plan\.trialEndsAt\)/);
@@ -185,8 +179,11 @@ test("compact Account labels and organization billing action are localized in ev
     assert.match(dictionary, /accountNextPaidPeriod:/);
     assert.match(dictionary, /accountNextPaidPeriods:/);
     assert.match(dictionary, /billingOrdersTitle: 'Order history'|billingOrdersTitle: 'История заказов'|billingOrdersTitle: 'Lịch sử đơn hàng'|billingOrdersTitle: 'ประวัติคำสั่งซื้อ'/);
-  for (const key of ["accountDashboardSubtitle:", "accountPlayerTitle:", "accountPlayerHelp:", "accountOpenPlayer:", "accountLocationsTitle:", "accountLocationCount:", "accountLocationCountOne:", "accountSubscriptionsPayments:"]) {
+  for (const key of ["accountDashboardSubtitle:", "accountOpenPlayer:", "accountSalonCount:"]) {
       assert.ok(dictionary.includes(key), `missing ${key}`);
+    }
+    for (const removedKey of ["accountPlayerTitle:", "accountPlayerHelp:", "accountLocationsTitle:", "accountLocationCount:", "accountLocationCountOne:", "accountSubscriptionsPayments:"]) {
+      assert.ok(!dictionary.includes(removedKey), `unexpected obsolete label ${removedKey}`);
     }
   }
   const ru = await readFile(new URL("../i18n/dictionaries/ru.ts", import.meta.url), "utf8");
@@ -200,19 +197,26 @@ test("mobile Billing Wizard step labels use readable type and can wrap within na
   assert.match(css, /\.customer-billing-wizard-steps li > span:last-child \{ min-width: 0; overflow-wrap: anywhere; \}/);
 });
 
-test("Account dashboard offers a browser-profile player link and keeps promo redemption inside Location details", async () => {
+test("Account dashboard uses a single player action and keeps salon actions inside expanded details", async () => {
   const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
   const wizard = await readFile(new URL("./AccountBillingWizard.tsx", import.meta.url), "utf8");
-  const locationDetailsStart = account.indexOf('<details className="customer-account-location-details">');
+  const css = await readFile(new URL("../globals.css", import.meta.url), "utf8");
+  const locationDetailsStart = account.lastIndexOf('<details className="customer-account-location-details">');
   const locationDetailsEnd = account.indexOf("</details>", locationDetailsStart);
   const locationDetails = account.slice(locationDetailsStart, locationDetailsEnd);
   assert.match(account, /<a href="\/player" target="_blank" rel="noopener noreferrer">\{t\("accountOpenPlayer"\)\}/);
-  assert.match(account, /accountPlayerHelp/);
-  assert.match(account, /accountLocationsTitle/);
+  assert.doesNotMatch(account, /accountPlayerTitle|accountPlayerHelp/);
+  assert.match(account, /accountSalonCount/);
+  assert.match(account, /t\("addLocation"\)/);
+  assert.match(account, /customer-account-add-location-form/);
   assert.match(account, /customer-account-device-disclosure/);
   assert.match(wizard, /billingOrdersTitle/);
-  assert.match(wizard, /accountSubscriptionsPayments/);
+  assert.doesNotMatch(wizard, /accountSubscriptionsPayments/);
+  assert.match(wizard, /billingWizardOpen/);
   assert.match(locationDetails, /<SpaquatoriaPromoRedeemer locationId=\{location\.id\}/);
+  assert.match(css, /customer-account-player-entry a \{ width: min\(100%, 400px\);/);
+  assert.match(css, /grid-template-areas: "name chevron"/);
+  assert.match(css, /customer-account-locations \{ gap: 9px;/);
 });
 
 test("the billing API exposes only future, non-invalidated paid periods to Account", async () => {

@@ -7,7 +7,7 @@ import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
 import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
-import { accountLocationCountKey, accountLocationPresentation, accountScheduledPaidPeriodRanges, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { accountLocationPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 import { playerUpgradeLoginPath, removePlayerUpgradeContextParams } from "@/lib/v2/playerUpgradeContext";
@@ -470,20 +470,6 @@ function Content() {
   const trialSummaryText = (plan: AccountDisplayPlan) => plan.trialEndsAt
     ? `${t("accountTrialUntil").replace("{{date}}", displayDate(plan.trialEndsAt))}${plan.trialActive && plan.trialRemainingDays !== null ? ` · ${trialRemainingText(plan.trialRemainingDays)}` : ""}`
     : t("billingTrial");
-  const locationPlanSummary = (plan: AccountDisplayPlan, includeProductName: boolean) => {
-    const prefix = includeProductName ? `${plan.productName}: ` : "";
-    const summary: string[] = [];
-    if (plan.trialActive || plan.status === "trial") summary.push(`${prefix}${trialSummaryText(plan)}`);
-    if (plan.status === "subscription" && plan.paidThrough) summary.push(`${prefix}${t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough))}`);
-    if (plan.status === "partner") summary.push(`${prefix}${plan.accessExpiresAt ? `${t("billingPartnerStatus")} · ${t("billingAccessExpires").replace("{{date}}", displayDate(plan.accessExpiresAt))}` : t("billingPartnerStatus")}`);
-    const scheduledPeriods = accountScheduledPaidPeriodRanges(plan.scheduledPaidPeriods, displayDate);
-    if (scheduledPeriods.length === 1) {
-      summary.push(`${prefix}${t("accountNextPaidPeriod").replace("{{period}}", scheduledPeriods[0])}`);
-    } else if (scheduledPeriods.length > 1) {
-      summary.push(`${prefix}${t("accountNextPaidPeriods").replace("{{periods}}", scheduledPeriods.join("; "))}`);
-    }
-    return summary;
-  };
   const planStatusKey = (plan: Pick<BillingPlan, "status" | "subscriptionCanceled">) => plan.status === "trial" ? "billingTrial"
     : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription")
       : plan.status === "partner" ? "billingPartnerStatus"
@@ -520,39 +506,37 @@ function Content() {
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
         {organizationEntries.map(([organizationId, group], organizationIndex) => <section className="customer-account-organization" key={organizationId}>
           {organizationEntries.length === 1 ? <><h1 className="customer-account-org-title">{group.organizationName}</h1><p className="customer-account-subtitle">{t("accountDashboardSubtitle")}</p></> : <h2 className="customer-account-org-title">{group.organizationName}</h2>}
-          {organizationIndex === 0 && <section className="customer-account-player-entry" aria-labelledby="customer-account-player-title">
-            <div><h2 id="customer-account-player-title">{t("accountPlayerTitle")}</h2><p>{t("accountPlayerHelp")}</p></div>
+          {organizationIndex === 0 && <div className="customer-account-player-entry">
             <a href="/player" target="_blank" rel="noopener noreferrer">{t("accountOpenPlayer")} <span aria-hidden="true">↗</span></a>
-          </section>}
-          <div className="customer-account-locations-heading"><h2>{t("accountLocationsTitle")}</h2><span>{t(accountLocationCountKey(locale, group.locations.length)).replace("{{count}}", String(group.locations.length))}</span></div>
-          {group.canCreateLocations && <div className="customer-account-add-location">
-            {addingLocationOrganizationId === organizationId ? <form onSubmit={(event) => void createLocation(event, organizationId)}>
+          </div>}
+          <div className="customer-account-locations-heading"><h2>{t("accountSalonCount").replace("{{count}}", String(group.locations.length))}</h2>
+          {group.canCreateLocations && addingLocationOrganizationId !== organizationId && <div className="customer-account-add-location">
+            <button type="button" className="customer-billing-secondary" onClick={() => { setAddingLocationOrganizationId(organizationId); setNewLocationName(""); setNewLocationTimezone(group.locations[0]?.timezone ?? ""); setNewLocationError(""); }}>{t("addLocation")}</button>
+          </div>}
+          </div>
+          {group.canCreateLocations && addingLocationOrganizationId === organizationId && <div className="customer-account-add-location-form"><form onSubmit={(event) => void createLocation(event, organizationId)}>
               <label>{t("addLocationName")}<input required maxLength={160} autoComplete="organization-title" value={newLocationName} onChange={(event) => setNewLocationName(event.target.value)} /></label>
               <label>{t("addLocationTimezone")}<input required maxLength={100} autoComplete="off" placeholder="Asia/Ho_Chi_Minh" value={newLocationTimezone} onChange={(event) => setNewLocationTimezone(event.target.value)} /></label>
               {newLocationError && <p role="alert">{t(newLocationError as TranslationKey)}</p>}
               <div><button className="customer-auth-submit" type="submit" disabled={newLocationSaving}>{newLocationSaving ? t("addLocationSaving") : t("addLocationSave")}</button><button className="customer-billing-secondary" type="button" disabled={newLocationSaving} onClick={() => { setAddingLocationOrganizationId(null); setNewLocationError(""); }}>{t("addLocationCancel")}</button></div>
-            </form> : <button type="button" className="customer-billing-secondary" onClick={() => { setAddingLocationOrganizationId(organizationId); setNewLocationName(""); setNewLocationTimezone(group.locations[0]?.timezone ?? ""); setNewLocationError(""); }}>{t("addLocation")}</button>}
-          </div>}
+          </form></div>}
           <div className="customer-account-locations">
           {group.locations.map((location) => {
             const billingLocation = billing?.locations.find((item) => item.id === location.id);
             if (!billingLocation) return <section className="customer-account-location" key={location.id}>
-              <div className="customer-account-location-summary"><span className="customer-account-location-name">{location.name}</span></div>
+              <details className="customer-account-location-details">
+                <summary className="customer-account-location-summary"><span className="customer-account-location-name">{location.name}</span><span className="customer-account-chevron" aria-hidden="true" /></summary>
+                <p className="customer-account-location-unavailable">{t("billingUnavailable")}</p>
+              </details>
             </section>;
             const overview = accountLocationPresentation(billingLocation.products, billingLocation.partnerBenefits);
-            const locationSummary = overview.summaryProducts.flatMap((plan) => locationPlanSummary(plan, overview.summaryProducts.length > 1));
             const orphanBenefits = billingLocation.partnerBenefits.filter((benefit) =>
               !billingLocation.products.some((plan) => plan.productId === benefit.productId),
             );
-            const displayedStatus = overview.activeProductCount > 0 ? "accountAccessActive" : "accountNoActiveAccess";
             return <section className="customer-account-location" key={location.id}>
               <details className="customer-account-location-details">
                 <summary className="customer-account-location-summary">
                   <span className="customer-account-location-name">{location.name}</span>
-                  <span className={`customer-account-access-pill${overview.activeProductCount > 0 ? " is-active" : ""}`}>{t(displayedStatus)}</span>
-                  <span className="customer-account-location-meta">
-                    {locationSummary.map((summary, index) => <span key={`${location.id}-summary-${index}`}>{summary}</span>)}
-                  </span>
                   <span className="customer-account-chevron" aria-hidden="true" />
                 </summary>
                 <div className="customer-account-product-details">

@@ -544,12 +544,13 @@ input[type="button"]:active {
 .customer-account-org-title { margin: 12px 0 0 !important; color: #f5f0e6; font-size: 22px !important; line-height: 1.25; font-weight: 600 !important; }
 .customer-account-subtitle { margin: 2px 0 0; color: rgba(245,240,230,.66); font-size: 13px; }
 .customer-account-add-location { display: flex; justify-content: flex-end; margin-top: 8px; }
-.customer-account-add-location > form { width: min(100%, 440px); margin: 0; }
-.customer-account-add-location label { display: grid; gap: 6px; margin: 10px 0; color: rgba(245,240,230,.78); font-size: 13px; }
-.customer-account-add-location input { min-width: 0; width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; background: #111115; color: #f5f0e6; font: inherit; }
-.customer-account-add-location form > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.customer-account-add-location form > p[role="alert"] { margin: 8px 0; color: #ffb4a9; font-size: 13px; }
-.customer-account-add-location button:focus-visible, .customer-account-add-location input:focus-visible { outline: 2px solid #d5bd84; outline-offset: 2px; }
+.customer-account-add-location-form { margin-top: 10px; }
+.customer-account-add-location-form > form { width: min(100%, 440px); margin: 0; }
+.customer-account-add-location-form label { display: grid; gap: 6px; margin: 10px 0; color: rgba(245,240,230,.78); font-size: 13px; }
+.customer-account-add-location-form input { min-width: 0; width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid rgba(245,240,230,.2); border-radius: 8px; background: #111115; color: #f5f0e6; font: inherit; }
+.customer-account-add-location-form form > div { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.customer-account-add-location-form form > p[role="alert"] { margin: 8px 0; color: #ffb4a9; font-size: 13px; }
+.customer-account-add-location button:focus-visible, .customer-account-add-location-form input:focus-visible { outline: 2px solid #d5bd84; outline-offset: 2px; }
 .customer-account-organization { margin: 0; padding: 0; border: 0; }
 .customer-account-locations { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 12px; }
 .customer-account-location { min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
@@ -716,7 +717,7 @@ input[type="button"]:active {
 .customer-account-billing-section > h2 { margin: 0; color: #f5f0e6; font-size: 20px; line-height: 1.35; font-weight: 600; }
 .customer-account-locations-heading > span { color: rgba(245,240,230,.72); font-size: 15px; }
 .customer-account-add-location { margin-top: 12px; }
-.customer-account-add-location label,
+.customer-account-add-location-form label,
 .customer-account-location form label { font-size: 15px; }
 .customer-account-location-summary { min-height: 86px; gap: 6px 12px; padding: 15px 4px; }
 .customer-account-location-name { font-size: 18px; }
@@ -794,4 +795,53 @@ input[type="button"]:active {
   .customer-account-bottom-disclosure > summary,
   .customer-account-shell .customer-billing-orders > summary { min-height: 54px; font-size: 17px; }
   .customer-account-shell .customer-billing-wizard-steps li { font-size: 15px; }
+}
+
+/* Compact Account dashboard requested from mobile feedback. */
+.customer-account-player-entry {
+  justify-content: center;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.customer-account-player-entry a { width: min(100%, 400px); min-height: 54px; }
+.customer-account-locations-heading {
+  align-items: center;
+  margin-top: 18px;
+}
+.customer-account-locations-heading h2 {
+  font-size: 18px;
+}
+.customer-account-locations-heading > .customer-account-add-location { margin: 0; }
+.customer-account-add-location > button {
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 15px;
+}
+.customer-account-locations { gap: 9px; margin-top: 10px; }
+.customer-account-location { overflow: hidden; border: 1px solid rgba(245,240,230,.16); border-radius: 10px; }
+.customer-account-location-details { border: 0; }
+.customer-account-location-summary {
+  grid-template-columns: minmax(0, 1fr) 14px;
+  grid-template-areas: "name chevron";
+  gap: 8px;
+  min-height: 58px;
+  padding: 10px 14px;
+}
+.customer-account-location-name { font-size: 18px; }
+.customer-account-chevron { margin-right: 2px; }
+.customer-account-location-unavailable { margin: 0; padding: 0 14px 12px; color: rgba(245,240,230,.76); font-size: 14px; }
+.customer-account-product-details { padding: 0 14px 12px; }
+.customer-account-billing-section { display: flex; justify-content: center; margin-top: 13px; padding-top: 0; border-top: 0; }
+.customer-account-shell .customer-billing-wizard-open { width: min(100%, 480px); margin: 0; }
+.customer-account-shell .customer-billing-orders { margin-top: 8px; }
+@media (max-width: 600px) {
+  .customer-account-player-entry { margin-top: 4px; }
+  .customer-account-locations-heading { margin-top: 14px; }
+  .customer-account-location-summary { grid-template-columns: minmax(0, 1fr) 12px; min-height: 56px; padding: 9px 12px; }
+  .customer-account-location-name { font-size: 17px; }
+  .customer-account-add-location > button { min-height: 44px; padding-inline: 10px; }
+  .customer-account-shell .customer-billing-wizard-open { min-height: 50px; }
 }
