@@ -14,10 +14,23 @@ import { useI18n } from "../i18n/useI18n";
 import { resolveChannelTitle } from "./channelTitle";
 import { Tooltip } from "./Tooltip";
 import { activatePlayerChannelCard } from "@/lib/v2/playerChannelInteraction";
+import { accountSectionHref } from "@/app/account/accountNavigation";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
   return <label className={s.languageSelector} title={t("selectLanguage")}><span className={s.srOnly}>{t("language")}</span><select value={locale} onChange={(event) => setLocale(event.target.value as typeof locale)} aria-label={t("selectLanguage")}><option value="en">EN</option><option value="ru">RU</option><option value="vi">VI</option><option value="th">TH</option></select></label>;
+}
+
+function PlayerManagementMenu() {
+  const { t } = useI18n();
+  return <details className={s.managementMenu}>
+    <summary>{t("playerManagement")}</summary>
+    <nav className={s.managementMenuPanel} aria-label={t("playerManagement")}>
+      <a href={accountSectionHref("salons")} target="_blank" rel="noopener noreferrer">{t("playerManagementSalons")}</a>
+      <a href={accountSectionHref("devices")} target="_blank" rel="noopener noreferrer">{t("playerManagementDevices")}</a>
+      <a href={accountSectionHref("subscriptions")} target="_blank" rel="noopener noreferrer">{t("playerManagementSubscription")}</a>
+    </nav>
+  </details>;
 }
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
@@ -83,7 +96,7 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
   const { t } = useI18n();
   return <header className={s.header}>
     <div><div className={s.brand}>{organizationName || t("brand")}</div><div className={s.platformTag}>{organizationName && locationName ? locationName : t("localPrototype")}</div></div>
-    <div className={s.headerOverlay}><LanguageSelector /><div className={s.badge}>{t("testMode")}</div></div>
+    <div className={s.headerOverlay}><LanguageSelector /><div className={s.badge}>{t("testMode")}</div><PlayerManagementMenu /></div>
   </header>;
 }
 

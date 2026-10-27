@@ -36,6 +36,7 @@ type Props = {
   onPaymentConfirmed?: () => Promise<void> | void;
   previewOnly?: boolean;
   playerHandoff?: PlayerUpgradeHandoff;
+  subscriptionSectionId?: string;
 };
 type WizardStep = 1 | 2 | 3;
 
@@ -45,7 +46,7 @@ function durationText(months: number, locale: string, t: (key: import("@/app/i18
   return t(key).replace("{{count}}", String(months));
 }
 
-export default function AccountBillingWizard({ organizationId, organizationName, locations, supportedMarkets = [], onSaveMarket, orders = [], ordersUnavailable = false, onRefreshOrders, onPaymentConfirmed, previewOnly = false, playerHandoff }: Props) {
+export default function AccountBillingWizard({ organizationId, organizationName, locations, supportedMarkets = [], onSaveMarket, orders = [], ordersUnavailable = false, onRefreshOrders, onPaymentConfirmed, previewOnly = false, playerHandoff, subscriptionSectionId }: Props) {
   const { locale, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>(1);
@@ -248,9 +249,12 @@ export default function AccountBillingWizard({ organizationId, organizationName,
   const displayOrderDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
   return <>
-    <section className="customer-account-billing-section">
-      <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
-    </section>
+    <details id={subscriptionSectionId} className="customer-account-bottom-disclosure customer-account-subscription-disclosure">
+      <summary>{t("accountSubscriptionSection")}</summary>
+      <section className="customer-account-billing-section">
+        <button type="button" className="customer-auth-submit customer-billing-wizard-open" onClick={begin}>{t("billingWizardOpen")}</button>
+      </section>
+    </details>
     <details className="customer-billing-orders customer-account-bottom-disclosure">
       <summary>{t("billingOrdersTitle")}</summary>
       <div className="customer-billing-orders-content">

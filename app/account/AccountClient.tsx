@@ -5,10 +5,11 @@ import { I18nProvider, useI18n } from "@/app/i18n/I18nProvider";
 import type { TranslationKey } from "@/app/i18n/types";
 import { AuthLanguageSelector } from "../auth/AuthLanguageSelector";
 import AccountBillingWizard from "./AccountBillingWizard";
+import { accountSectionId, accountSectionIdFromHash } from "./accountNavigation";
 import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { accountLocationPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
-import { currentBrowserOperationStorageKey, getOrCreateCurrentBrowserOperationId, hasActivatedDevice, selectedDeviceSetupLocationId, suggestedFirstSalonName } from "./deviceSetupModel";
+import { currentBrowserOperationStorageKey, getOrCreateCurrentBrowserOperationId, hasActivatedDevice, initialFirstDeviceName, selectedDeviceSetupLocationId, shouldSelectDeviceSetupLocation, suggestedFirstSalonName } from "./deviceSetupModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 import { playerUpgradeLoginPath, removePlayerUpgradeContextParams } from "@/lib/v2/playerUpgradeContext";
@@ -80,7 +81,7 @@ function Content() {
   const [deviceError, setDeviceError] = useState("");
   const [activationLink, setActivationLink] = useState<ActivationLink | null>(null);
   const [firstDeviceLocationId, setFirstDeviceLocationId] = useState("");
-  const [firstDeviceName, setFirstDeviceName] = useState("");
+  const [firstDeviceName, setFirstDeviceName] = useState(() => initialFirstDeviceName("", t("devicePrimaryName")));
   const [firstDeviceBusy, setFirstDeviceBusy] = useState(false);
   const firstDeviceSubmitLock = useRef(false);
   const [addingLocationOrganizationId, setAddingLocationOrganizationId] = useState<string | null>(null);
@@ -103,6 +104,7 @@ function Content() {
   const [marketChoices, setMarketChoices] = useState<Record<string, string>>({});
   const [marketSavingId, setMarketSavingId] = useState<string | null>(null);
   const billingCloseRef = useRef<HTMLButtonElement>(null);
+  const accountSectionHashHandledRef = useRef<string | null>(null);
   const playerHandoffConsumedRef = useRef(false);
   const [playerHandoff, setPlayerHandoff] = useState<PlayerUpgradeHandoff | null>(null);
   const [playerHandoffMessage, setPlayerHandoffMessage] = useState<"invalid" | "unavailable" | "some_unavailable" | null>(null);
@@ -454,6 +456,21 @@ function Content() {
   const account = result?.account;
   const complete = Boolean(account?.organization && account.location);
   useEffect(() => {
+    if (!loaded || !account) return;
+    const openLinkedSection = () => {
+      const hash = window.location.hash;
+      const targetId = accountSectionIdFromHash(hash);
+      if (!targetId || accountSectionHashHandledRef.current === hash) return;
+      accountSectionHashHandledRef.current = hash;
+      const target = document.getElementById(targetId);
+      if (target instanceof HTMLDetailsElement) target.open = true;
+      window.requestAnimationFrame(() => target?.scrollIntoView({ block: "start" }));
+    };
+    openLinkedSection();
+    window.addEventListener("hashchange", openLinkedSection);
+    return () => window.removeEventListener("hashchange", openLinkedSection);
+  }, [loaded, account]);
+  useEffect(() => {
     setLoginHref(playerUpgradeLoginPath(window.location.search));
   }, []);
   useEffect(() => {
@@ -559,9 +576,9 @@ function Content() {
           {!organizationHasActivatedDevice && <section className="customer-account-first-device" aria-labelledby={`first-device-title-${organizationId}`}>
             <h2 id={`first-device-title-${organizationId}`}>{t("deviceFirstSetupTitle")}</h2>
             <p>{t("deviceFirstSetupDescription")}</p>
-            <label>{t("deviceLocationLabel")}<select value={selectedFirstDeviceLocationId} onChange={(event) => setFirstDeviceLocationId(event.target.value)}>
+            {shouldSelectDeviceSetupLocation(group.locations.length) ? <label>{t("deviceLocationLabel")}<select value={selectedFirstDeviceLocationId} onChange={(event) => setFirstDeviceLocationId(event.target.value)}>
               {group.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
-            </select></label>
+            </select></label> : <p className="customer-account-first-device-location"><span>{t("deviceLocationLabel")}</span><strong>{group.locations[0]?.name}</strong></p>}
             <label>{t("deviceNameLabel")}<input required maxLength={120} value={firstDeviceName} onChange={(event) => setFirstDeviceName(event.target.value)} /></label>
             {deviceError && <p role="alert" className="customer-onboarding-error">{deviceError}</p>}
             <div className="customer-account-first-device-actions">
@@ -574,7 +591,7 @@ function Content() {
               <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button>
             </div>}
           </section>}
-          <div className="customer-account-locations-heading"><h2>{t("accountSalonCount").replace("{{count}}", String(group.locations.length))}</h2>
+          <div id={organizationIndex === 0 ? accountSectionId("salons") : undefined} className="customer-account-locations-heading"><h2>{t("accountSalonCount").replace("{{count}}", String(group.locations.length))}</h2>
           {group.canCreateLocations && addingLocationOrganizationId !== organizationId && <div className="customer-account-add-location">
             <button type="button" className="customer-billing-secondary" onClick={() => { setAddingLocationOrganizationId(organizationId); setNewLocationName(""); setNewLocationTimezone(group.locations[0]?.timezone ?? ""); setNewLocationError(""); }}>{t("addLocation")}</button>
           </div>}
@@ -627,8 +644,9 @@ function Content() {
             onRefreshOrders={() => load(true)}
             onPaymentConfirmed={() => load(true)}
             playerHandoff={playerHandoff?.organizationId === organizationId ? playerHandoff : undefined}
+            subscriptionSectionId={organizationIndex === 0 ? accountSectionId("subscriptions") : undefined}
           />}
-          <details className="customer-account-bottom-disclosure customer-account-device-disclosure">
+          <details id={organizationIndex === 0 ? accountSectionId("devices") : undefined} className="customer-account-bottom-disclosure customer-account-device-disclosure">
             <summary>{t("customerDevices")}</summary>
             <div className="customer-account-device-groups">{group.locations.map((location) => renderDevicesForLocation(location, organizationHasActivatedDevice))}</div>
           </details>

@@ -11,6 +11,14 @@ export function selectedDeviceSetupLocationId(locations: readonly Pick<DeviceSet
   return locations.some((location) => location.id === selectedId) ? selectedId : locations[0]?.id ?? "";
 }
 
+export function shouldSelectDeviceSetupLocation(locationCount: number): boolean {
+  return locationCount > 1;
+}
+
+export function initialFirstDeviceName(currentName: string, localizedDefault: string): string {
+  return currentName || localizedDefault;
+}
+
 export function suggestedFirstSalonName(companyName: string, currentSalonName: string, manuallyEdited: boolean): string {
   return manuallyEdited ? currentSalonName : companyName;
 }

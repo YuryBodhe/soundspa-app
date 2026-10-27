@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { currentBrowserOperationStorageKey, getOrCreateCurrentBrowserOperationId, hasActivatedDevice, selectedDeviceSetupLocationId, suggestedFirstSalonName } from "./deviceSetupModel";
+import { currentBrowserOperationStorageKey, getOrCreateCurrentBrowserOperationId, hasActivatedDevice, initialFirstDeviceName, selectedDeviceSetupLocationId, shouldSelectDeviceSetupLocation, suggestedFirstSalonName } from "./deviceSetupModel";
 
 test("only an active credentialed Device counts as activated for first-device onboarding", () => {
   assert.equal(hasActivatedDevice([{ id: "a", devices: [] }]), false);
   assert.equal(hasActivatedDevice([{ id: "a", devices: [{ state: "active", activationState: "awaiting" }] }]), false);
   assert.equal(hasActivatedDevice([{ id: "a", devices: [{ state: "revoked", activationState: "revoked" }] }]), false);
   assert.equal(hasActivatedDevice([{ id: "a", devices: [{ state: "active", activationState: "activated" }] }]), true);
+});
+
+test("single-location first-device setup avoids a location selector while multi-location setup keeps it", () => {
+  assert.equal(shouldSelectDeviceSetupLocation(1), false);
+  assert.equal(shouldSelectDeviceSetupLocation(2), true);
+});
+
+test("first device name uses a localized default but preserves an edited value", () => {
+  assert.equal(initialFirstDeviceName("", "Основное устройство"), "Основное устройство");
+  assert.equal(initialFirstDeviceName("Front desk", "Основное устройство"), "Front desk");
 });
 
 test("the current-browser operation ID survives retries and is scoped to its Location", () => {

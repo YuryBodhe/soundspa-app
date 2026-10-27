@@ -824,6 +824,13 @@ input[type="button"]:active {
 .customer-account-first-device-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .customer-account-first-device-actions button { min-height: 48px; padding: 10px 14px; font-size: 15px; }
 .customer-account-first-device button:focus-visible { outline: 3px solid #f3e6c6; outline-offset: 3px; }
+.customer-account-first-device-location { display: grid; gap: 3px; margin: 0; color: rgba(245,240,230,.68); font-size: 14px; }
+.customer-account-first-device-location strong { color: #f5f0e6; font-size: 16px; font-weight: 600; }
+.customer-account-locations-heading,
+.customer-account-device-disclosure,
+.customer-account-subscription-disclosure { scroll-margin-top: 18px; }
+.customer-account-subscription-disclosure { margin-top: 8px; }
+.customer-account-subscription-disclosure .customer-account-billing-section { margin-top: 0; padding: 10px 0 4px; border: 0; }
 .customer-account-locations-heading {
   align-items: center;
   margin-top: 18px;
