@@ -135,7 +135,7 @@ test("Account keeps billing actions and histories while collapsed salon rows sta
   assert.match(account, /accountLocationPresentation\(billingLocation\.products, billingLocation\.partnerBenefits\)/);
   assert.match(account, /<details className="customer-account-location-details">/);
   assert.match(account, /customer-account-device-disclosure/);
-  assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
+  assert.match(account, /group\.locations\.map\(\(location\) => renderDevicesForLocation\(location, organizationHasActivatedDevice\)\)/);
   const summaries = [...account.matchAll(/<summary className="customer-account-location-summary">([\s\S]*?)<\/summary>/g)].map((match) => match[1]);
   assert.ok(summaries.length > 0);
   for (const summary of summaries) {
@@ -236,7 +236,7 @@ test("only Organizations advertised as Owner-capable render Add Location, and su
   assert.match(account, /setNewLocationTimezone\(group\.locations\[0\]\?\.timezone \?\? ""\)/);
   assert.match(account, /await load\(true\)/);
   assert.match(account, /locations=\{billing\.locations\.filter\(\(location\) => location\.organizationId === organizationId\)\}/);
-  assert.match(account, /group\.locations\.map\(renderDevicesForLocation\)/);
+  assert.match(account, /group\.locations\.map\(\(location\) => renderDevicesForLocation\(location, organizationHasActivatedDevice\)\)/);
 });
 
 test("Add Location labels and customer-facing errors are localized in RU, EN, VI, and TH", async () => {

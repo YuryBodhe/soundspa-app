@@ -8,6 +8,7 @@ import AccountBillingWizard from "./AccountBillingWizard";
 import SpaquatoriaPromoRedeemer from "./SpaquatoriaPromoRedeemer";
 import { saveBillingMarketAndRefresh } from "./billingWizardModel";
 import { accountLocationPresentation, shouldRefreshAccountOnReturn } from "./accountViewModel";
+import { currentBrowserOperationStorageKey, getOrCreateCurrentBrowserOperationId, hasActivatedDevice, selectedDeviceSetupLocationId, suggestedFirstSalonName } from "./deviceSetupModel";
 import { trialCountdown, trialDaysMessageKey } from "@/lib/v2/customerOnboarding";
 import { resolvePlayerUpgradeHandoff, type PlayerUpgradeHandoff } from "./playerUpgradeHandoff";
 import { playerUpgradeLoginPath, removePlayerUpgradeContextParams } from "@/lib/v2/playerUpgradeContext";
@@ -68,6 +69,7 @@ function Content() {
   const [refreshing, setRefreshing] = useState(false);
   const [organizationName, setOrganizationName] = useState("");
   const [locationName, setLocationName] = useState("");
+  const [locationNameManuallyEdited, setLocationNameManuallyEdited] = useState(false);
   const [timezone, setTimezone] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -77,6 +79,10 @@ function Content() {
   const deviceSubmitLock = useRef(false);
   const [deviceError, setDeviceError] = useState("");
   const [activationLink, setActivationLink] = useState<ActivationLink | null>(null);
+  const [firstDeviceLocationId, setFirstDeviceLocationId] = useState("");
+  const [firstDeviceName, setFirstDeviceName] = useState("");
+  const [firstDeviceBusy, setFirstDeviceBusy] = useState(false);
+  const firstDeviceSubmitLock = useRef(false);
   const [addingLocationOrganizationId, setAddingLocationOrganizationId] = useState<string | null>(null);
   const [newLocationName, setNewLocationName] = useState("");
   const [newLocationTimezone, setNewLocationTimezone] = useState("");
@@ -339,8 +345,12 @@ function Content() {
 
   async function createDevice(event: FormEvent<HTMLFormElement>, location: CustomerLocation) {
     event.preventDefault();
+    await createDeviceLink(location, deviceName);
+  }
+
+  async function createDeviceLink(location: CustomerLocation, requestedName: string) {
     if (deviceSubmitLock.current) return;
-    const name = deviceName.trim();
+    const name = requestedName.trim();
     if (!name || name.length > 120) { setDeviceError(t("deviceNameRequired")); return; }
     deviceSubmitLock.current = true;
     setDeviceSaving(true); setDeviceError(""); setActivationLink(null); setLinkCopied(false);
@@ -358,11 +368,45 @@ function Content() {
         setDeviceError(t(errorKey));
         return;
       }
-      setActivationLink({ locationId: location.id, url: body.activationUrl, expiresAt: body.expiresAt });
+      const localizedUrl = new URL(body.activationUrl);
+      localizedUrl.searchParams.set("lang", locale);
+      setActivationLink({ locationId: location.id, url: localizedUrl.toString(), expiresAt: body.expiresAt });
       setConnectingLocationId(null); setDeviceName("");
+      setFirstDeviceName("");
       void load();
     } catch { setDeviceError(t("deviceProvisioningFailed")); }
     finally { deviceSubmitLock.current = false; setDeviceSaving(false); }
+  }
+
+  async function activateCurrentBrowser(location: CustomerLocation | undefined) {
+    if (!location || firstDeviceSubmitLock.current) return;
+    const name = firstDeviceName.trim();
+    if (!name || name.length > 120) { setDeviceError(t("deviceNameRequired")); return; }
+    firstDeviceSubmitLock.current = true;
+    setFirstDeviceBusy(true); setDeviceError("");
+    try {
+      const operationId = getOrCreateCurrentBrowserOperationId(location.id, window.sessionStorage, () => window.crypto.randomUUID());
+      const response = await fetch("/api/v2/customer/devices/current-browser", {
+        method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operationId, locationId: location.id, deviceName: name }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        if (body.error === "operation_expired" || body.error === "operation_unavailable") {
+          window.sessionStorage.removeItem(currentBrowserOperationStorageKey(location.id));
+        }
+        const errorKey = body.error === "unauthenticated" ? "deviceAuthRequired"
+          : body.error === "unverified" ? "deviceEmailUnverified"
+            : body.error === "location_unavailable" ? "deviceLocationUnavailable"
+              : body.error === "invalid" ? "deviceNameRequired"
+                : body.error === "operation_expired" ? "deviceActivationRetryExpired" : "deviceProvisioningFailed";
+        setDeviceError(t(errorKey));
+        return;
+      }
+      window.sessionStorage.removeItem(currentBrowserOperationStorageKey(location.id));
+      window.location.assign("/player");
+    } catch { setDeviceError(t("deviceProvisioningFailed")); }
+    finally { firstDeviceSubmitLock.current = false; setFirstDeviceBusy(false); }
   }
 
   async function createLocation(event: FormEvent<HTMLFormElement>, organizationId: string) {
@@ -480,7 +524,7 @@ function Content() {
     group.locations.push(location); locationGroups.set(location.organizationId, group);
   }
   const organizationEntries = [...locationGroups.entries()];
-  const renderDevicesForLocation = (location: CustomerLocation) => <section className="customer-account-device-location" key={location.id}>
+  const renderDevicesForLocation = (location: CustomerLocation, hasActivatedDevice: boolean) => <section className="customer-account-device-location" key={location.id}>
     <h3>{location.name}</h3>
     {location.devices.length ? <ul className="customer-account-devices">{location.devices.map((device, index) => <li key={`${device.createdAt}-${index}`}>
       <span>{device.label || t("deviceUnnamed")}</span>
@@ -490,7 +534,7 @@ function Content() {
       <label>{t("deviceNameLabel")}<input required maxLength={120} value={deviceName} onChange={(event) => setDeviceName(event.target.value)} /></label>
       {deviceError && <p role="alert">{deviceError}</p>}
       <button className="customer-auth-submit" type="submit" disabled={deviceSaving}>{deviceSaving ? t("deviceCreating") : t("deviceCreateLink")}</button>
-    </form> : <button className="customer-billing-secondary" type="button" disabled={deviceSaving} onClick={() => { setConnectingLocationId(location.id); setDeviceError(""); setActivationLink(null); }}>{t("deviceConnect")}</button>}
+    </form> : <button className="customer-billing-secondary" type="button" disabled={deviceSaving} onClick={() => { setConnectingLocationId(location.id); setDeviceError(""); setActivationLink(null); }}>{t(hasActivatedDevice ? "deviceAddAnother" : "deviceConnectFirst")}</button>}
     {activationLink?.locationId === location.id && <div className="customer-account-activation" role="status" aria-live="polite">
       <p>{t("deviceLinkInstruction")}</p><a href={activationLink.url} target="_blank" rel="noreferrer">{activationLink.url}</a>
       <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString())}</p>
@@ -504,11 +548,32 @@ function Content() {
       {playerHandoffMessage && <p role="status" className="customer-billing-notice">{t(playerHandoffMessage === "invalid" ? "playerUpgradeInvalidLocation" : playerHandoffMessage === "some_unavailable" ? "playerUpgradeSomeUnavailable" : "playerUpgradeUnavailable")}</p>}
       {complete ? <>
         {result?.partnerContext && <p role="status">{t("existingOrganization")}</p>}
-        {organizationEntries.map(([organizationId, group], organizationIndex) => <section className="customer-account-organization" key={organizationId}>
+        {organizationEntries.map(([organizationId, group], organizationIndex) => {
+          const organizationHasActivatedDevice = hasActivatedDevice(group.locations);
+          const selectedFirstDeviceLocationId = selectedDeviceSetupLocationId(group.locations, firstDeviceLocationId);
+          return <section className="customer-account-organization" key={organizationId}>
           {organizationEntries.length === 1 ? <><h1 className="customer-account-org-title">{group.organizationName}</h1><p className="customer-account-subtitle">{t("accountDashboardSubtitle")}</p></> : <h2 className="customer-account-org-title">{group.organizationName}</h2>}
-          {organizationIndex === 0 && <div className="customer-account-player-entry">
+          {organizationHasActivatedDevice && organizationIndex === 0 && <div className="customer-account-player-entry">
             <a href="/player" target="_blank" rel="noopener noreferrer">{t("accountOpenPlayer")} <span aria-hidden="true">↗</span></a>
           </div>}
+          {!organizationHasActivatedDevice && <section className="customer-account-first-device" aria-labelledby={`first-device-title-${organizationId}`}>
+            <h2 id={`first-device-title-${organizationId}`}>{t("deviceFirstSetupTitle")}</h2>
+            <p>{t("deviceFirstSetupDescription")}</p>
+            <label>{t("deviceLocationLabel")}<select value={selectedFirstDeviceLocationId} onChange={(event) => setFirstDeviceLocationId(event.target.value)}>
+              {group.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+            </select></label>
+            <label>{t("deviceNameLabel")}<input required maxLength={120} value={firstDeviceName} onChange={(event) => setFirstDeviceName(event.target.value)} /></label>
+            {deviceError && <p role="alert" className="customer-onboarding-error">{deviceError}</p>}
+            <div className="customer-account-first-device-actions">
+              <button className="customer-auth-submit" type="button" disabled={firstDeviceBusy || deviceSaving} onClick={() => void activateCurrentBrowser(group.locations.find((location) => location.id === selectedFirstDeviceLocationId))}>{firstDeviceBusy ? t("deviceActivatingCurrent") : t("deviceListenOnThisDevice")}</button>
+              <button className="customer-billing-secondary" type="button" disabled={firstDeviceBusy || deviceSaving} onClick={() => { const location = group.locations.find((item) => item.id === selectedFirstDeviceLocationId); if (location) void createDeviceLink(location, firstDeviceName); }}>{deviceSaving ? t("deviceCreating") : t("deviceConnectOther")}</button>
+            </div>
+            {activationLink && group.locations.some((location) => location.id === activationLink.locationId) && <div className="customer-account-activation" role="status" aria-live="polite">
+              <p>{t("deviceLinkInstruction")}</p><a href={activationLink.url} target="_blank" rel="noopener noreferrer">{activationLink.url}</a>
+              <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString(locale))}</p>
+              <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button>
+            </div>}
+          </section>}
           <div className="customer-account-locations-heading"><h2>{t("accountSalonCount").replace("{{count}}", String(group.locations.length))}</h2>
           {group.canCreateLocations && addingLocationOrganizationId !== organizationId && <div className="customer-account-add-location">
             <button type="button" className="customer-billing-secondary" onClick={() => { setAddingLocationOrganizationId(organizationId); setNewLocationName(""); setNewLocationTimezone(group.locations[0]?.timezone ?? ""); setNewLocationError(""); }}>{t("addLocation")}</button>
@@ -565,21 +630,21 @@ function Content() {
           />}
           <details className="customer-account-bottom-disclosure customer-account-device-disclosure">
             <summary>{t("customerDevices")}</summary>
-            <div className="customer-account-device-groups">{group.locations.map(renderDevicesForLocation)}</div>
+            <div className="customer-account-device-groups">{group.locations.map((location) => renderDevicesForLocation(location, organizationHasActivatedDevice))}</div>
           </details>
-        </section>)}
+        </section>;
+        })}
         {result?.locations?.length === 0 && <p role="status">{t("deviceNoAuthorizedLocations")}</p>}
         {billingNotice && !selectedBilling && <p role="status" className="customer-billing-notice">{billingNotice}</p>}
         {billingError && !selectedBilling && <p role="alert" className="customer-onboarding-error">{billingError}</p>}
       </> : <>
         {result?.partnerContext && <p role="status">{t("partnerInvitePending")}</p>}
         {result?.registrationContext && <p role="status">{t("registrationLinkSignupNotice")}</p>}
-        <p>{t("onboardingIncomplete")}</p><h2>{t("onboardingTitle")}</h2><p>{t("onboardingDescription")}</p>
+        <h2>{t("onboardingTitle")}</h2>
         <form onSubmit={submit}>
-          <label>{t("organizationName")}<input required maxLength={160} autoComplete="organization" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} /></label>
-          <label>{t("locationName")}<input required maxLength={160} autoComplete="organization-title" value={locationName} onChange={(event) => setLocationName(event.target.value)} /></label>
-          <label>{t("timezone")}<input required maxLength={100} autoComplete="off" placeholder="Asia/Ho_Chi_Minh" value={timezone} onChange={(event) => setTimezone(event.target.value)} /></label>
-          <p className="customer-onboarding-help">{t("timezoneHelp")}</p>
+          <label>{t("organizationName")}<input required maxLength={160} autoComplete="organization" value={organizationName} onChange={(event) => { const value = event.target.value; setOrganizationName(value); setLocationName((current) => suggestedFirstSalonName(value, current, locationNameManuallyEdited)); }} /></label>
+          <label>{t("locationName")}<input required maxLength={160} autoComplete="organization-title" value={locationName} onChange={(event) => { setLocationNameManuallyEdited(true); setLocationName(event.target.value); }} /></label>
+          <label>{t("timezone")}<input required maxLength={100} autoComplete="off" value={timezone} onChange={(event) => setTimezone(event.target.value)} /></label>
           {error && <p role="alert" className="customer-onboarding-error">{error}</p>}
           <button className="customer-auth-submit" type="submit" disabled={saving}>{saving ? t("onboardingSubmitting") : t("onboardingSubmit")}</button>
         </form>

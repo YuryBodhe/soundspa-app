@@ -8,6 +8,7 @@ assert(["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname), "Onboardi
 assert.equal(decodeURIComponent(parsedUrl.pathname), "/soundspa_v2", "The test database must use the V2 database name.");
 process.env.V2_DATABASE_URL = testUrl;
 
+async function main() {
 const [{ v2Db }, schema, { completeOrdinaryCustomerOnboarding, CustomerOnboardingError }, { startSoundSpaTrial }] = await Promise.all([
   import("../../db/v2/client"),
   import("../../db/v2/schema"),
@@ -21,6 +22,10 @@ const expectedError = (code: string) => (error: unknown) => error instanceof Cus
 
 try {
   await v2Db.transaction(async (outer) => {
+    const [basicProduct] = await outer.select().from(schema.commercialProducts).where(eq(schema.commercialProducts.code, "soundspa"));
+    if (!basicProduct) await outer.insert(schema.commercialProducts).values({
+      code: "soundspa", name: "SoundSpa Basic", kind: "core", visibility: "public", catalogVisibility: "public",
+    });
     const [user] = await outer.insert(schema.users).values({ email: `onboarding-${fixture}@example.invalid`, emailVerifiedAt: new Date() }).returning();
     const [intent] = await outer.insert(schema.customerSignupIntents).values({
       email: user.email, locale: "en", expiresAt: new Date(Date.now() + 60_000), verifiedAt: new Date(), completedAt: new Date(),
@@ -32,12 +37,15 @@ try {
     const [unverified] = await outer.insert(schema.users).values({ email: `unverified-${fixture}@example.invalid` }).returning();
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: unverified.id }, { runInTransaction }), expectedError("unverified"));
 
+    // Keep the Partner-context rejection fixture separate from the ordinary
+    // onboarding identity, which is later expected to complete successfully.
+    const [partnerUser] = await outer.insert(schema.users).values({ email: `partner-${fixture}@example.invalid`, emailVerifiedAt: new Date() }).returning();
     const legacyPartnerVerifiedAt = new Date();
     const [partnerIntent] = await outer.insert(schema.customerSignupIntents).values({
-      email: user.email, locale: "en", inviteTokenHash: "a".repeat(64), expiresAt: new Date(Date.now() + 60_000), verifiedAt: legacyPartnerVerifiedAt, completedAt: legacyPartnerVerifiedAt,
+      email: partnerUser.email, locale: "en", inviteTokenHash: "a".repeat(64), expiresAt: new Date(Date.now() + 60_000), verifiedAt: legacyPartnerVerifiedAt, completedAt: legacyPartnerVerifiedAt,
     }).returning();
-    await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, signupIntentId: partnerIntent.id }, { runInTransaction }), expectedError("partner_context"));
-    await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, signupIntentId: null }, { runInTransaction }), expectedError("partner_context"), "Partner context must remain protected after a later login without the original session intent id.");
+    await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: partnerUser.id, signupIntentId: partnerIntent.id }, { runInTransaction }), expectedError("partner_context"));
+    await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: partnerUser.id, signupIntentId: null }, { runInTransaction }), expectedError("partner_context"), "Partner context must remain protected after a later login without the original session intent id.");
     assert.equal((await outer.select({ id: schema.organizationMembers.organizationId }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id))).length, 0, "Partner context must not create an owner membership or trial.");
 
     const [preverificationUser] = await outer.insert(schema.users).values({ email: `preverification-partner-${fixture}@example.invalid`, emailVerifiedAt: new Date() }).returning();
@@ -89,3 +97,6 @@ try {
 } finally {
   await v2Db.$client.end();
 }
+}
+
+main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

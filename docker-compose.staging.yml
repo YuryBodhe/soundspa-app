@@ -15,6 +15,7 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
       V2_DATABASE_URL: ${V2_DATABASE_URL:?Set V2_DATABASE_URL in the explicit V2 environment}
+      V2_DEVICE_ACTIVATION_SECRET: ${V2_DEVICE_ACTIVATION_SECRET:?Set a unique 32+ byte V2 device activation secret}
       # Empty values fail closed for Admin only; public catalog remains available.
       V2_ADMIN_USERNAME: ${V2_ADMIN_USERNAME:-}
       V2_ADMIN_PASSWORD: ${V2_ADMIN_PASSWORD:-}

@@ -183,6 +183,13 @@
       "when": 1792069806105,
       "tag": "0025_graceful_shatterstar",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793115688008,
+      "tag": "0026_current_browser_device_idempotency",
+      "breakpoints": true
     }
   ]
 }

@@ -81,6 +81,23 @@
   padding-top: 0;
 }
 
+.deviceSetupLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 12px;
+  padding: 10px 18px;
+  border: 1px solid rgba(212, 201, 176, .75);
+  border-radius: 8px;
+  background: #d4c9b0;
+  color: #100f0c;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.deviceSetupLink:focus-visible { outline: 3px solid #f3e6c6; outline-offset: 3px; }
+
 .nowPlayingLabel {
   margin-bottom: 6px;
   color: #7a7670;

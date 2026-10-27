@@ -22,9 +22,13 @@ assert.equal(trialDaysMessageKey("ru", 2), "trialDaysFew");
 assert.equal(trialDaysMessageKey("ru", 5), "trialDaysMany");
 assert.equal(trialDaysMessageKey("ru", 21), "trialDaysOne");
 
-const onboardingKeys = ["onboardingTitle", "onboardingDescription", "organizationName", "locationName", "timezone", "timezoneHelp", "onboardingSubmit", "onboardingSubmitting", "onboardingIncomplete", "onboardingCompleted", "onboardingInvalid", "onboardingUnavailable", "onboardingPartnerContext", "trialLabel", "trialDays", "trialLessThanDay", "trialEnded", "trialActive", "accountOrganization", "accountLocation", "accountTimezone", "timezoneRequired"] as const;
+const onboardingKeys = ["onboardingTitle", "onboardingDescription", "organizationName", "locationName", "timezone", "timezoneHelp", "onboardingSubmit", "onboardingSubmitting", "onboardingIncomplete", "onboardingCompleted", "onboardingInvalid", "onboardingUnavailable", "onboardingPartnerContext", "trialLabel", "trialDays", "trialLessThanDay", "trialEnded", "trialActive", "accountOrganization", "accountLocation", "accountTimezone", "timezoneRequired", "deviceConnectFirst", "deviceAddAnother", "deviceFirstSetupTitle", "deviceFirstSetupDescription", "deviceLocationLabel", "deviceListenOnThisDevice", "deviceActivatingCurrent", "deviceConnectOther", "deviceActivationRetryExpired", "playerDeviceSetupHelp", "playerDeviceSetupAction"] as const;
 for (const dictionary of [en, ru, vi, th]) for (const key of onboardingKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
 const partnerKeys = ["partnerInvitePending", "partnerSetupCompleted", "partnerInviteUnavailable", "partnerInviteAmbiguous", "partnerClaimFailure", "existingOrganization", "partnerAccess", "noAvailableChannels"] as const;
 for (const dictionary of [en, ru, vi, th]) for (const key of partnerKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
 assert(en.partnerInviteUnavailable && en.partnerInviteAmbiguous, "English partner invitation copy provides the fallback wording.");
+const activationKeys = ["deviceActivationEyebrow", "deviceActivationConfirmTitle", "deviceActivationOrganization", "deviceActivationLocation", "deviceActivationDevice", "deviceActivationUnnamed", "deviceActivationSubmit", "deviceActivationUnavailableTitle", "deviceActivationUnavailableDescription", "deviceActivationTemporaryError"] as const;
+for (const dictionary of [en, ru, vi, th]) for (const key of activationKeys) assert.equal(typeof dictionary[key], "string", `${key} must exist in every locale`);
+assert.equal(ru.onboardingTitle, "Подключить салон");
+assert.equal(ru.onboardingSubmit, "Продолжить");
 console.info("V2 Customer Onboarding unit PASS: generated location slug, timezone-safe inputs remain server-validated, trial countdown boundaries, and EN/RU/VI/TH ordinary + Partner onboarding dictionary coverage.");
