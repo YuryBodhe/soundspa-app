@@ -1,0 +1,129 @@
+name: soundspa-v2-production
+
+services:
+  app:
+    image: ${V2_APP_IMAGE:?Set V2_APP_IMAGE to the tested immutable image digest}
+    pull_policy: never
+    container_name: soundspa-v2-production-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3102:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Keep legacy V1 handlers pointed at an unreachable placeholder, never V1's DB.
+      DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy
+      V2_DATABASE_URL: ${V2_DATABASE_URL:?Set the restricted production application database URL}
+      V2_PUBLIC_ORIGIN: ${V2_PUBLIC_ORIGIN:?Set the production HTTPS origin}
+      V2_ADMIN_USERNAME: ${V2_ADMIN_USERNAME:?Set the production operator username}
+      V2_ADMIN_PASSWORD: ${V2_ADMIN_PASSWORD:?Set the production operator password}
+      V2_AUTH_EMAIL_FROM: ${V2_AUTH_EMAIL_FROM:?Set a verified production sender}
+      RESEND_API_KEY: ${RESEND_API_KEY:?Set the production email provider key}
+      V2_MEDIA_ROOT: /var/lib/soundspa-v2-media
+      V2_MEDIA_STORAGE_BACKEND: ${V2_MEDIA_STORAGE_BACKEND:?Set the production media storage backend}
+      V2_MEDIA_FINALIZE_MODE: ${V2_MEDIA_FINALIZE_MODE:?Set the production media finalization mode}
+      V2_MEDIA_DELIVERY_BACKEND: ${V2_MEDIA_DELIVERY_BACKEND:?Set the production media delivery backend}
+      V2_MEDIA_CDN_BASE_URL: ${V2_MEDIA_CDN_BASE_URL:?Set the production media CDN origin}
+      V2_S3_ENDPOINT: ${V2_S3_ENDPOINT:?Set the production object storage endpoint}
+      V2_S3_BUCKET: ${V2_S3_BUCKET:?Set the existing published media catalog bucket}
+      V2_S3_REGION: ${V2_S3_REGION:?Set the production object storage region}
+      V2_S3_ACCESS_KEY_ID: ${V2_S3_ACCESS_KEY_ID:?Set the production object storage access key}
+      V2_S3_SECRET_ACCESS_KEY: ${V2_S3_SECRET_ACCESS_KEY:?Set the production object storage secret}
+      V2_S3_FORCE_PATH_STYLE: ${V2_S3_FORCE_PATH_STYLE:-0}
+      V2_DEVICE_BOOTSTRAP_ENABLED: ${V2_DEVICE_BOOTSTRAP_ENABLED:-0}
+      V2_MAX_LOCATIONS_PER_ORGANIZATION: ${V2_MAX_LOCATIONS_PER_ORGANIZATION:-20}
+      V2_DEPLOYMENT_ENV: production
+      V2_FAKE_PROVIDER_ENABLED: "0"
+    volumes:
+      - type: bind
+        source: /var/lib/soundspa-v2-production-media
+        target: /var/lib/soundspa-v2-media
+        bind:
+          create_host_path: false
+    depends_on:
+      v2-postgres:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        case "$$V2_DATABASE_URL $$V2_ADMIN_USERNAME $$V2_ADMIN_PASSWORD $$V2_AUTH_EMAIL_FROM $$RESEND_API_KEY $$V2_MEDIA_CDN_BASE_URL $$V2_S3_ENDPOINT $$V2_S3_BUCKET $$V2_S3_REGION $$V2_S3_ACCESS_KEY_ID $$V2_S3_SECRET_ACCESS_KEY" in
+          *REPLACE_*|*PLACEHOLDER*|*CHANGE_ME*) echo "Production configuration contains unresolved placeholders" >&2; exit 78 ;;
+        esac
+        [ "$${#V2_ADMIN_PASSWORD}" -ge 32 ] || { echo "Production operator password must be at least 32 characters" >&2; exit 78; }
+        case "$$V2_DATABASE_URL" in postgresql://soundspa_v2_app:*@v2-postgres:5432/soundspa_v2) ;; *) echo "Production application DB URL must target only the V2 production service/database" >&2; exit 78 ;; esac
+        [ "$$V2_PUBLIC_ORIGIN" = "https://soundspa2.bodhemusic.com" ] || { echo "Unexpected production origin" >&2; exit 78; }
+        [ "$$V2_DEPLOYMENT_ENV" = "production" ] && [ "$$V2_FAKE_PROVIDER_ENABLED" = "0" ] || { echo "Fake provider must remain disabled in production" >&2; exit 78; }
+        exec npm run start
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    mem_limit: 1g
+    networks: [backend]
+
+  v2-postgres:
+    image: ${V2_POSTGRES_IMAGE:?Set V2_POSTGRES_IMAGE to a reviewed immutable PostgreSQL image digest}
+    container_name: soundspa-v2-production-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: soundspa_v2
+      POSTGRES_USER: soundspa_v2_owner
+      POSTGRES_PASSWORD: ${V2_POSTGRES_OWNER_PASSWORD:?Set a unique production PostgreSQL owner password}
+      V2_APP_DB_PASSWORD: ${V2_APP_DB_PASSWORD:?Set a unique production application DB password}
+      V2_MIGRATION_DB_PASSWORD: ${V2_MIGRATION_DB_PASSWORD:?Set a unique production migration DB password}
+    volumes:
+      - v2-production-pgdata:/var/lib/postgresql/data
+      - type: bind
+        source: ./deploy/postgres/production-init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U soundspa_v2_owner -d soundspa_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [backend]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$$POSTGRES_PASSWORD $$V2_APP_DB_PASSWORD $$V2_MIGRATION_DB_PASSWORD" in
+          *REPLACE_*|*PLACEHOLDER*|*CHANGE_ME*) echo "Production database configuration contains unresolved placeholders" >&2; exit 78 ;;
+        esac
+        [ "$${#POSTGRES_PASSWORD}" -ge 32 ] && [ "$${#V2_APP_DB_PASSWORD}" -ge 32 ] && [ "$${#V2_MIGRATION_DB_PASSWORD}" -ge 32 ] || { echo "Production database passwords must each be at least 32 characters" >&2; exit 78; }
+        exec /usr/local/bin/docker-entrypoint.sh postgres
+
+  v2-migrate:
+    profiles: [tools]
+    image: ${V2_APP_IMAGE:?Set V2_APP_IMAGE to the tested immutable image digest}
+    pull_policy: never
+    restart: "no"
+    environment:
+      V2_DATABASE_URL: ${V2_MIGRATION_DATABASE_URL:?Set the production migration database URL}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        case "$$V2_DATABASE_URL" in *REPLACE_*|*PLACEHOLDER*|*CHANGE_ME*) echo "Production migration URL contains an unresolved placeholder" >&2; exit 78 ;; esac
+        case "$$V2_DATABASE_URL" in postgresql://soundspa_v2_migrator:*@v2-postgres:5432/soundspa_v2) ;; *) echo "Production migration URL must target only the V2 production service/database" >&2; exit 78 ;; esac
+        exec npm run db:v2:migrate
+    depends_on:
+      v2-postgres:
+        condition: service_healthy
+    networks: [backend]
+
+networks:
+  backend:
+    name: soundspa-v2-production-backend
+
+volumes:
+  v2-production-pgdata:
+    name: soundspa-v2-production-pgdata
