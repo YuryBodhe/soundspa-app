@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { adminLocationPath } from "../../../lib/v2/adminLocationNavigation";
 
 type ProvisioningResponse = { ok?: boolean; message?: string; locationId?: string };
 
@@ -50,7 +51,7 @@ export default function CustomerProvisioningForm({ timeZones }: { timeZones: str
         setError(result?.message ?? "Customer and Location could not be created. Please retry.");
         return;
       }
-      router.push(`/admin/ui?location=${encodeURIComponent(result.locationId)}`);
+      router.push(adminLocationPath(result.locationId));
       router.refresh();
     } catch {
       setError("Connection failed. Check the Customers list before retrying.");
