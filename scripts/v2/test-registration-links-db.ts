@@ -21,7 +21,7 @@ const [{ v2Db, v2Pool }, schema, links, auth, { completeOrdinaryCustomerOnboardi
 ]);
 const identity = (await v2Pool.query<{ database: string; role: string; address: string | null; version: string; migrations: number; latest: string }>(`SELECT current_database() AS database,current_user AS role,inet_server_addr()::text AS address,current_setting('server_version_num') AS version,(SELECT count(*)::int FROM drizzle_v2.__drizzle_migrations) AS migrations,(SELECT max(created_at)::text FROM drizzle_v2.__drizzle_migrations) AS latest`)).rows[0];
 const address = identity?.address?.split("/")[0] ?? "";
-if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 25 || identity.latest !== "1792049901337") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0024.");
+if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 28 || identity.latest !== "1793179822892") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0027.");
 const clean = await v2Pool.query<{ total: string }>(`SELECT
  (SELECT count(*) FROM organizations)+(SELECT count(*) FROM users)+(SELECT count(*) FROM locations)+
  (SELECT count(*) FROM commercial_products)+(SELECT count(*) FROM commercial_product_organization_authorizations)+
@@ -110,6 +110,8 @@ try {
   check(onboarding.account.trial?.startsAt.getTime() === now.getTime(), "onboarding creates the Organization and first Location with the shared trial start");
   const organizationId = onboarding.account.organization!.id;
   const locationId = onboarding.account.location!.id;
+  const [legacyOrganization] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, organizationId));
+  check(legacyOrganization.contactEmail === winningUser.email, "legacy Divnitsa Registration Link stores the verified owner email as Organization contact");
   const trials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, locationId));
   check(trials.length === 2, "the first Location receives exactly the Basic and Divnitsa trials");
   check(trials.every((trial) => trial.startsAt.getTime() === now.getTime() && trial.endsAt.getTime() === now.getTime() + trialMs), "both trials share exact 30 elapsed-day UTC boundaries");
@@ -123,8 +125,19 @@ try {
   const [ownerless] = await v2Db.insert(schema.locations).values({ organizationId, name: "Second Location", slug: `registration-${suffix.slice(0, 12)}-second`, timezone: "Europe/Moscow" }).returning();
   check((await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, ownerless.id))).length === 0, "additional Locations receive no automatic trials");
   check((await v2Db.select().from(schema.commercialBillingOrders)).length === 0 && (await v2Db.select().from(schema.commercialPayments)).length === 0 && (await v2Db.select().from(schema.locationSubscriptions)).length === 0 && (await v2Db.select().from(schema.locationChannelEntitlements)).length === 0, "redemption creates no orders, payments, paid subscriptions, or playback entitlements");
+  await v2Db.update(schema.organizations).set({ contactEmail: `operator-edited-${suffix}@example.invalid` }).where(eq(schema.organizations.id, organizationId));
   const repeated = await complete(winningUser, "Ignored repeated Organization");
   check(repeated.status === "already_complete" && repeated.organizationId === organizationId, "repeated onboarding returns the same completed redemption");
+  const [legacyContactAfterRetry] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, organizationId));
+  check(legacyContactAfterRetry.contactEmail === `operator-edited-${suffix}@example.invalid`, "legacy replay preserves an operator-edited contact email");
+
+  const [unverifiedRegistrationUser] = await v2Db.insert(schema.users).values({ email: `registration-unverified-${suffix}@example.invalid` }).returning();
+  const [unverifiedRegistrationIntent] = await v2Db.insert(schema.customerSignupIntents).values({
+    registrationLinkId: maxLimited.link.id, contextTokenHash: sha256(randomUUID()), email: unverifiedRegistrationUser.email,
+    locale: "en", expiresAt: new Date(now.getTime() + 60_000),
+  }).returning();
+  await rejectsCode(links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: unverifiedRegistrationUser.id, signupIntentId: unverifiedRegistrationIntent.id, organizationName: `Unverified ${suffix}`, locationName: "First Location", timezone: "UTC" }, now), "unverified");
+  check((await v2Db.select().from(schema.organizations).where(eq(schema.organizations.name, `Unverified ${suffix}`))).length === 0, "unverified Registration Link user cannot create an Organization or contact email");
 
   const calendarNow = new Date("2024-01-31T12:34:56.789Z");
   const makeUniversal = async (selected: { productId: string; durationMonths: number }[], label: string, maxRedemptions?: number) => {
@@ -140,13 +153,18 @@ try {
   const universalBasic = await makeUniversal([{ productId: basic.id, durationMonths: 1 }], "Basic only");
   const { pendingSignup: universalBasicSignup, result: universalBasicResult } = await finishUniversal(universalBasic.token, "basic");
   check(universalBasicResult.grants?.length === 1 && universalBasicResult.grants[0]?.productCode === "soundspa", "Basic-only universal link grants exactly Basic");
+  const [universalBasicOrganization] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, universalBasicResult.account.organization!.id));
+  check(universalBasicOrganization.contactEmail === universalBasicSignup.email, "universal Registration Link stores the verified owner email as Organization contact");
   const basicOnlyLocation = universalBasicResult.account.location!.id;
   const basicOnlyTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, basicOnlyLocation));
   check(basicOnlyTrials.length === 1 && basicOnlyTrials[0].productId === basic.id && basicOnlyTrials[0].endsAt.toISOString() === "2024-02-29T12:34:56.789Z", "Basic-only uses one UTC calendar month at a month-end boundary");
   check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, universalBasicResult.account.organization!.id))).length === 0, "Basic-only does not grant private-product purchase authorization");
+  await v2Db.update(schema.organizations).set({ contactEmail: `operator-universal-${suffix}@example.invalid` }).where(eq(schema.organizations.id, universalBasicResult.account.organization!.id));
   const universalBasicReplay = await links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: universalBasicSignup.userId, signupIntentId: universalBasicSignup.intentId, organizationName: "Ignored replay", locationName: "Ignored", timezone: "UTC" }, calendarNow);
   const [universalBasicRedemption] = await v2Db.select().from(schema.commercialRegistrationLinkRedemptions).where(eq(schema.commercialRegistrationLinkRedemptions.signupIntentId, universalBasicSignup.intentId));
   check(universalBasicReplay.status === "already_complete" && (await v2Db.select().from(schema.commercialRegistrationLinkGrants).where(eq(schema.commercialRegistrationLinkGrants.redemptionId, universalBasicRedemption.id))).length === 1, "universal replay is idempotent and does not duplicate Product access");
+  const [universalContactAfterRetry] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, universalBasicResult.account.organization!.id));
+  check(universalContactAfterRetry.contactEmail === `operator-universal-${suffix}@example.invalid`, "universal replay preserves an operator-edited contact email");
 
   const universalMixed = await makeUniversal([{ productId: basic.id, durationMonths: 1 }, { productId: spaquatoria.id, durationMonths: 3 }], "Basic and Spaquatoria");
   const { result: mixedResult } = await finishUniversal(universalMixed.token, "basic-spaquatoria");
@@ -270,6 +288,8 @@ try {
   const [ordinaryIntent] = await v2Db.insert(schema.customerSignupIntents).values({ email: ordinaryUser.email, locale: "en", expiresAt: new Date(now.getTime() + 60_000), verifiedAt: now }).returning();
   const ordinary = await completeOrdinaryCustomerOnboarding({ authenticatedUserId: ordinaryUser.id, signupIntentId: ordinaryIntent.id, organizationName: `Ordinary ${suffix}`, locationName: "First Location", timezone: "UTC" }, { createTrial: (locationId, db) => startSoundSpaTrial(locationId, db) });
   check(ordinary.status === "completed" && ordinary.account.trial!.endsAt.getTime() - ordinary.account.trial!.startsAt.getTime() === 28 * 24 * 60 * 60 * 1000, "ordinary signup retains the existing 28-day Basic trial");
+  const [ordinaryOrganization] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, ordinary.account.organization!.id));
+  check(ordinaryOrganization.contactEmail === ordinaryUser.email, "ordinary registration stores verified user email as Organization contact");
 
   console.info(`V2 Registration Link DB PASS: ${assertions} assertions across concurrent redemption limits, exact dual trials, authorization provenance/revocation, link disable/expiry, idempotency, no billing side effects, and ordinary signup regression. Fixtures retained only in this disposable database.`);
 } finally {

@@ -36,6 +36,7 @@ try {
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: randomUUID() }, { runInTransaction }), expectedError("unauthenticated"));
     const [unverified] = await outer.insert(schema.users).values({ email: `unverified-${fixture}@example.invalid` }).returning();
     await assert.rejects(completeOrdinaryCustomerOnboarding({ ...input, authenticatedUserId: unverified.id }, { runInTransaction }), expectedError("unverified"));
+    assert.equal((await outer.select().from(schema.organizations).where(eq(schema.organizations.name, input.organizationName))).length, 0, "an unverified account cannot provision an Organization or contact email");
 
     // Keep the Partner-context rejection fixture separate from the ordinary
     // onboarding identity, which is later expected to complete successfully.
@@ -60,11 +61,16 @@ try {
     assert.equal(created.account.organization.name, `Onboarding ${fixture}`);
     assert.equal(created.account.location.timezone, "Asia/Ho_Chi_Minh");
     assert.equal(created.account.trial?.status, "active");
+    const [createdOrganization] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, created.account.organization!.id));
+    assert.equal(createdOrganization.contactEmail, user.email, "ordinary onboarding uses the verified database user email as the Organization contact");
     assert.equal(created.account.trial!.endsAt.getTime() - created.account.trial!.startsAt.getTime(), SOUNDSPA_BASIC_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    await outer.update(schema.organizations).set({ contactEmail: `operator-edited-${fixture}@example.invalid` }).where(eq(schema.organizations.id, created.account.organization!.id));
     const repeated = await completeOrdinaryCustomerOnboarding({ ...input, organizationName: "Ignored retry", locationName: "Ignored retry", timezone: "Europe/Moscow" }, { runInTransaction });
     assert.equal(repeated.status, "already_complete");
     assert(repeated.account.organization && created.account.organization);
     assert.equal(repeated.account.organization.id, created.account.organization.id);
+    const [organizationAfterRetry] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, created.account.organization.id));
+    assert.equal(organizationAfterRetry.contactEmail, `operator-edited-${fixture}@example.invalid`, "an operator-edited contact is not overwritten by repeated onboarding");
     assert.equal((await outer.select({ role: schema.organizationMembers.role }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id))).length, 1);
     assert.equal((await outer.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, created.account.location.id))).length, 1);
     assert.equal((await outer.select({ id: schema.locationChannelGrants.channelId }).from(schema.locationChannelGrants).where(eq(schema.locationChannelGrants.locationId, created.account.location.id))).length, 0);

@@ -51,6 +51,8 @@ try {
     assert.equal(completed.status, "completed");
     assert.equal(completed.account.trial, null, "Partner onboarding itself does not create the ordinary Basic trial.");
     const locationId = completed.account.location!.id;
+    const [createdOrganization] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, completed.account.organization!.id));
+    assert.equal(createdOrganization.contactEmail, user.email, "partner onboarding uses the verified database user email as the Organization contact");
 
     const memberships = await outer.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id));
     assert.equal(memberships.length, 1);
@@ -75,15 +77,20 @@ try {
     const [consumedIntent] = await outer.select().from(schema.customerSignupIntents).where(eq(schema.customerSignupIntents.id, intent.id));
     assert(consumedIntent.completedAt && consumedIntent.completedAt > consumedIntent.verifiedAt!, "Successful atomic completion must consume the intent after verification.");
 
+    await outer.update(schema.organizations).set({ contactEmail: `operator-edited-${suffix}@example.invalid` }).where(eq(schema.organizations.id, completed.account.organization!.id));
     const retry = await completePartnerCustomerOnboarding({ ...input, organizationName: "Ignored retry", locationName: "Ignored retry", timezone: "UTC" }, { runInTransaction });
     assert.equal(retry.status, "already_complete");
     assert.equal((await outer.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id))).length, 1);
     assert.equal((await outer.select().from(schema.locations).where(eq(schema.locations.organizationId, completed.account.organization!.id))).length, 1);
     assert.equal((await outer.select().from(schema.commercialPartnerInviteClaims).where(eq(schema.commercialPartnerInviteClaims.inviteId, invite.id))).length, 1);
     assert.equal((await outer.select().from(schema.commercialPartnerBenefits).where(eq(schema.commercialPartnerBenefits.locationId, locationId))).length, 1);
+    const [organizationAfterRetry] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, completed.account.organization!.id));
+    assert.equal(organizationAfterRetry.contactEmail, `operator-edited-${suffix}@example.invalid`, "a manually edited contact survives repeated partner onboarding");
 
     const [unverified] = await outer.insert(schema.users).values({ email: `p53-unverified-${suffix}@example.invalid` }).returning();
-    await assert.rejects(completePartnerCustomerOnboarding({ ...input, authenticatedUserId: unverified.id, signupIntentId: null }, { runInTransaction }), expectPartnerError("unverified"));
+    const unverifiedOrganizationName = `P5.3 unverified ${suffix}`;
+    await assert.rejects(completePartnerCustomerOnboarding({ ...input, authenticatedUserId: unverified.id, signupIntentId: null, organizationName: unverifiedOrganizationName }, { runInTransaction }), expectPartnerError("unverified"));
+    assert.equal((await outer.select().from(schema.organizations).where(eq(schema.organizations.name, unverifiedOrganizationName))).length, 0, "unverified partner signup cannot provision an Organization or contact email");
     await assert.rejects(completePartnerCustomerOnboarding({ ...input, authenticatedUserId: randomUUID(), signupIntentId: null }, { runInTransaction }), expectPartnerError("unauthenticated"));
 
     // A valid-looking but unknown hash exercises the post-creation P3 failure

@@ -270,7 +270,10 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
             .where(eq(commercialPartners.id, spaquatoria.partnerId!)).for("share").limit(1);
           if (!partner?.isActive || partner.code !== SPAQUATORIA_PARTNER_CODE) throw new RegistrationLinkError("link_unavailable");
         }
-        const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, names);
+        const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+          ...names,
+          contactEmail: user.email,
+        });
         await tx.insert(organizationMembers).values({ organizationId: organization.id, userId: user.id, role: "owner" });
         const divnitsa = policy.products.find((item) => item.productCode === DIVNITSA_PRODUCT_CODE);
         const [redemption] = await tx.insert(commercialRegistrationLinkRedemptions).values({
@@ -309,7 +312,10 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
       const divnitsa = productRows.find((product) => product.id === policy.divnitsaProductId && product.code === DIVNITSA_PRODUCT_CODE);
       if (!basic?.isActive || !divnitsa?.isActive || divnitsa.visibility !== "private") throw new RegistrationLinkError("link_unavailable");
 
-      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, names);
+      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+        ...names,
+        contactEmail: user.email,
+      });
       await tx.insert(organizationMembers).values({ organizationId: organization.id, userId: user.id, role: "owner" });
       const startsAt = now;
       const endsAt = soundSpaBasicTrialEndsAt(startsAt, POLICY_DAYS);

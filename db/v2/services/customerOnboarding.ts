@@ -185,7 +185,10 @@ export async function completePartnerCustomerOnboarding(input: {
       }
       if (!intent.inviteTokenHash || !intent.verifiedAt) throw new PartnerOnboardingError("invite_unavailable");
 
-      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, names);
+      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+        ...names,
+        contactEmail: user.email,
+      });
       await createOwnerMembership(tx, organization.id, user.id);
       const claimed = await claimByHash({ tokenHash: intent.inviteTokenHash, locationId: location.id }, (operation) => operation(tx));
       if (claimed.status !== "claimed") throw new PartnerOnboardingError("invite_unavailable");
@@ -259,7 +262,10 @@ export async function completeOrdinaryCustomerOnboarding(input: {
     const existing = await loadExistingOnboarding(tx, user.id);
     if (existing) return { status: "already_complete" as const, account: existing };
 
-    const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, names);
+    const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+      ...names,
+      contactEmail: user.email,
+    });
     await createOwnerMembership(tx, organization.id, user.id);
     const trial = await createTrial(location.id, tx);
     return {
