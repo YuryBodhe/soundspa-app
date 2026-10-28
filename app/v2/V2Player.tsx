@@ -16,6 +16,7 @@ import { Tooltip } from "./Tooltip";
 import { activatePlayerChannelCard } from "@/lib/v2/playerChannelInteraction";
 import { accountSectionHref } from "@/app/account/accountNavigation";
 import { canStartPlayerAudio, DevicePlayerOwnership, type PlayerOwnershipState } from "./playerOwnership";
+import { playerStatusMessageKey } from "./playerStatusMessage";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -396,16 +397,8 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
-  let standbyMessage: string | null = null;
-  if (monitoringEnabled) {
-    if (ownershipState === "unsupported") standbyMessage = t("playerOwnershipUnsupported");
-    else if (monitoringState === "unauthorized") standbyMessage = t("deviceSetupRequired");
-    else if (ownershipState === "activeElsewhere") standbyMessage = t("playerOwnershipActive");
-    else if (ownershipState !== "owned") standbyMessage = t("playerOwnershipWaiting");
-    else if (monitoringState === "rejected") standbyMessage = t("playerMonitoringUnavailable");
-    else if (monitoringState === "retrying" || monitoringState === "waiting" || monitoringState === "connecting") standbyMessage = t("playerMonitoringRecovery");
-    else if (monitoringReady && playback.status !== "playing" && playback.status !== "loading" && ambientPlayback.status !== "playing") standbyMessage = t("playerOwnershipReady");
-  }
+  const standbyMessageKey = playerStatusMessageKey({ monitoringEnabled, ownershipState, monitoringState });
+  const standbyMessage = standbyMessageKey ? t(standbyMessageKey) : null;
   const canStartNewLane = canStartAudio;
 
   return (

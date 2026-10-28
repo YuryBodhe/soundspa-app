@@ -6,7 +6,6 @@ export const vi: Dictionary = { registrationLinkSignupNotice: "Bạn đang đăn
   billingWizardPreviewBanner: "Bản xem trước cục bộ · chỉ dùng dữ liệu giả lập; không tạo đơn hàng hay thanh toán.", billingWizardEmptyPreviewLabel: "Xem trước trạng thái trống · không có salon đủ điều kiện",
   playerOwnershipActive: 'Trình phát đang hoạt động ở tab khác.',
   playerOwnershipWaiting: 'Đang chờ tab trình phát trước đóng lại.',
-  playerOwnershipReady: 'Đã sẵn sàng phát nhạc.',
   playerOwnershipUnsupported: 'Trình duyệt này không hỗ trợ khóa trình phát độc quyền. Không thể phát nhạc.',
   playerMonitoringUnavailable: 'Không thể khởi động giám sát. Hãy tải lại trình phát hoặc liên hệ bộ phận hỗ trợ.',
   playerMonitoringRecovery: 'Đang khôi phục kết nối giám sát. Âm thanh hiện tại vẫn tiếp tục; hãy chờ kết nối trước khi phát lại.',

@@ -19,7 +19,6 @@ export const en = { registrationLinkSignupNotice: "You are signing up through a 
   billingWizardPreviewBanner: "Local UI preview · synthetic fixture data only; no orders or payments are created.", billingWizardEmptyPreviewLabel: "Empty-state preview · no eligible salons",
   playerOwnershipActive: 'This player is active in another tab.',
   playerOwnershipWaiting: 'Waiting for the previous player to close.',
-  playerOwnershipReady: 'Ready to start music.',
   playerOwnershipUnsupported: 'This browser does not support exclusive player locking. Playback is unavailable.',
   playerMonitoringUnavailable: 'Monitoring could not be started. Reload the player or contact support.',
   playerMonitoringRecovery: 'Monitoring is reconnecting. Current playback will continue; wait before starting playback again.',

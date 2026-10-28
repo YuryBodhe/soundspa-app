@@ -6,7 +6,6 @@ export const th: Dictionary = { registrationLinkSignupNotice: "คุณกำ�
   billingWizardPreviewBanner: "ตัวอย่างในเครื่อง · ใช้เฉพาะข้อมูลจำลอง ไม่มีการสร้างรายการหรือชำระเงิน", billingWizardEmptyPreviewLabel: "ตัวอย่างสถานะว่าง · ไม่มีร้านเสริมสวยที่เข้าเงื่อนไข",
   playerOwnershipActive: 'เครื่องเล่นกำลังทำงานอยู่ในแท็บอื่น',
   playerOwnershipWaiting: 'กำลังรอให้แท็บเครื่องเล่นก่อนหน้าปิด',
-  playerOwnershipReady: 'พร้อมเริ่มเล่นเพลง',
   playerOwnershipUnsupported: 'เบราว์เซอร์นี้ไม่รองรับการล็อกเครื่องเล่นแบบเอกสิทธิ์ จึงไม่สามารถเล่นเสียงได้',
   playerMonitoringUnavailable: 'ไม่สามารถเริ่มการตรวจสอบได้ โปรดโหลดเครื่องเล่นใหม่หรือติดต่อฝ่ายสนับสนุน',
   playerMonitoringRecovery: 'กำลังกู้คืนการเชื่อมต่อการตรวจสอบ เสียงที่กำลังเล่นจะเล่นต่อไป โปรดรอก่อนเริ่มเล่นอีกครั้ง',

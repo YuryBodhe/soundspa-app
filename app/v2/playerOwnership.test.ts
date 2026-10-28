@@ -106,6 +106,6 @@ test("unsupported Web Locks fails closed", () => {
 });
 
 test("ownership and recovery messages are localized in all supported languages", () => {
-  const keys = ["playerOwnershipActive", "playerOwnershipWaiting", "playerOwnershipReady", "playerOwnershipUnsupported", "playerMonitoringRecovery", "playerMonitoringUnavailable"] as const;
+  const keys = ["playerOwnershipActive", "playerOwnershipWaiting", "playerOwnershipUnsupported", "playerMonitoringRecovery", "playerMonitoringUnavailable"] as const;
   for (const dictionary of [en, ru, vi, th]) for (const key of keys) assert.ok(dictionary[key].trim().length > 0, `${key} must be translated`);
 });

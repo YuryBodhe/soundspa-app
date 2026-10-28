@@ -6,7 +6,6 @@ export const ru: Dictionary = { registrationLinkSignupNotice: "Вы регист
   billingWizardPreviewBanner: "Локальный предпросмотр · только синтетические данные; заказы и платежи не создаются.", billingWizardEmptyPreviewLabel: "Предпросмотр пустого состояния · нет доступных салонов",
   playerOwnershipActive: 'Плеер уже работает в другой вкладке.',
   playerOwnershipWaiting: 'Ожидание закрытия предыдущего плеера.',
-  playerOwnershipReady: 'Можно включить музыку.',
   playerOwnershipUnsupported: 'Этот браузер не поддерживает эксклюзивную блокировку плеера. Воспроизведение недоступно.',
   playerMonitoringUnavailable: 'Не удалось запустить мониторинг. Перезагрузите плеер или обратитесь в поддержку.',
   playerMonitoringRecovery: 'Восстанавливается связь мониторинга. Текущее воспроизведение продолжится; перед новым запуском дождитесь восстановления.',
