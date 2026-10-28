@@ -54,7 +54,14 @@ function optionalExpiry(value: unknown, now: Date): Date | null {
 }
 const tokenHash = (token: string) => createHash("sha256").update(token, "utf8").digest("hex");
 function publicState(row: typeof commercialSpaquatoriaPromoCodes.$inferSelect) {
-  return { durationDays: row.durationDays, expiresAt: row.expiresAt?.toISOString() ?? null, maxRedemptions: row.maxRedemptions, revokedAt: row.revokedAt?.toISOString() ?? null };
+  return {
+    durationDays: row.durationDays,
+    expiresAt: row.expiresAt?.toISOString() ?? null,
+    maxRedemptions: row.maxRedemptions,
+    archivedAt: row.archivedAt?.toISOString() ?? null,
+    archivedByOperator: row.archivedByOperator,
+    revokedAt: row.revokedAt?.toISOString() ?? null,
+  };
 }
 
 export function promoCodeStatus(row: { revokedAt: Date | null; expiresAt: Date | null; maxRedemptions: number | null }, redemptionCount: number, now = new Date()) {
@@ -84,7 +91,7 @@ export async function createSpaquatoriaPromoCode(input: { durationDays: unknown;
     }).returning();
     await tx.insert(commercialSpaquatoriaPromoCodeEvents).values({
       promoCodeId: row.id, action: "created", operator, reason, beforeState: null,
-      afterState: { durationDays, expiresAt: expiresAt?.toISOString() ?? null, maxRedemptions, revokedAt: null }, createdAt: now,
+      afterState: { durationDays, expiresAt: expiresAt?.toISOString() ?? null, maxRedemptions, archivedAt: null, archivedByOperator: null, revokedAt: null }, createdAt: now,
     });
     return { id: row.id, createdAt: row.createdAt, durationDays: row.durationDays, expiresAt: row.expiresAt, maxRedemptions: row.maxRedemptions };
   });
@@ -112,6 +119,7 @@ export async function listSpaquatoriaPromoCodes(now = new Date()) {
     return {
       id: promo.id, partnerName, productName, durationDays: promo.durationDays, createdByOperator: promo.createdByOperator,
       creationReason: promo.creationReason, createdAt: promo.createdAt, expiresAt: promo.expiresAt,
+      archivedAt: promo.archivedAt, archivedByOperator: promo.archivedByOperator,
       maxRedemptions: promo.maxRedemptions, revokedAt: promo.revokedAt, revokedByOperator: promo.revokedByOperator, revokeReason: promo.revokeReason,
       redemptionCount: used, status: promoCodeStatus(promo, used, now),
       redemptions: redemptions.filter(({ redemption }) => redemption.promoCodeId === promo.id).map(({ redemption, email, organizationName, locationName }) => ({
@@ -137,7 +145,10 @@ export async function configureSpaquatoriaPromoCode(id: string, input: { duratio
     if (row.revokedAt) throw new SpaquatoriaPromoError("already_revoked");
     const [usage] = await tx.select({ total: count() }).from(commercialSpaquatoriaPromoRedemptions).where(eq(commercialSpaquatoriaPromoRedemptions.promoCodeId, id));
     if (maxRedemptions !== null && maxRedemptions < Number(usage.total)) throw new SpaquatoriaPromoError("redemption_limit_below_usage");
-    const next = { durationDays, expiresAt: expiresAt?.toISOString() ?? null, maxRedemptions, revokedAt: null };
+    const next = {
+      durationDays, expiresAt: expiresAt?.toISOString() ?? null, maxRedemptions,
+      archivedAt: row.archivedAt?.toISOString() ?? null, archivedByOperator: row.archivedByOperator, revokedAt: null,
+    };
     const before = publicState(row);
     if (JSON.stringify(before) === JSON.stringify(next)) return { id, changed: false };
     await tx.update(commercialSpaquatoriaPromoCodes).set({ durationDays, expiresAt, maxRedemptions }).where(eq(commercialSpaquatoriaPromoCodes.id, id));
@@ -161,6 +172,44 @@ export async function revokeSpaquatoriaPromoCode(id: string, input: { reason: un
   });
 }
 
+/** Archive a code without changing its redemption eligibility history or issued benefits. */
+export async function archiveSpaquatoriaPromoCode(id: string, input: { reason: unknown; confirm: unknown }, now = new Date(), run: TransactionRunner = transact) {
+  if (!uuidPattern.test(id) || input.confirm !== true) throw new SpaquatoriaPromoError("invalid");
+  const operator = operatorIdentity();
+  const reason = requiredReason(input.reason);
+  return run(async (tx) => {
+    const [row] = await tx.select().from(commercialSpaquatoriaPromoCodes).where(eq(commercialSpaquatoriaPromoCodes.id, id)).for("update").limit(1);
+    if (!row) throw new SpaquatoriaPromoError("not_found");
+    if (row.archivedAt) return { id, changed: false, archivedAt: row.archivedAt };
+    const before = publicState(row);
+    await tx.update(commercialSpaquatoriaPromoCodes).set({ archivedAt: now, archivedByOperator: operator }).where(eq(commercialSpaquatoriaPromoCodes.id, id));
+    await tx.insert(commercialSpaquatoriaPromoCodeEvents).values({
+      promoCodeId: id, action: "archived", operator, reason, beforeState: before,
+      afterState: { ...before, archivedAt: now.toISOString(), archivedByOperator: operator }, createdAt: now,
+    });
+    return { id, changed: true, archivedAt: now };
+  });
+}
+
+/** Restore only the archive flag; expiry, limit, and revocation remain untouched. */
+export async function restoreSpaquatoriaPromoCode(id: string, input: { reason: unknown; confirm: unknown }, now = new Date(), run: TransactionRunner = transact) {
+  if (!uuidPattern.test(id) || input.confirm !== true) throw new SpaquatoriaPromoError("invalid");
+  const operator = operatorIdentity();
+  const reason = requiredReason(input.reason);
+  return run(async (tx) => {
+    const [row] = await tx.select().from(commercialSpaquatoriaPromoCodes).where(eq(commercialSpaquatoriaPromoCodes.id, id)).for("update").limit(1);
+    if (!row) throw new SpaquatoriaPromoError("not_found");
+    if (!row.archivedAt) return { id, changed: false, archivedAt: null };
+    const before = publicState(row);
+    await tx.update(commercialSpaquatoriaPromoCodes).set({ archivedAt: null, archivedByOperator: null }).where(eq(commercialSpaquatoriaPromoCodes.id, id));
+    await tx.insert(commercialSpaquatoriaPromoCodeEvents).values({
+      promoCodeId: id, action: "restored", operator, reason, beforeState: before,
+      afterState: { ...before, archivedAt: null, archivedByOperator: null }, createdAt: now,
+    });
+    return { id, changed: true, archivedAt: null };
+  });
+}
+
 export type RedeemSpaquatoriaPromoResult =
   | { status: "already_covered" }
   | { status: "already_redeemed"; periods: { startsAt: Date; endsAt: Date }[] }
@@ -181,6 +230,7 @@ export async function redeemSpaquatoriaPromoCode(input: { authenticatedUserId: s
     const [promo] = await tx.select().from(commercialSpaquatoriaPromoCodes)
       .where(eq(commercialSpaquatoriaPromoCodes.tokenHash, tokenHash(input.code))).for("update").limit(1);
     if (!promo) throw new SpaquatoriaPromoError("promo_unavailable");
+    if (promo.archivedAt) throw new SpaquatoriaPromoError("promo_unavailable");
     const [prior] = await tx.select().from(commercialSpaquatoriaPromoRedemptions).where(and(
       eq(commercialSpaquatoriaPromoRedemptions.promoCodeId, promo.id), eq(commercialSpaquatoriaPromoRedemptions.locationId, input.locationId),
     )).limit(1);

@@ -10,6 +10,7 @@ export default async function SpaquatoriaPromoCodesPage() {
   const promoCodes = (await listSpaquatoriaPromoCodes()).map((promo) => ({
     ...promo,
     createdAt: promo.createdAt.toISOString(), expiresAt: promo.expiresAt?.toISOString() ?? null,
+    archivedAt: promo.archivedAt?.toISOString() ?? null,
     revokedAt: promo.revokedAt?.toISOString() ?? null,
     redemptions: promo.redemptions.map((redemption) => ({ ...redemption, redeemedAt: redemption.redeemedAt.toISOString() })),
     events: promo.events.map((event) => ({ ...event, createdAt: event.createdAt.toISOString() })),

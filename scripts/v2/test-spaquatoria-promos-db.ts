@@ -25,8 +25,8 @@ async function main() {
   )).rows[0];
   const address = identity?.address?.split("/")[0] ?? "";
   if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") ||
-      isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.count !== 25 || identity.latest !== "1792049901337") {
-    throw new Error("Refusing Spaquatoria promo integration test: expected isolated PostgreSQL 16 at migration 0024.");
+      isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.count !== 29 || identity.latest !== "1793194661564") {
+    throw new Error("Refusing Spaquatoria promo integration test: expected isolated PostgreSQL 16 at migration 0028.");
   }
   const clean = await v2Pool.query<{ total: string }>(`SELECT
     (SELECT count(*) FROM organizations)+(SELECT count(*) FROM users)+(SELECT count(*) FROM locations)+
@@ -90,6 +90,31 @@ async function main() {
     const replay = await promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(0).id, code: basic.code }, new Date(now.getTime() + 1));
     check(replay.status, "already_redeemed", "same shared code cannot be redeemed twice for one Location");
     await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(1).id, code: basic.code }, now), "promo_unavailable");
+    const benefitBeforeArchive = { startsAt: benefit.startsAt.getTime(), endsAt: benefit.endsAt?.getTime() ?? null };
+    const archived = await promoService.archiveSpaquatoriaPromoCode(basic.promoCode.id, { confirm: true, reason: "Archive completed promotional campaign" }, now);
+    check(archived.changed, true, "archive marks the code without altering redemption rows");
+    const archivedRow = (await v2Db.select().from(schema.commercialSpaquatoriaPromoCodes).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodes.id, basic.promoCode.id)))[0]!;
+    check([archivedRow.archivedAt?.getTime(), archivedRow.archivedByOperator], [now.getTime(), process.env.V2_ADMIN_USERNAME], "archive state records time and authenticated operator");
+    const archivedEvents = await v2Db.select().from(schema.commercialSpaquatoriaPromoCodeEvents).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodeEvents.promoCodeId, basic.promoCode.id));
+    check(archivedEvents.at(-1)?.action, "archived", "archive creates an audit event");
+    check(archivedEvents.at(-1)?.operator, process.env.V2_ADMIN_USERNAME, "archive audit records trusted operator attribution");
+    check(JSON.stringify(archivedEvents).includes(basic.code), false, "archive audit contains no plaintext promo code");
+    check((await promoService.archiveSpaquatoriaPromoCode(basic.promoCode.id, { confirm: true, reason: "Repeat archive request safely" }, new Date(now.getTime() + 1))).changed,
+      false, "repeated archive request is idempotent");
+    await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(2).id, code: basic.code }, now), "promo_unavailable");
+    const restored = await promoService.restoreSpaquatoriaPromoCode(basic.promoCode.id, { confirm: true, reason: "Restore for status preservation test" }, new Date(now.getTime() + 2));
+    check(restored.changed, true, "restore clears only archival state");
+    check((await promoService.restoreSpaquatoriaPromoCode(basic.promoCode.id, { confirm: true, reason: "Repeat restore request safely" }, new Date(now.getTime() + 3))).changed,
+      false, "repeated restore request is idempotent");
+    const restoredRow = (await v2Db.select().from(schema.commercialSpaquatoriaPromoCodes).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodes.id, basic.promoCode.id)))[0]!;
+    check([restoredRow.archivedAt, restoredRow.archivedByOperator, restoredRow.revokedAt], [null, null, null], "restore clears archive fields and leaves revocation untouched");
+    check(promoService.promoCodeStatus(restoredRow, 1, now), "exhausted", "restoring an exhausted code does not increase its redemption limit");
+    check((await v2Db.select().from(schema.commercialSpaquatoriaPromoRedemptions).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoRedemptions.promoCodeId, basic.promoCode.id))).length,
+      1, "archive and restore preserve redemption history");
+    const benefitAfterArchive = (await v2Db.select().from(schema.commercialPartnerBenefits).where((await import("drizzle-orm")).eq(schema.commercialPartnerBenefits.promoRedemptionId, redeemed.redemptionId)))[0]!;
+    check({ startsAt: benefitAfterArchive.startsAt.getTime(), endsAt: benefitAfterArchive.endsAt?.getTime() ?? null }, benefitBeforeArchive,
+      "archive and restore leave the previously granted Partner Benefit unchanged");
+    await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(2).id, code: basic.code }, now), "promo_unavailable");
 
     const shared = await createCode({ durationDays: 60 });
     const multiLocation = await Promise.all([1, 2].map((index) => promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(index).id, code: shared.code }, now)));
@@ -137,14 +162,38 @@ async function main() {
       durationDays: 30, createdByOperator: process.env.V2_ADMIN_USERNAME!, creationReason: "Disposable expired fixture reason", createdAt: new Date(now.getTime() - 2 * day), expiresAt: new Date(now.getTime() - day) }).returning();
     void expired;
     await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(6).id, code: `expired-${suffix}` }, now), "promo_unavailable");
+    await promoService.archiveSpaquatoriaPromoCode(expired.id, { confirm: true, reason: "Archive already expired test code" }, now);
+    await promoService.restoreSpaquatoriaPromoCode(expired.id, { confirm: true, reason: "Restore already expired test code" }, new Date(now.getTime() + 1));
+    const restoredExpired = (await v2Db.select().from(schema.commercialSpaquatoriaPromoCodes).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodes.id, expired.id)))[0]!;
+    check(promoService.promoCodeStatus(restoredExpired, 0, now), "expired", "restoring an expired code does not reactivate it");
+    await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(6).id, code: `expired-${suffix}` }, now), "promo_unavailable");
 
     const revocable = await createCode();
     const configured = await promoService.configureSpaquatoriaPromoCode(revocable.promoCode.id, { confirm: true, durationDays: 90, expiresAt: null, maxRedemptions: 2, reason: "Configure future promo redemptions" }, now);
     check(configured.changed, true, "configuration changes create an operator audit event");
     await promoService.revokeSpaquatoriaPromoCode(revocable.promoCode.id, { confirm: true, reason: "End this disposable promo campaign" }, new Date(now.getTime() + 1));
     await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(6).id, code: revocable.code }, now), "promo_unavailable");
+    await promoService.archiveSpaquatoriaPromoCode(revocable.promoCode.id, { confirm: true, reason: "Archive revoked promotional code" }, new Date(now.getTime() + 2));
+    await promoService.restoreSpaquatoriaPromoCode(revocable.promoCode.id, { confirm: true, reason: "Restore revoked promotional code" }, new Date(now.getTime() + 3));
+    const restoredRevoked = (await v2Db.select().from(schema.commercialSpaquatoriaPromoCodes).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodes.id, revocable.promoCode.id)))[0]!;
+    check(promoService.promoCodeStatus(restoredRevoked, 0, now), "revoked", "restoring a revoked code does not clear revocation");
+    await rejectsCode(promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(6).id, code: revocable.code }, now), "promo_unavailable");
     const history = await v2Db.select().from(schema.commercialSpaquatoriaPromoCodeEvents).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodeEvents.promoCodeId, revocable.promoCode.id));
-    check(history.map((item) => item.action), ["created", "configured", "revoked"], "operator actions are recorded in append-only history");
+    check(history.map((item) => item.action), ["created", "configured", "revoked", "archived", "restored"], "operator actions are recorded in append-only history");
+
+    const concurrentArchive = await createCode();
+    const [archiveRaceResult, redemptionRaceResult] = await Promise.allSettled([
+      promoService.archiveSpaquatoriaPromoCode(concurrentArchive.promoCode.id, { confirm: true, reason: "Archive during redemption race" }, now),
+      promoService.redeemSpaquatoriaPromoCode({ authenticatedUserId: owner.id, locationId: location(6).id, code: concurrentArchive.code }, now),
+    ]);
+    check(archiveRaceResult.status, "fulfilled", "archive and redemption serialize without transaction failure");
+    check(redemptionRaceResult.status === "fulfilled" || (redemptionRaceResult.reason && typeof redemptionRaceResult.reason === "object" && "code" in redemptionRaceResult.reason && redemptionRaceResult.reason.code === "promo_unavailable"), true,
+      "redemption either commits before archive or is rejected after archive");
+    const racedRow = (await v2Db.select().from(schema.commercialSpaquatoriaPromoCodes).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoCodes.id, concurrentArchive.promoCode.id)))[0]!;
+    check(Boolean(racedRow.archivedAt), true, "the concurrent archive commits");
+    const racedRedemptions = await v2Db.select().from(schema.commercialSpaquatoriaPromoRedemptions).where((await import("drizzle-orm")).eq(schema.commercialSpaquatoriaPromoRedemptions.promoCodeId, concurrentArchive.promoCode.id));
+    check(racedRedemptions.length <= 1, true, "archive/redemption race never creates duplicate redemptions");
+    check(racedRedemptions.length, redemptionRaceResult.status === "fulfilled" ? 1 : 0, "redemption and archival row state remain transactionally consistent");
 
     const triggerSuffix = suffix.replaceAll("-", "");
     await v2Pool.query(`CREATE FUNCTION public.spa_promo_fail_event_${triggerSuffix}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intentional promo audit rollback'; END; $$`);

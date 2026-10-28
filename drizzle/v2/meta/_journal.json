@@ -197,6 +197,13 @@
       "when": 1793179822892,
       "tag": "0027_organization_contact_email",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793194661564,
+      "tag": "0028_spaquatoria_promo_code_archiving",
+      "breakpoints": true
     }
   ]
 }

@@ -121,6 +121,8 @@ export const commercialSpaquatoriaPromoCodes = pgTable("commercial_spaquatoria_p
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   maxRedemptions: integer("max_redemptions"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archivedByOperator: text("archived_by_operator"),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   revokedByOperator: text("revoked_by_operator"),
   revokeReason: text("revoke_reason"),
@@ -134,6 +136,7 @@ export const commercialSpaquatoriaPromoCodes = pgTable("commercial_spaquatoria_p
   check("commercial_spaquatoria_promo_codes_reason_nonempty", sql`length(btrim(${table.creationReason})) BETWEEN 12 AND 500`),
   check("commercial_spaquatoria_promo_codes_max_redemptions_positive", sql`${table.maxRedemptions} IS NULL OR ${table.maxRedemptions} > 0`),
   check("commercial_spaquatoria_promo_codes_expiry_after_creation", sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`),
+  check("commercial_spaquatoria_promo_codes_archive_shape", sql`(${table.archivedAt} IS NULL AND ${table.archivedByOperator} IS NULL) OR (${table.archivedAt} IS NOT NULL AND ${table.archivedByOperator} IS NOT NULL AND length(btrim(${table.archivedByOperator})) > 0 AND ${table.archivedAt} >= ${table.createdAt})`),
   check("commercial_spaquatoria_promo_codes_revoke_shape", sql`(${table.revokedAt} IS NULL AND ${table.revokedByOperator} IS NULL AND ${table.revokeReason} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedByOperator} IS NOT NULL AND length(btrim(${table.revokedByOperator})) > 0 AND ${table.revokeReason} IS NOT NULL AND length(btrim(${table.revokeReason})) BETWEEN 12 AND 500 AND ${table.revokedAt} >= ${table.createdAt})`),
 ]);
 
@@ -141,7 +144,7 @@ export const commercialSpaquatoriaPromoCodes = pgTable("commercial_spaquatoria_p
 export const commercialSpaquatoriaPromoCodeEvents = pgTable("commercial_spaquatoria_promo_code_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   promoCodeId: uuid("promo_code_id").notNull().references(() => commercialSpaquatoriaPromoCodes.id, { onDelete: "restrict" }),
-  action: text("action").$type<"created" | "configured" | "revoked">().notNull(),
+  action: text("action").$type<"created" | "configured" | "revoked" | "archived" | "restored">().notNull(),
   operator: text("operator").notNull(),
   reason: text("reason").notNull(),
   beforeState: jsonb("before_state").$type<Record<string, unknown> | null>(),
@@ -151,7 +154,7 @@ export const commercialSpaquatoriaPromoCodeEvents = pgTable("commercial_spaquato
   index("commercial_spaquatoria_promo_code_events_code_time_idx").on(table.promoCodeId, table.createdAt),
   uniqueIndex("commercial_spaquatoria_promo_code_events_created_unique").on(table.promoCodeId).where(sql`${table.action} = 'created'`),
   uniqueIndex("commercial_spaquatoria_promo_code_events_revoked_unique").on(table.promoCodeId).where(sql`${table.action} = 'revoked'`),
-  check("commercial_spaquatoria_promo_code_events_action_valid", sql`${table.action} IN ('created', 'configured', 'revoked')`),
+  check("commercial_spaquatoria_promo_code_events_action_valid", sql`${table.action} IN ('created', 'configured', 'revoked', 'archived', 'restored')`),
   check("commercial_spaquatoria_promo_code_events_operator_nonempty", sql`length(btrim(${table.operator})) > 0`),
   check("commercial_spaquatoria_promo_code_events_reason_nonempty", sql`length(btrim(${table.reason})) BETWEEN 12 AND 500`),
   check("commercial_spaquatoria_promo_code_events_state_shape", sql`jsonb_typeof(${table.afterState}) = 'object' AND (${table.beforeState} IS NULL OR jsonb_typeof(${table.beforeState}) = 'object') AND ((${table.action} = 'created' AND ${table.beforeState} IS NULL) OR (${table.action} <> 'created' AND ${table.beforeState} IS NOT NULL))`),
