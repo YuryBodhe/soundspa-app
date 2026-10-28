@@ -14,7 +14,7 @@ test("admin dashboard keeps the overview visible and its three data sections col
   assert.match(source, /<details className="admin-card admin-collapsible">\s*<summary[^>]*><span>Partners<\/span>/);
   assert.match(source, /<details className="admin-card admin-collapsible">\s*<summary[^>]*><span>SoundSpa Basic channel composition<\/span>/);
   assert.doesNotMatch(source, /<details[^>]*\sopen(?:\s|>)/);
-  assert.match(source, /admin-customers-card/);
+  assert.match(source, /<CustomersDirectory organizations=\{customerOrganizations\}/);
 });
 
 test("dedicated Location route keeps operator authorization and a Customers return path", async () => {

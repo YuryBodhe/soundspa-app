@@ -1,9 +1,11 @@
 import { v2Db } from "../client";
 import { locations, organizations } from "../schema";
 import { recordLifecycleEvent } from "./monitoringObservability";
+import { normalizeContactEmail } from "../../../lib/v2/contactEmail";
 
 export type CustomerProvisioningInput = {
   organizationName: string;
+  contactEmail: string | null;
   locationName: string;
   slug: string;
   timezone: string;
@@ -32,6 +34,9 @@ export function validateCustomerProvisioningInput(value: unknown): CustomerProvi
   }
   const input = value as Record<string, unknown>;
   const organizationName = requiredText(input.organizationName, "Organization name", 160);
+  let contactEmail: string | null;
+  try { contactEmail = normalizeContactEmail(input.contactEmail); }
+  catch { throw new CustomerProvisioningError("validation", "Enter a valid contact email address."); }
   const locationName = requiredText(input.locationName, "Location name", 160);
   const slug = requiredText(input.slug, "Location slug", 100);
   const timezone = requiredText(input.timezone, "Time zone", 100);
@@ -43,7 +48,7 @@ export function validateCustomerProvisioningInput(value: unknown): CustomerProvi
   } catch {
     throw new CustomerProvisioningError("validation", "Enter a valid IANA time zone, for example Europe/Moscow or UTC.");
   }
-  return { organizationName, locationName, slug, timezone };
+  return { organizationName, contactEmail, locationName, slug, timezone };
 }
 
 function isLocationSlugConflict(error: unknown): boolean {
@@ -59,7 +64,7 @@ function isLocationSlugConflict(error: unknown): boolean {
 export async function createCustomerWithFirstLocationInTransaction(tx: V2Transaction, value: unknown) {
   const input = validateCustomerProvisioningInput(value);
   try {
-    const [organization] = await tx.insert(organizations).values({ name: input.organizationName }).returning({
+    const [organization] = await tx.insert(organizations).values({ name: input.organizationName, contactEmail: input.contactEmail }).returning({
       id: organizations.id,
       name: organizations.name,
     });

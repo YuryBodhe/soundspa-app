@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminLocationPath } from "../../../lib/v2/adminLocationNavigation";
+import { ContactEmailValidationError, normalizeContactEmail } from "../../../lib/v2/contactEmail";
 
 type ProvisioningResponse = { ok?: boolean; message?: string; locationId?: string };
 
@@ -21,11 +22,14 @@ export default function CustomerProvisioningForm({ timeZones }: { timeZones: str
       return typeof field === "string" ? field.trim() : "";
     };
     const organizationName = value("organizationName");
+    const contactEmail = value("contactEmail");
     const locationName = value("locationName");
     const slug = value("slug");
     const timezone = value("timezone");
 
     if (!organizationName) return setError("Enter an Organization name.");
+    try { normalizeContactEmail(contactEmail); }
+    catch (error) { return setError(error instanceof ContactEmailValidationError ? error.message : "Enter a valid contact email address."); }
     if (!locationName) return setError("Enter the first Location name.");
     if (!slug) return setError("Enter a Location slug.");
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
@@ -44,7 +48,7 @@ export default function CustomerProvisioningForm({ timeZones }: { timeZones: str
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ organizationName, locationName, slug, timezone }),
+        body: JSON.stringify({ organizationName, contactEmail: contactEmail || null, locationName, slug, timezone }),
       });
       const result = await response.json().catch(() => null) as ProvisioningResponse | null;
       if (!response.ok || !result?.locationId) {
@@ -61,11 +65,12 @@ export default function CustomerProvisioningForm({ timeZones }: { timeZones: str
   }
 
   return <>
-    <div className="admin-page-header"><h2 className="admin-card-title">Customers</h2><button type="button" className="btn btn-primary" onClick={() => { setError(null); setOpen((value) => !value); }}>
+    <div className="admin-customer-create-control"><button type="button" className="btn btn-primary" onClick={() => { setError(null); setOpen((value) => !value); }}>
       {open ? "Cancel" : "+ New Customer"}
     </button></div>
     {open && <form className="admin-form mt-4" noValidate onSubmit={submit}>
       <div className="form-row"><label htmlFor="customer-organization-name">Organization name</label><input id="customer-organization-name" name="organizationName" required maxLength={160} /></div>
+      <div className="form-row"><label htmlFor="customer-contact-email">Contact email (optional)</label><input id="customer-contact-email" name="contactEmail" type="email" maxLength={254} autoComplete="email" /></div>
       <div className="form-row"><label htmlFor="customer-location-name">First Location name</label><input id="customer-location-name" name="locationName" required maxLength={160} /></div>
       <div className="form-row"><label htmlFor="customer-location-slug">Location slug</label><input id="customer-location-slug" name="slug" required maxLength={100} pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="lowercase-with-hyphens" /></div>
       <div className="form-row"><label htmlFor="customer-location-timezone">Time zone</label><select id="customer-location-timezone" name="timezone" required defaultValue=""><option value="" disabled>Select an IANA time zone…</option>{timeZones.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}</select></div>

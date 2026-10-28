@@ -4,8 +4,7 @@ import Link from "next/link";
 import { operatorAuthStatus } from "../../../lib/v2/adminOperator";
 import { adminLocationPath } from "../../../lib/v2/adminLocationNavigation";
 import AccessMutationForm from "./accessMutationForm";
-import CustomerProvisioningForm from "./customerProvisioningForm";
-import DeleteOrganizationPanel from "./deleteOrganizationPanel";
+import CustomersDirectory from "./CustomersDirectory";
 import { getTimeZoneOptions } from "../../../lib/v2/timeZones";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +31,14 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const productChannels = new Map<string, typeof productComposition>();
   for (const item of productComposition) productChannels.set(item.productId, [...(productChannels.get(item.productId) ?? []), item]);
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
+  const customerOrganizations = customers.map(({ organization, locations: customerLocations, deviceCount }) => ({
+    id: organization.id,
+    name: organization.name,
+    contactEmail: organization.contactEmail,
+    archived: Boolean(organization.archivedAt),
+    locations: customerLocations.map((location) => ({ id: location.id, name: location.name, slug: location.slug, archived: Boolean(location.archivedAt) })),
+    deviceCount,
+  }));
 
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav admin-main-nav"><Link href="/admin/ui/products" className="btn btn-sm">Products</Link><Link href="/admin/ui/offers" className="btn btn-sm">Offers &amp; Invites</Link><Link href="/admin/ui/spaquatoria-promos" className="btn btn-sm">Spaquatoria Promo Codes</Link><Link href="/admin/ui/registration-links" className="btn btn-sm">Registration Links</Link><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>
@@ -60,20 +67,6 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
         {soundSpaProduct ? <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>SoundSpa</th><th /></tr></thead><tbody>{published.map((channel) => <tr key={`soundspa-${channel.id}`}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{soundSpaChannelIds.has(channel.id) ? <span className="badge badge-ok">INCLUDED</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={soundSpaChannelIds.has(channel.id) ? "remove-product-channel" : "add-product-channel"} productCode="soundspa" channelId={channel.id}><button className="btn btn-sm">{soundSpaChannelIds.has(channel.id) ? "Remove from SoundSpa" : "Add to SoundSpa"}</button></AccessMutationForm></td></tr>)}</tbody></table> : <p className="text-dim">SoundSpa product is not provisioned.</p>}
       </div>
     </details>
-    <section className="admin-card admin-customers-card">
-      <CustomerProvisioningForm timeZones={getTimeZoneOptions()} />
-      <div className="admin-customer-organizations">
-        {customers.map(({ organization, locations: customerLocations, deviceCount }) => <article className="admin-customer-organization" key={organization.id}>
-          <div className="admin-customer-organization-heading"><h3>{organization.name}</h3><span className={`badge ${organization.archivedAt ? "badge-neutral" : "badge-ok"}`}>{organization.archivedAt ? "ARCHIVED" : "ACTIVE"}</span></div>
-          {customerLocations.length ? <ul className="admin-customer-location-list">{customerLocations.map((location) => <li className="admin-customer-location-row" key={location.id}>
-            <div><strong>{location.name}</strong><span className="text-dim">{location.slug}</span></div>
-            <span className={`badge ${location.archivedAt ? "badge-neutral" : "badge-ok"}`}>{location.archivedAt ? "ARCHIVED" : "ACTIVE"}</span>
-            {!organization.archivedAt && !location.archivedAt ? <Link className="btn btn-sm" href={adminLocationPath(location.id)}>Open Location</Link> : <span />}
-          </li>)}</ul> : <p className="text-dim">No Locations yet.</p>}
-          <div className="admin-customer-organization-actions"><span className="text-dim">{customerLocations.length} Location(s) · {deviceCount} Device(s)</span><DeleteOrganizationPanel organizationId={organization.id} organizationName={organization.name} locationCount={customerLocations.length} deviceCount={deviceCount} /></div>
-        </article>)}
-        {!customers.length && <p className="text-dim">No Customers yet.</p>}
-      </div>
-    </section>
+    <CustomersDirectory organizations={customerOrganizations} timeZones={getTimeZoneOptions()} />
   </>;
 }

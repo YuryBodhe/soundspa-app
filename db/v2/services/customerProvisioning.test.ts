@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateCustomerProvisioningInput } from "./customerProvisioning";
+import { CustomerProvisioningError, validateCustomerProvisioningInput } from "./customerProvisioning";
 
 test("customer Organization and Location names accept and preserve Unicode scripts", () => {
   const names = [
@@ -19,5 +19,12 @@ test("customer Organization and Location names accept and preserve Unicode scrip
     });
     assert.equal(validated.organizationName, organizationName);
     assert.equal(validated.locationName, locationName);
+    assert.equal(validated.contactEmail, null);
   }
+});
+
+test("customer provisioning trims optional contact email and rejects malformed addresses", () => {
+  const valid = validateCustomerProvisioningInput({ organizationName: "Spa", contactEmail: "  contact@example.com ", locationName: "Main", slug: "spa-main", timezone: "UTC" });
+  assert.equal(valid.contactEmail, "contact@example.com");
+  assert.throws(() => validateCustomerProvisioningInput({ organizationName: "Spa", contactEmail: "bad", locationName: "Main", slug: "spa-main", timezone: "UTC" }), (error: unknown) => error instanceof CustomerProvisioningError && error.code === "validation");
 });
