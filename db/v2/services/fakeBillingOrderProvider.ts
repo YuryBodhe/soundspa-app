@@ -284,6 +284,7 @@ export async function createFakeProviderBillingOrderCheckout(input: {
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
       const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
         .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
+      if (line.durationMonths === null) throw new FakeBillingOrderError("checkout_unavailable");
       const period = planNextSubscriptionPeriod({
         now, durationMonths: line.durationMonths,
         subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
@@ -438,7 +439,7 @@ export async function getFakeBillingOrderPayerView(input: {
         eq(commercialPaymentAllocations.orderId, order.id), eq(commercialPaymentAllocations.paymentId, payment.id),
       ));
     const allocated = new Map(allocations.map((allocation) => [allocation.orderLineId, allocation.amountMinor]));
-    if (lines.length === 0 || lines.some((line) => line.providerCode !== order.providerCode || line.currency !== order.currency ||
+    if (lines.length === 0 || lines.some((line) => line.providerCode !== order.providerCode || line.currency !== order.currency || line.durationMonths === null ||
         line.amountMinor !== line.listAmountMinor - line.discountAmountMinor || allocated.get(line.id) !== line.amountMinor) ||
         allocations.length !== lines.length || lines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)) !== order.totalAmountMinor ||
         order.quoteReference !== billingOrderSnapshotReference(order, frozenLines)) {
@@ -461,7 +462,7 @@ export async function getFakeBillingOrderPayerView(input: {
       lines: lines.map((line) => ({
         locationName: line.locationName,
         productName: line.productName,
-        durationMonths: line.durationMonths,
+        durationMonths: line.durationMonths!,
         amountMinor: line.amountMinor.toString(),
       })),
     };

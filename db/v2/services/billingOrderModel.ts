@@ -53,7 +53,7 @@ type BillingOrderSnapshotLine = {
   marketCode: string;
   routeId: string;
   routeExternalReference: string;
-  durationMonths: number;
+  durationMonths: number | null;
   listAmountMinor: bigint;
   discountAmountMinor: bigint;
   amountMinor: bigint;

@@ -12,6 +12,6 @@ export default async function PaymentsPage() {
   return <>
     <div className="admin-page-header"><div><p className="monitoring-eyebrow">SOUNDSPA V2 · BILLING</p><h1 className="admin-page-title">Payments</h1></div><div className="admin-page-nav"><Link href="/admin/ui" className="btn btn-sm">Admin</Link><Link href="/admin/ui/billing/subscriptions" className="btn btn-sm">Subscriptions</Link></div></div>
     <p className="text-dim">Create organization invoices for manual bank transfer and record full payments after matching the bank statement. Creating an invoice does not change access.</p>
-    <PaymentsManagement organizations={data.organizations} orders={data.orders} />
+    <PaymentsManagement organizations={data.organizations} orders={data.orders} initialCalendarMonth={new Date().toISOString().slice(0, 7)} />
   </>;
 }

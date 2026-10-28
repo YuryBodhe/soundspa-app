@@ -218,6 +218,13 @@
       "when": 1793202149431,
       "tag": "0030_bumpy_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793202676620,
+      "tag": "0031_icy_hellfire_club",
+      "breakpoints": true
     }
   ]
 }

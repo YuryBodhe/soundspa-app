@@ -18,7 +18,7 @@ import { PaymentFoundationError, recordNormalizedPayment } from "./paymentFounda
 import type { NormalizedPaymentInput } from "./paymentFoundationModel";
 import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, validateProviderPaidThrough } from "./paymentLifecycleModel";
 import { planNextSubscriptionPeriod, type PlannedSubscriptionPeriod } from "./billingCalendar";
-import { explicitCalendarCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
+import { explicitCalendarCoverage, explicitDateCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
 import { billingOrderSnapshotReference } from "./billingOrderModel";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
@@ -262,7 +262,9 @@ export async function settleTrustedBillingOrderPayment(
       .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.id)).for("update");
     if (lines.length === 0 || lines.some((line) => line.organizationId !== order.organizationId ||
         line.providerCode !== order.providerCode || line.currency !== order.currency ||
-        line.durationMonths < 1 || line.durationMonths > 12 || line.amountMinor < BigInt(0) ||
+        (line.durationMonths === null
+          ? line.providerCode !== MANUAL_BANK_TRANSFER_PROVIDER_CODE || !line.billingPeriodStartsAt || !line.billingPeriodEndsAt
+          : line.durationMonths < 1 || line.durationMonths > 12) || line.amountMinor < BigInt(0) ||
         line.amountMinor !== line.listAmountMinor - line.discountAmountMinor)) {
       throw new PaymentFoundationError("billing_order_allocation_invalid");
     }
@@ -351,11 +353,17 @@ export async function settleTrustedBillingOrderPayment(
       let subscription: typeof subscriptions[number] | null;
       if (order.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE) {
         try {
-          if (!line.billingPeriodStartsAt || !line.billingPeriodEndsAt || line.billingAnchorDay !== 1 || line.billingAnchorIsEndOfMonth) {
-            throw new Error("invalid_manual_calendar_snapshot");
+          if (!line.billingPeriodStartsAt || !line.billingPeriodEndsAt) throw new Error("invalid_manual_period_snapshot");
+          if (line.durationMonths === null) {
+            period = { ...explicitDateCoverage(line.billingPeriodStartsAt, line.billingPeriodEndsAt), subscriptionId: null };
+            if (period.anchor.dayOfMonth !== line.billingAnchorDay || period.anchor.isEndOfMonth !== line.billingAnchorIsEndOfMonth) {
+              throw new Error("invalid_manual_period_anchor");
+            }
+          } else {
+            if (line.billingAnchorDay !== 1 || line.billingAnchorIsEndOfMonth) throw new Error("invalid_manual_calendar_snapshot");
+            period = { ...explicitCalendarCoverage(line.billingPeriodStartsAt, line.durationMonths), subscriptionId: null };
+            if (period.endsAt.getTime() !== line.billingPeriodEndsAt.getTime()) throw new Error("invalid_manual_calendar_snapshot");
           }
-          period = { ...explicitCalendarCoverage(line.billingPeriodStartsAt, line.durationMonths), subscriptionId: null };
-          if (period.endsAt.getTime() !== line.billingPeriodEndsAt.getTime()) throw new Error("invalid_manual_calendar_snapshot");
         } catch {
           throw new PaymentFoundationError("billing_order_invalid");
         }
@@ -367,6 +375,7 @@ export async function settleTrustedBillingOrderPayment(
         // the invoiced UTC calendar dates; otherwise create a distinct period.
         subscription = subscriptions.find((row) => row.currentPeriodEndsAt?.getTime() === period.startsAt.getTime()) ?? null;
       } else {
+        if (line.durationMonths === null) throw new PaymentFoundationError("billing_order_allocation_invalid");
         try {
           period = planNextSubscriptionPeriod({
             now: event.occurredAt, durationMonths: line.durationMonths,

@@ -4,6 +4,7 @@ export const MANUAL_BANK_TRANSFER_PROVIDER_CODE = "manual-bank-transfer";
 
 const MAX_BIGINT = BigInt("9223372036854775807");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const MANUAL_BANK_TRANSFER_CURRENCIES = ["RUB"] as const;
 
 export type ManualBankTransferLineInput = { locationId: string; productId: string };
 export type AllocatedManualLine = ManualBankTransferLineInput & { amountMinor: bigint };
@@ -21,7 +22,7 @@ export function validateManualBankTransferInput(input: {
   reason: unknown;
   idempotencyKey: unknown;
   periodStart: unknown;
-  durationMonths: unknown;
+  periodEnd: unknown;
   currency: unknown;
   totalAmountMinor: unknown;
   invoiceNumber: unknown;
@@ -30,10 +31,8 @@ export function validateManualBankTransferInput(input: {
   lines: unknown;
 }) {
   if (typeof input.organizationId !== "string" || !UUID.test(input.organizationId) ||
-      !Array.isArray(input.lines) || input.lines.length !== 3 ||
-      typeof input.durationMonths !== "number" || !Number.isInteger(input.durationMonths) || input.durationMonths < 1 || input.durationMonths > 12 ||
-      typeof input.currency !== "string" || !/^[A-Z]{3}$/.test(input.currency) ||
-      typeof input.periodStart !== "string" || !/^\d{4}-\d{2}-01$/.test(input.periodStart)) {
+      !Array.isArray(input.lines) || input.lines.length < 1 ||
+      typeof input.currency !== "string" || !(MANUAL_BANK_TRANSFER_CURRENCIES as readonly string[]).includes(input.currency)) {
     throw new ManualBillingModelError("invalid_request");
   }
   const operator = typeof input.operator === "string" ? input.operator.trim() : "";
@@ -51,7 +50,7 @@ export function validateManualBankTransferInput(input: {
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(idempotencyKey)) throw new ManualBillingModelError("invalid_creator");
   if (typeof input.totalAmountMinor !== "string" || !/^[1-9]\d{0,18}$/.test(input.totalAmountMinor)) throw new ManualBillingModelError("invalid_amount");
   const totalAmountMinor = BigInt(input.totalAmountMinor);
-  if (totalAmountMinor > MAX_BIGINT || totalAmountMinor < BigInt(3)) throw new ManualBillingModelError("invalid_amount");
+  if (totalAmountMinor > MAX_BIGINT || totalAmountMinor < BigInt(1)) throw new ManualBillingModelError("invalid_amount");
   const lines = input.lines.map((raw: unknown) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new ManualBillingModelError("invalid_request");
     const line = raw as Record<string, unknown>;
@@ -61,23 +60,42 @@ export function validateManualBankTransferInput(input: {
   });
   const identities = new Set(lines.map((line: ManualBankTransferLineInput) => `${line.locationId}:${line.productId}`));
   const locationIds = new Set(lines.map((line: ManualBankTransferLineInput) => line.locationId));
-  if (identities.size !== 3 || locationIds.size !== 3) throw new ManualBillingModelError("duplicate_line");
-  const start = new Date(`${input.periodStart}T00:00:00.000Z`);
-  if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== input.periodStart) throw new ManualBillingModelError("invalid_period");
+  if (identities.size !== lines.length || locationIds.size !== lines.length) throw new ManualBillingModelError("duplicate_line");
+  const period = explicitDateCoverage(input.periodStart, input.periodEnd);
   return {
     organizationId: input.organizationId.toLowerCase(), operator, reason, idempotencyKey, invoiceNumber, invoiceIssuedAt, paymentDueAt,
-    periodStart: start, durationMonths: input.durationMonths, currency: input.currency,
+    periodStart: period.startsAt, periodEnd: period.endsAt, currency: input.currency,
     totalAmountMinor, lines: lines as ManualBankTransferLineInput[],
   };
 }
 
 /** Equal minor-unit allocation. Any remainder is assigned by stable Location/Product order. */
 export function allocateFixedOrganizationTotal(totalAmountMinor: bigint, lines: readonly ManualBankTransferLineInput[]): AllocatedManualLine[] {
-  if (totalAmountMinor < BigInt(3) || totalAmountMinor > MAX_BIGINT || lines.length !== 3) throw new ManualBillingModelError("invalid_amount");
+  if (totalAmountMinor < BigInt(1) || totalAmountMinor > MAX_BIGINT || lines.length < 1) throw new ManualBillingModelError("invalid_amount");
   const sorted = [...lines].sort((a, b) => a.locationId.localeCompare(b.locationId) || a.productId.localeCompare(b.productId));
   const base = totalAmountMinor / BigInt(sorted.length);
   const remainder = Number(totalAmountMinor % BigInt(sorted.length));
   return sorted.map((line, index) => ({ ...line, amountMinor: base + (index < remainder ? BigInt(1) : BigInt(0)) }));
+}
+
+/** Manual coverage uses inclusive UTC start and exclusive UTC end date boundaries. */
+export function explicitDateCoverage(periodStart: unknown, periodEndExclusive: unknown): {
+  startsAt: Date; endsAt: Date; anchor: BillingCalendarAnchor;
+} {
+  const parseDate = (value: unknown) => {
+    if (value instanceof Date) {
+      return Number.isFinite(value.getTime()) && value.getUTCHours() === 0 && value.getUTCMinutes() === 0 &&
+        value.getUTCSeconds() === 0 && value.getUTCMilliseconds() === 0 ? new Date(value) : null;
+    }
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? date : null;
+  };
+  const startsAt = parseDate(periodStart);
+  const endsAt = parseDate(periodEndExclusive);
+  if (!startsAt || !endsAt || endsAt <= startsAt) throw new ManualBillingModelError("invalid_period");
+  const lastDay = new Date(Date.UTC(startsAt.getUTCFullYear(), startsAt.getUTCMonth() + 1, 0)).getUTCDate();
+  return { startsAt, endsAt, anchor: { dayOfMonth: startsAt.getUTCDate(), isEndOfMonth: startsAt.getUTCDate() === lastDay } };
 }
 
 export function explicitCalendarCoverage(periodStart: Date, durationMonths: number): {

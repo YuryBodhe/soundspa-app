@@ -19,7 +19,7 @@ import {
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
-import { allocateFixedOrganizationTotal, explicitCalendarCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE, ManualBillingModelError, validateManualBankTransferInput } from "./manualBillingModel";
+import { allocateFixedOrganizationTotal, explicitDateCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE, ManualBillingModelError, validateManualBankTransferInput } from "./manualBillingModel";
 import {
   billingOrderSnapshotReference,
   BillingOrderModelError,
@@ -446,7 +446,7 @@ export async function createManualBankTransferBillingOrder(input: {
   reason: unknown;
   idempotencyKey: unknown;
   periodStart: unknown;
-  durationMonths: unknown;
+  periodEnd: unknown;
   currency: unknown;
   totalAmountMinor: unknown;
   invoiceNumber: unknown;
@@ -467,7 +467,7 @@ export async function createManualBankTransferBillingOrder(input: {
   if (!Number.isFinite(now.getTime())) throw new BillingOrderError("invalid_request");
   const db = options.db ?? v2Db;
   const allocated = allocateFixedOrganizationTotal(request.totalAmountMinor, request.lines);
-  const coverage = explicitCalendarCoverage(request.periodStart, request.durationMonths);
+  const coverage = explicitDateCoverage(input.periodStart, input.periodEnd);
 
   return db.transaction(async (tx) => {
     // Stable lock prevents two concurrent retries from creating duplicate
@@ -486,7 +486,7 @@ export async function createManualBankTransferBillingOrder(input: {
         prior.paymentDueAt?.getTime() === request.paymentDueAt.getTime() &&
         priorLines.length === allocated.length && priorLines.every((line, index) =>
           line.locationId === allocated[index].locationId && line.productId === allocated[index].productId &&
-          line.amountMinor === allocated[index].amountMinor && line.durationMonths === request.durationMonths &&
+          line.amountMinor === allocated[index].amountMinor && line.durationMonths === null &&
           line.billingPeriodStartsAt?.getTime() === coverage.startsAt.getTime() && line.billingPeriodEndsAt?.getTime() === coverage.endsAt.getTime());
       if (!sameRequest) throw new BillingOrderError("duplicate_request_conflict");
       const [payment] = await tx.select({ id: commercialPayments.id, status: commercialPayments.status,
@@ -510,7 +510,7 @@ export async function createManualBankTransferBillingOrder(input: {
     const locationIds = allocated.map((line) => line.locationId).sort();
     const locationRows = await tx.select({ id: locations.id, organizationId: locations.organizationId, marketCode: locations.marketCode, archivedAt: locations.archivedAt })
       .from(locations).where(inArray(locations.id, locationIds)).orderBy(asc(locations.id)).for("update");
-    if (locationRows.length !== 3 || locationRows.some((location) => location.organizationId !== request.organizationId || location.archivedAt !== null || !location.marketCode)) {
+    if (locationRows.length !== locationIds.length || locationRows.some((location) => location.organizationId !== request.organizationId || location.archivedAt !== null || !location.marketCode)) {
       throw new BillingOrderError("not_authorized");
     }
     const locationById = new Map(locationRows.map((location) => [location.id, location]));
@@ -579,7 +579,7 @@ export async function createManualBankTransferBillingOrder(input: {
       return {
         orderId: order.id, organizationId: request.organizationId, locationId: line.locationId, productId: line.productId,
         providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE, currency: request.currency, marketCode: location.marketCode!,
-        routeId: route.id, routeExternalReference: route.externalReference, durationMonths: request.durationMonths,
+        routeId: route.id, routeExternalReference: route.externalReference, durationMonths: null,
         listAmountMinor: line.amountMinor, discountAmountMinor: BigInt(0), amountMinor: line.amountMinor,
         billingAnchorDay: coverage.anchor.dayOfMonth, billingAnchorIsEndOfMonth: coverage.anchor.isEndOfMonth,
         billingPeriodStartsAt: coverage.startsAt, billingPeriodEndsAt: coverage.endsAt, subscriptionId: null,

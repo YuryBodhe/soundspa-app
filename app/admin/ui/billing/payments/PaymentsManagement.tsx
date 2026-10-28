@@ -12,12 +12,19 @@ type Order = { id: string; organizationName: string; status: string; currency: s
 
 function dateLabel(value: string | null) { return value ? new Date(value).toLocaleDateString() : "—"; }
 
-export default function PaymentsManagement({ organizations, orders }: { organizations: Organization[]; orders: Order[] }) {
+export default function PaymentsManagement({ organizations, orders, initialCalendarMonth }: { organizations: Organization[]; orders: Order[]; initialCalendarMonth: string }) {
   const router = useRouter();
+  const currentMonth = initialCalendarMonth;
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? "");
   const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
   const [productId, setProductId] = useState(organizations[0]?.products[0]?.id ?? "");
   const [currency, setCurrency] = useState("RUB");
+  const [calendarMonth, setCalendarMonth] = useState(currentMonth);
+  const [periodStart, setPeriodStart] = useState(`${currentMonth}-01`);
+  const [periodEndExclusive, setPeriodEndExclusive] = useState(() => {
+    const [year, month] = currentMonth.split("-").map(Number);
+    return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -26,7 +33,7 @@ export default function PaymentsManagement({ organizations, orders }: { organiza
   const displayedOrders = useMemo(() => filter === "all" ? orders : orders.filter((order) => order.status === filter), [filter, orders]);
 
   function toggleLocation(id: string) {
-    setSelectedLocationIds((current) => current.includes(id) ? current.filter((value) => value !== id) : current.length < 3 ? [...current, id] : current);
+    setSelectedLocationIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   }
 
   async function createOrder(event: FormEvent<HTMLFormElement>) {
@@ -36,7 +43,7 @@ export default function PaymentsManagement({ organizations, orders }: { organiza
     if (!amountMinor) { setError("Enter a positive amount with valid currency precision."); setBusy(false); return; }
     try {
       const response = await fetch("/api/v2/admin/billing/orders", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organizationId, lines: selectedLocationIds.map((locationId) => ({ locationId, productId })), periodMonth: form.get("periodMonth"),
+        body: JSON.stringify({ organizationId, lines: selectedLocationIds.map((locationId) => ({ locationId, productId })), periodStart, periodEndExclusive,
           totalAmountMinor: amountMinor, currency, invoiceNumber: form.get("invoiceNumber"), invoiceIssuedAt: form.get("invoiceIssuedAt"), paymentDueAt: form.get("paymentDueAt"),
           reason: form.get("reason"), idempotencyKey: `manual-${crypto.randomUUID()}` }) });
       const result = await response.json().catch(() => ({})) as { code?: string; id?: string; duplicate?: boolean };
@@ -68,23 +75,28 @@ export default function PaymentsManagement({ organizations, orders }: { organiza
     {success && <p role="status" className="admin-billing-feedback">{success}</p>}
     <section className="admin-card admin-billing-create">
       <h2 className="admin-card-title">Create manual invoice</h2>
-      <p className="text-dim">One fixed organization total is allocated across exactly three selected salons. Access changes only after full payment confirmation.</p>
+      <p className="text-dim">Choose one or more salons, one applicable Product, an exact coverage period, and one fixed total. The total is allocated deterministically across the selected salons. Access changes only after full payment confirmation.</p>
       <form onSubmit={(event) => void createOrder(event)} className="admin-billing-form">
         <label>Organization<select value={organizationId} onChange={(event) => { const next = organizations.find((item) => item.id === event.target.value); setOrganizationId(event.target.value); setSelectedLocationIds([]); setProductId(next?.products[0]?.id ?? ""); }} required>
           {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
         </select></label>
-        <fieldset><legend>Select exactly three salons</legend><div className="admin-billing-location-options">
-          {(selectedOrganization?.locations ?? []).map((location) => <label key={location.id}><input type="checkbox" checked={selectedLocationIds.includes(location.id)} onChange={() => toggleLocation(location.id)} disabled={!selectedLocationIds.includes(location.id) && selectedLocationIds.length >= 3} />{location.name}</label>)}
+        <fieldset><legend>Select salons (one or more)</legend><div className="admin-billing-location-options">
+          {(selectedOrganization?.locations ?? []).map((location) => <label key={location.id}><input type="checkbox" checked={selectedLocationIds.includes(location.id)} onChange={() => toggleLocation(location.id)} />{location.name}</label>)}
         </div></fieldset>
         <label>Product for selected salons<select value={productId} onChange={(event) => setProductId(event.target.value)} required>{(selectedOrganization?.products ?? []).map((product) => <option key={product.id} value={product.id}>{product.name} · {product.code}</option>)}</select></label>
-        <label>Billing month<input type="month" name="periodMonth" required /></label>
+        <div className="admin-billing-period-helper"><label>Calendar month shortcut<input type="month" value={calendarMonth} onChange={(event) => setCalendarMonth(event.target.value)} /></label><button type="button" className="btn btn-sm" disabled={!/^\d{4}-(0[1-9]|1[0-2])$/.test(calendarMonth)} onClick={() => {
+          const [year, month] = calendarMonth.split("-").map(Number);
+          setPeriodStart(`${calendarMonth}-01`); setPeriodEndExclusive(new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10));
+        }}>Use calendar month</button></div>
+        <label>Coverage starts (inclusive)<input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} required /></label>
+        <label>Coverage ends (exclusive)<input type="date" value={periodEndExclusive} onChange={(event) => setPeriodEndExclusive(event.target.value)} required /></label>
         <label>Invoice total<input name="amount" type="number" min="0.01" step="any" inputMode="decimal" required /></label>
-        <label>Currency<input value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase().slice(0, 3))} minLength={3} maxLength={3} required /></label>
+        <label>Currency<select value={currency} onChange={(event) => setCurrency(event.target.value)} required><option value="RUB">RUB</option></select></label>
         <label>External invoice number<input name="invoiceNumber" maxLength={120} required /></label>
         <label>Issue date<input name="invoiceIssuedAt" type="date" required /></label>
         <label>Payment due date<input name="paymentDueAt" type="date" required /></label>
         <label className="admin-billing-wide">Reason<input name="reason" minLength={12} maxLength={500} required /></label>
-        <button className="btn btn-primary" disabled={busy || selectedLocationIds.length !== 3 || !organizationId || !productId}>{busy ? "Saving…" : "Create pending invoice"}</button>
+        <button className="btn btn-primary" disabled={busy || selectedLocationIds.length < 1 || !organizationId || !productId || !periodStart || !periodEndExclusive || periodEndExclusive <= periodStart}>{busy ? "Saving…" : "Create pending invoice"}</button>
       </form>
     </section>
 

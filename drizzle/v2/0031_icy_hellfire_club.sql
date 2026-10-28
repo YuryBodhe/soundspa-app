@@ -1,0 +1,3 @@
+ALTER TABLE "commercial_billing_order_lines" DROP CONSTRAINT "commercial_billing_order_lines_duration_months";--> statement-breakpoint
+ALTER TABLE "commercial_billing_order_lines" ALTER COLUMN "duration_months" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "commercial_billing_order_lines" ADD CONSTRAINT "commercial_billing_order_lines_duration_months" CHECK ("commercial_billing_order_lines"."duration_months" BETWEEN 1 AND 12 OR ("commercial_billing_order_lines"."duration_months" IS NULL AND "commercial_billing_order_lines"."provider_code" = 'manual-bank-transfer' AND "commercial_billing_order_lines"."billing_period_starts_at" IS NOT NULL AND "commercial_billing_order_lines"."billing_period_ends_at" IS NOT NULL));

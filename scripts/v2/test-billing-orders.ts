@@ -55,8 +55,8 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole !== "soundspa_v2_test" || dbIdentity.role !== "soundspa_v2_test" ||
-        Number(dbIdentity.migrationCount) !== 31 || dbIdentity.latestMigration !== "1793202149431") {
-      throw new Error("Database is not the expected disposable local database at migration 0030.");
+        Number(dbIdentity.migrationCount) !== 32 || dbIdentity.latestMigration !== "1793202676620") {
+      throw new Error("Database is not the expected disposable local database at migration 0031.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
       "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
@@ -438,7 +438,7 @@ async function main() {
         assert.deepEqual(payerPreview.lines?.map((line) => line.amountMinor).sort(), ["108000", "1296000", "324000"]);
         const [lineToTamper] = await tx.select().from(schema.commercialBillingOrderLines)
           .where(eq(schema.commercialBillingOrderLines.orderId, prepaidOrder.id)).limit(1);
-        await tx.update(schema.commercialBillingOrderLines).set({ durationMonths: lineToTamper.durationMonths === 12 ? 11 : lineToTamper.durationMonths + 1 })
+        await tx.update(schema.commercialBillingOrderLines).set({ durationMonths: lineToTamper.durationMonths === 12 ? 11 : (lineToTamper.durationMonths ?? 0) + 1 })
           .where(eq(schema.commercialBillingOrderLines.id, lineToTamper.id));
         await assertAggregateError(aggregateFake.confirmFakeBillingOrderAsPayer({ capability: payerCapability }, new Date(now.getTime() + 1700), tx), "checkout_unavailable");
         await assertAggregateError(aggregateFake.getFakeBillingOrderPayerView({ capability: payerCapability }, new Date(now.getTime() + 1700), tx), "checkout_unavailable");
@@ -886,7 +886,7 @@ async function main() {
         const manualLines = manualTestLocations.map((location) => ({ locationId: location.id, productId: products[0].id }));
         const manualInput = {
           organizationId: organization.id, operatorAuthorization: manualOperatorAuthorization, reason: "Approved three-salon bank transfer",
-          idempotencyKey: `manual-invoice-${suffix.slice(0, 24)}`, periodStart: "2028-11-01", durationMonths: 1,
+          idempotencyKey: `manual-invoice-${suffix.slice(0, 24)}`, periodStart: "2028-11-01", periodEnd: "2028-12-01",
           currency: "RUB", totalAmountMinor: "10001", invoiceNumber: `SAM-${suffix.slice(0, 8)}`, invoiceIssuedAt: "2028-10-20", paymentDueAt: "2028-10-25", lines: manualLines,
         };
         await assert.rejects(service.createManualBankTransferBillingOrder({ ...manualInput, operatorAuthorization: "Basic invalid" }, { db: tx, now }),
@@ -938,7 +938,7 @@ async function main() {
         assert.equal(manualAudit.operator, "billing-integration-operator");
         assert.equal(manualAudit.reason, "Matched full bank statement payment");
         const lateInvoice = await service.createManualBankTransferBillingOrder({
-          ...manualInput, idempotencyKey: `manual-invoice-dec-${suffix.slice(0, 20)}`, invoiceNumber: `SAM-DEC-${suffix.slice(0, 8)}`, periodStart: "2028-12-01",
+          ...manualInput, idempotencyKey: `manual-invoice-dec-${suffix.slice(0, 20)}`, invoiceNumber: `SAM-DEC-${suffix.slice(0, 8)}`, periodStart: "2028-12-01", periodEnd: "2029-01-01",
         }, { db: tx, now: new Date("2028-11-20T10:00:00.000Z") });
         const lateReceipt = await paymentLifecycle.settleTrustedBillingOrderPayment({
           orderId: lateInvoice.id, paymentId: lateInvoice.paymentId!, providerCode: "manual-bank-transfer",
@@ -978,7 +978,7 @@ async function main() {
           db: tx, now: new Date("2028-11-20T10:00:00.000Z"),
         }), (error: unknown) => error instanceof service.BillingOrderError && error.code === "coverage_conflict");
         await assert.rejects(tx.transaction(async (savepoint) => service.createManualBankTransferBillingOrder({
-          ...manualInput, idempotencyKey: `manual-invoice-dup-${suffix.slice(0, 20)}`, periodStart: "2029-01-01",
+          ...manualInput, idempotencyKey: `manual-invoice-dup-${suffix.slice(0, 20)}`, periodStart: "2029-01-01", periodEnd: "2029-02-01",
           invoiceIssuedAt: "2028-12-20", paymentDueAt: "2028-12-25",
         }, { db: savepoint, now: new Date("2028-12-20T10:00:00.000Z") })),
         "a normalized invoice number is unique within its Organization even with a different request key");
@@ -1013,7 +1013,7 @@ async function main() {
         raceOrganizationId = organization.id;
         const [owner] = await tx.insert(schema.users).values({ email: `billing-race-${raceSuffix}@example.test`, emailVerifiedAt: raceNow }).returning();
         await tx.insert(schema.organizationMembers).values({ organizationId: organization.id, userId: owner.id, role: "owner" });
-        const raceLocations = await tx.insert(schema.locations).values([1, 2, 3].map((number) => ({
+        const raceLocations = await tx.insert(schema.locations).values([1, 2, 3, 4].map((number) => ({
           organizationId: organization.id, name: `Concurrent checkout ${number}`, slug: `billing-race-${raceSuffix.slice(0, 10)}-${number}`,
           timezone: "Europe/Moscow", marketCode: "RU",
         }))).returning();
@@ -1144,10 +1144,10 @@ async function main() {
         organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
           .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
         operatorAuthorization: manualOperatorAuthorization, reason: "Approved concurrent bank settlement test",
-        idempotencyKey: `manual-race-${raceSuffix.slice(0, 24)}`, periodStart: "2030-06-01", durationMonths: 1,
+        idempotencyKey: `manual-race-${raceSuffix.slice(0, 24)}`, periodStart: "2030-06-01", periodEnd: "2030-07-01",
         currency: "RUB", totalAmountMinor: "30000", invoiceNumber: `RACE-${raceSuffix.slice(0, 12)}`,
         invoiceIssuedAt: "2030-05-15", paymentDueAt: "2030-05-22",
-        lines: raceFixture.locationIds.map((locationId) => ({ locationId, productId: raceFixture.productId })),
+        lines: raceFixture.locationIds.slice(0, 3).map((locationId) => ({ locationId, productId: raceFixture.productId })),
       });
       assert.equal(manualInvoice.duplicate, false);
       const confirmInput = { orderId: manualInvoice.id, operatorAuthorization: manualOperatorAuthorization, amountMinor: "30000", currency: "RUB",
@@ -1182,15 +1182,85 @@ async function main() {
         organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
           .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
         operatorAuthorization: manualOperatorAuthorization, reason: "Second period reference uniqueness test",
-        idempotencyKey: `manual-race-next-${raceSuffix.slice(0, 18)}`, periodStart: "2030-07-01", durationMonths: 1,
+        idempotencyKey: `manual-race-next-${raceSuffix.slice(0, 18)}`, periodStart: "2030-07-01", periodEnd: "2030-08-01",
         currency: "RUB", totalAmountMinor: "30000", invoiceNumber: `RACE-NEXT-${raceSuffix.slice(0, 10)}`,
         invoiceIssuedAt: "2030-06-15", paymentDueAt: "2030-06-22",
-        lines: raceFixture.locationIds.map((locationId) => ({ locationId, productId: raceFixture.productId })),
+        lines: raceFixture.locationIds.slice(0, 3).map((locationId) => ({ locationId, productId: raceFixture.productId })),
       });
       await assert.rejects(manualBillingAdmin.confirmManualBankTransferPayment({ ...confirmInput, orderId: secondManualInvoice.id }, { now: manualConfirmNow }),
         (error: unknown) => error instanceof manualBillingAdmin.ManualBillingAdminError && error.code === "bank_reference_conflict",
         "a bank reference cannot be reused for a different payment");
-      assertionCount += 27;
+      const customPeriodInvoice = await service.createManualBankTransferBillingOrder({
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        operatorAuthorization: manualOperatorAuthorization, reason: "Approved partial salon custom dates",
+        idempotencyKey: `manual-custom-${raceSuffix.slice(0, 22)}`, periodStart: "2030-08-15", periodEnd: "2030-09-10",
+        currency: "RUB", totalAmountMinor: "1", invoiceNumber: `CUSTOM-${raceSuffix.slice(0, 12)}`,
+        invoiceIssuedAt: "2030-08-01", paymentDueAt: "2030-08-08",
+        lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId }],
+      });
+      if (customPeriodInvoice.duplicate) throw new Error("expected a new custom-period invoice");
+      assert.equal(customPeriodInvoice.lines.length, 1, "manual invoices may cover one salon");
+      assert.equal(customPeriodInvoice.lines[0].amountMinor, "1");
+      assert.equal(customPeriodInvoice.lines[0].startsAt, "2030-08-15T00:00:00.000Z");
+      assert.equal(customPeriodInvoice.lines[0].endsAt, "2030-09-10T00:00:00.000Z", "period end is exclusive and retained exactly");
+      const customRetry = await service.createManualBankTransferBillingOrder({
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        operatorAuthorization: manualOperatorAuthorization, reason: "Approved partial salon custom dates",
+        idempotencyKey: `manual-custom-${raceSuffix.slice(0, 22)}`, periodStart: "2030-08-15", periodEnd: "2030-09-10",
+        currency: "RUB", totalAmountMinor: "1", invoiceNumber: `CUSTOM-${raceSuffix.slice(0, 12)}`,
+        invoiceIssuedAt: "2030-08-01", paymentDueAt: "2030-08-08",
+        lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId }],
+      });
+      assert.equal(customRetry.id, customPeriodInvoice.id);
+      assert.equal(customRetry.duplicate, true, "custom-period request retries remain idempotent");
+      await assert.rejects(service.createManualBankTransferBillingOrder({
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        operatorAuthorization: manualOperatorAuthorization, reason: "Overlapping custom coverage should fail",
+        idempotencyKey: `manual-custom-overlap-${raceSuffix.slice(0, 14)}`, periodStart: "2030-09-05", periodEnd: "2030-09-20",
+        currency: "RUB", totalAmountMinor: "100", invoiceNumber: `CUSTOM-OVERLAP-${raceSuffix.slice(0, 8)}`,
+        invoiceIssuedAt: "2030-08-20", paymentDueAt: "2030-08-25",
+        lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId }],
+      }), (error: unknown) => error instanceof service.BillingOrderError && error.code === "coverage_conflict",
+      "overlapping custom coverage is rejected");
+      const customPayment = await manualBillingAdmin.confirmManualBankTransferPayment({ orderId: customPeriodInvoice.id,
+        operatorAuthorization: manualOperatorAuthorization, amountMinor: "1", currency: "RUB", bankTransactionReference: `CUSTOM-BANK-${raceSuffix}`,
+        actualPaymentDate: "2030-09-12", reason: "Verified late payment for custom coverage" }, { now: new Date("2030-09-13T12:00:00.000Z") });
+      assert.equal(customPayment.duplicate, false, "late payment settles against the fixed custom coverage period");
+      const [customSubscription] = await v2Db.select({ startsAt: schema.locationSubscriptions.startsAt,
+        endsAt: schema.locationSubscriptions.currentPeriodEndsAt }).from(schema.locationSubscriptions)
+        .where(eq(schema.locationSubscriptions.id, customPayment.allocations[0].subscriptionId));
+      assert.equal(customSubscription.startsAt.toISOString(), "2030-08-15T00:00:00.000Z");
+      assert.equal(customSubscription.endsAt?.toISOString(), "2030-09-10T00:00:00.000Z");
+      const adjacentInvoice = await service.createManualBankTransferBillingOrder({
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        operatorAuthorization: manualOperatorAuthorization, reason: "Adjacent exclusive interval test",
+        idempotencyKey: `manual-adjacent-${raceSuffix.slice(0, 18)}`, periodStart: "2030-09-10", periodEnd: "2030-10-01",
+        currency: "RUB", totalAmountMinor: "100", invoiceNumber: `ADJACENT-${raceSuffix.slice(0, 10)}`,
+        invoiceIssuedAt: "2030-08-25", paymentDueAt: "2030-09-01",
+        lines: [{ locationId: raceFixture.locationId, productId: raceFixture.productId }],
+      });
+      assert.equal(adjacentInvoice.duplicate, false, "period beginning at the exclusive end is allowed");
+      const fourSalonInvoice = await service.createManualBankTransferBillingOrder({
+        organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
+          .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
+        operatorAuthorization: manualOperatorAuthorization, reason: "Approved four salon calendar period",
+        idempotencyKey: `manual-four-${raceSuffix.slice(0, 20)}`, periodStart: "2030-10-01", periodEnd: "2030-11-01",
+        currency: "RUB", totalAmountMinor: "40000", invoiceNumber: `FOUR-${raceSuffix.slice(0, 12)}`,
+        invoiceIssuedAt: "2030-09-15", paymentDueAt: "2030-09-22",
+        lines: raceFixture.locationIds.map((locationId) => ({ locationId, productId: raceFixture.productId })),
+      });
+      if (fourSalonInvoice.duplicate) throw new Error("expected a new four-salon invoice");
+      assert.equal(fourSalonInvoice.lines.length, 4, "manual invoices support more than three salons");
+      assert.equal(fourSalonInvoice.lines.reduce((sum, line) => sum + BigInt(line.amountMinor), BigInt(0)), BigInt(40000));
+      const fourSalonPayment = await manualBillingAdmin.confirmManualBankTransferPayment({ orderId: fourSalonInvoice.id,
+        operatorAuthorization: manualOperatorAuthorization, amountMinor: "40000", currency: "RUB", bankTransactionReference: `FOUR-BANK-${raceSuffix}`,
+        actualPaymentDate: "2030-10-05", reason: "Verified four salon bank transfer" }, { now: new Date("2030-10-06T12:00:00.000Z") });
+      assert.equal(fourSalonPayment.allocations.length, 4, "the payment settlement applies all selected salon periods atomically");
+      assertionCount += 40;
     } finally {
       if (raceOrganizationId) {
         await v2Db.transaction(async (tx) => {
