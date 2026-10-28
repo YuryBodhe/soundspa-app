@@ -375,7 +375,10 @@ export const commercialPaymentRouteEvents = pgTable("commercial_payment_route_ev
 export const commercialBillingOrders = pgTable("commercial_billing_orders", {
   id: uuid("id").defaultRandom().primaryKey(),
   organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+  createdByOperator: text("created_by_operator"),
+  creationReason: text("creation_reason"),
+  manualIdempotencyKey: text("manual_idempotency_key"),
   status: text("status").notNull().default("draft"),
   providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
   currency: text("currency").notNull(),
@@ -391,10 +394,12 @@ export const commercialBillingOrders = pgTable("commercial_billing_orders", {
   uniqueIndex("commercial_billing_orders_id_provider_unique").on(table.id, table.providerCode),
   uniqueIndex("commercial_billing_orders_id_currency_unique").on(table.id, table.currency),
   index("commercial_billing_orders_organization_created_idx").on(table.organizationId, table.createdAt),
+  uniqueIndex("commercial_billing_orders_manual_idempotency_unique").on(table.manualIdempotencyKey).where(sql`${table.manualIdempotencyKey} IS NOT NULL`),
   check("commercial_billing_orders_status_valid", sql`${table.status} IN ('draft', 'quoted', 'pending', 'paid', 'expired', 'canceled', 'failed')`),
   check("commercial_billing_orders_amount_nonnegative", sql`${table.totalAmountMinor} >= 0`),
   check("commercial_billing_orders_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
   check("commercial_billing_orders_quote_expiry", sql`${table.expiresAt} IS NULL OR (${table.quotedAt} IS NOT NULL AND ${table.expiresAt} > ${table.quotedAt})`),
+  check("commercial_billing_orders_creator_shape", sql`(${table.providerCode} = 'manual-bank-transfer' AND ${table.createdByUserId} IS NULL AND ${table.createdByOperator} IS NOT NULL AND length(btrim(${table.createdByOperator})) BETWEEN 1 AND 200 AND ${table.creationReason} IS NOT NULL AND length(btrim(${table.creationReason})) BETWEEN 12 AND 500 AND ${table.manualIdempotencyKey} IS NOT NULL AND length(btrim(${table.manualIdempotencyKey})) BETWEEN 8 AND 128) OR (${table.providerCode} <> 'manual-bank-transfer' AND ${table.createdByUserId} IS NOT NULL AND ${table.createdByOperator} IS NULL AND ${table.creationReason} IS NULL AND ${table.manualIdempotencyKey} IS NULL)`),
 ]);
 
 /** Each line is one Location/Product entitlement purchase with a frozen route and amount. */

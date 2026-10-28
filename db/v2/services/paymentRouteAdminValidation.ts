@@ -1,6 +1,9 @@
 import { FAKE_PROVIDER_CODE, FAKE_PROVIDER_MARKET } from "@/lib/v2/fakePaymentProvider";
 
-export const PAYMENT_ROUTE_PROVIDERS = [{ code: FAKE_PROVIDER_CODE, name: "Staging Fake Payment", markets: [FAKE_PROVIDER_MARKET] }] as const;
+export const PAYMENT_ROUTE_PROVIDERS = [
+  { code: FAKE_PROVIDER_CODE, name: "Staging Fake Payment", markets: [FAKE_PROVIDER_MARKET] },
+  { code: "manual-bank-transfer", name: "Manual Bank Transfer", markets: [FAKE_PROVIDER_MARKET] },
+] as const;
 export type PaymentRouteAction = "created" | "enabled" | "disabled" | "priority_changed";
 export type PaymentRouteState = {
   marketCode: string;

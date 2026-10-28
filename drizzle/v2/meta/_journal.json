@@ -204,6 +204,13 @@
       "when": 1793194661564,
       "tag": "0028_spaquatoria_promo_code_archiving",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793200478523,
+      "tag": "0029_awesome_zaran",
+      "breakpoints": true
     }
   ]
 }

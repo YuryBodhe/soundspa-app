@@ -17,7 +17,8 @@ import {
 import { PaymentFoundationError, recordNormalizedPayment } from "./paymentFoundation";
 import type { NormalizedPaymentInput } from "./paymentFoundationModel";
 import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, validateProviderPaidThrough } from "./paymentLifecycleModel";
-import { planNextSubscriptionPeriod } from "./billingCalendar";
+import { planNextSubscriptionPeriod, type PlannedSubscriptionPeriod } from "./billingCalendar";
+import { explicitCalendarCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
 import { billingOrderSnapshotReference } from "./billingOrderModel";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
@@ -288,7 +289,13 @@ export async function settleTrustedBillingOrderPayment(
     }
 
     if (order.status !== "pending" || payment.status !== "pending") throw new PaymentFoundationError("billing_order_invalid");
-    if (!order.expiresAt || event.occurredAt.getTime() >= order.expiresAt.getTime()) throw new PaymentFoundationError("billing_order_expired");
+    // Manual invoices have explicit calendar coverage and do not expire when
+    // the bank transfer arrives late. Provider checkout orders retain their
+    // existing quote-expiry semantics.
+    if (order.providerCode !== MANUAL_BANK_TRANSFER_PROVIDER_CODE &&
+        (!order.expiresAt || event.occurredAt.getTime() >= order.expiresAt.getTime())) {
+      throw new PaymentFoundationError("billing_order_expired");
+    }
     const [insertedEvent] = await tx.insert(commercialPaymentEvents).values({
       providerCode: event.providerCode,
       paymentId: payment.id,
@@ -321,18 +328,38 @@ export async function settleTrustedBillingOrderPayment(
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
       const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
         .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
-      let period;
-      try {
-        period = planNextSubscriptionPeriod({
-          now: event.occurredAt, durationMonths: line.durationMonths,
-          subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
-            billingAnchorDay: row.billingAnchorDay, billingAnchorIsEndOfMonth: row.billingAnchorIsEndOfMonth })),
-          trial,
-        });
-      } catch {
-        throw new PaymentFoundationError("billing_order_invalid");
+      let period: PlannedSubscriptionPeriod;
+      let subscription: typeof subscriptions[number] | null;
+      if (order.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE) {
+        try {
+          if (!line.billingPeriodStartsAt || !line.billingPeriodEndsAt || line.billingAnchorDay !== 1 || line.billingAnchorIsEndOfMonth) {
+            throw new Error("invalid_manual_calendar_snapshot");
+          }
+          period = { ...explicitCalendarCoverage(line.billingPeriodStartsAt, line.durationMonths), subscriptionId: null };
+          if (period.endsAt.getTime() !== line.billingPeriodEndsAt.getTime()) throw new Error("invalid_manual_calendar_snapshot");
+        } catch {
+          throw new PaymentFoundationError("billing_order_invalid");
+        }
+        const overlaps = subscriptions.some((row) => row.currentPeriodEndsAt === null ||
+          (row.startsAt < period.endsAt && row.currentPeriodEndsAt > period.startsAt));
+        const trialOverlaps = Boolean(trial && trial.startsAt < period.endsAt && trial.endsAt > period.startsAt);
+        if (overlaps || trialOverlaps) throw new PaymentFoundationError("billing_order_invalid");
+        // A contiguous prior paid-through row can be extended without changing
+        // the invoiced UTC calendar dates; otherwise create a distinct period.
+        subscription = subscriptions.find((row) => row.currentPeriodEndsAt?.getTime() === period.startsAt.getTime()) ?? null;
+      } else {
+        try {
+          period = planNextSubscriptionPeriod({
+            now: event.occurredAt, durationMonths: line.durationMonths,
+            subscriptions: subscriptions.map((row) => ({ id: row.id, status: row.status, startsAt: row.startsAt, endsAt: row.currentPeriodEndsAt,
+              billingAnchorDay: row.billingAnchorDay, billingAnchorIsEndOfMonth: row.billingAnchorIsEndOfMonth })),
+            trial,
+          });
+        } catch {
+          throw new PaymentFoundationError("billing_order_invalid");
+        }
+        subscription = subscriptions.find((row) => row.id === period.subscriptionId) ?? null;
       }
-      const subscription = subscriptions.find((row) => row.id === period.subscriptionId) ?? null;
 
       let appliedSubscription: typeof locationSubscriptions.$inferSelect;
       if (subscription) {
@@ -342,8 +369,8 @@ export async function settleTrustedBillingOrderPayment(
         [appliedSubscription] = await tx.update(locationSubscriptions).set({
           status: remainsCanceled ? "canceled" : "active",
           currentPeriodEndsAt: period.endsAt,
-          billingAnchorDay: subscription.billingAnchorDay ?? period.anchor.dayOfMonth,
-          billingAnchorIsEndOfMonth: subscription.billingAnchorIsEndOfMonth ?? period.anchor.isEndOfMonth,
+          billingAnchorDay: order.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE ? period.anchor.dayOfMonth : subscription.billingAnchorDay ?? period.anchor.dayOfMonth,
+          billingAnchorIsEndOfMonth: order.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE ? period.anchor.isEndOfMonth : subscription.billingAnchorIsEndOfMonth ?? period.anchor.isEndOfMonth,
           updatedAt: event.occurredAt,
         }).where(eq(locationSubscriptions.id, subscription.id)).returning();
       } else {

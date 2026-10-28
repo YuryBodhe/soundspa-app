@@ -21,6 +21,9 @@ test("route configuration accepts supported RU Fake Provider identifiers without
   assert.deepEqual(validatePaymentRouteConfiguration({
     marketCode: "RU", providerCode: "fake-staging", externalReference: " fake-staging-divnitsa ", displayOrder: 0,
   }), { marketCode: "RU", providerCode: "fake-staging", externalReference: "fake-staging-divnitsa", displayOrder: 0 });
+  assert.deepEqual(validatePaymentRouteConfiguration({
+    marketCode: "RU", providerCode: "manual-bank-transfer", externalReference: "manual-bank-transfer-basic", displayOrder: 0,
+  }), { marketCode: "RU", providerCode: "manual-bank-transfer", externalReference: "manual-bank-transfer-basic", displayOrder: 0 });
 });
 
 test("route configuration rejects unsupported market/provider and malformed or unsafe values", () => {

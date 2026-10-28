@@ -1,9 +1,11 @@
-import { and, asc, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { FAKE_CHECKOUT_TTL_MS, FAKE_PROVIDER_CODE, fakeProviderIsConfigured, type FakeProviderEnvironment } from "@/lib/v2/fakePaymentProvider";
+import { operatorAuthStatus } from "@/lib/v2/adminOperator";
 import { v2Db } from "../client";
 import {
   commercialBillingOrderLines,
   commercialBillingOrders,
+  commercialPaymentAllocations,
   commercialPaymentProviders,
   commercialPayments,
   commercialPaymentRoutes,
@@ -17,6 +19,7 @@ import {
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
+import { allocateFixedOrganizationTotal, explicitCalendarCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE, ManualBillingModelError, validateManualBankTransferInput } from "./manualBillingModel";
 import {
   billingOrderSnapshotReference,
   BillingOrderModelError,
@@ -43,7 +46,10 @@ export type BillingOrderErrorCode =
   | "unsupported_pricing"
   | "incompatible_routes"
   | "unbounded_subscription_requires_policy"
-  | "checkout_pending";
+  | "checkout_pending"
+  | "manual_route_unavailable"
+  | "coverage_conflict"
+  | "duplicate_request_conflict";
 
 export class BillingOrderError extends Error {
   constructor(readonly code: BillingOrderErrorCode) {
@@ -103,6 +109,7 @@ async function loadLocationQuotes(input: {
       eq(commercialPaymentRoutes.marketCode, input.location.marketCode),
       eq(commercialPaymentRoutes.isEnabled, true),
       eq(commercialPaymentProviders.isEnabled, true),
+      ne(commercialPaymentProviders.code, MANUAL_BANK_TRANSFER_PROVIDER_CODE),
     ))
     .orderBy(asc(commercialPaymentRoutes.displayOrder), asc(commercialPaymentProviders.code), asc(commercialPaymentRoutes.externalReference), asc(commercialPaymentRoutes.id))
     .for("share");
@@ -425,5 +432,170 @@ export async function createPrepaidBillingOrder(input: {
         subscriptionId: period.subscriptionId,
       })),
     };
+  });
+}
+
+/**
+ * Creates the pending order and expected transfer allocation for one
+ * organization-wide, operator-issued bank transfer. It does not mark money as
+ * received and does not grant or mutate entitlement records.
+ */
+export async function createManualBankTransferBillingOrder(input: {
+  organizationId: unknown;
+  operatorAuthorization: unknown;
+  reason: unknown;
+  idempotencyKey: unknown;
+  periodStart: unknown;
+  durationMonths: unknown;
+  currency: unknown;
+  totalAmountMinor: unknown;
+  lines: unknown;
+}, options: { now?: Date; db?: BillingOrderDb } = {}) {
+  let request: ReturnType<typeof validateManualBankTransferInput>;
+  const authorization = typeof input.operatorAuthorization === "string" ? input.operatorAuthorization : null;
+  const operator = process.env.V2_ADMIN_USERNAME?.trim();
+  if (!operator || operator.length > 200 || operatorAuthStatus(authorization) !== 200) throw new BillingOrderError("not_authorized");
+  try { request = validateManualBankTransferInput({ ...input, operator }); }
+  catch (error) {
+    if (error instanceof ManualBillingModelError) throw new BillingOrderError(error.code === "invalid_creator" ? "invalid_request" : error.code === "invalid_period" ? "invalid_request" : error.code === "invalid_amount" ? "invalid_request" : error.code);
+    throw error;
+  }
+  const now = options.now ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new BillingOrderError("invalid_request");
+  const db = options.db ?? v2Db;
+  const allocated = allocateFixedOrganizationTotal(request.totalAmountMinor, request.lines);
+  const coverage = explicitCalendarCoverage(request.periodStart, request.durationMonths);
+
+  return db.transaction(async (tx) => {
+    // Stable lock prevents two concurrent retries from creating duplicate
+    // orders before the unique idempotency index is consulted.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${request.idempotencyKey}, 0))`);
+    const [prior] = await tx.select().from(commercialBillingOrders).where(and(
+      eq(commercialBillingOrders.providerCode, MANUAL_BANK_TRANSFER_PROVIDER_CODE),
+      eq(commercialBillingOrders.manualIdempotencyKey, request.idempotencyKey),
+    )).for("update").limit(1);
+    if (prior) {
+      const priorLines = await tx.select().from(commercialBillingOrderLines).where(eq(commercialBillingOrderLines.orderId, prior.id))
+        .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.productId));
+      const sameRequest = prior.organizationId === request.organizationId && prior.currency === request.currency &&
+        prior.totalAmountMinor === request.totalAmountMinor && prior.createdByOperator === request.operator && prior.creationReason === request.reason &&
+        priorLines.length === allocated.length && priorLines.every((line, index) =>
+          line.locationId === allocated[index].locationId && line.productId === allocated[index].productId &&
+          line.amountMinor === allocated[index].amountMinor && line.durationMonths === request.durationMonths &&
+          line.billingPeriodStartsAt?.getTime() === coverage.startsAt.getTime() && line.billingPeriodEndsAt?.getTime() === coverage.endsAt.getTime());
+      if (!sameRequest) throw new BillingOrderError("duplicate_request_conflict");
+      const [payment] = await tx.select({ id: commercialPayments.id, status: commercialPayments.status,
+        amountMinor: commercialPayments.amountMinor, currency: commercialPayments.currency }).from(commercialPayments)
+        .where(eq(commercialPayments.billingOrderId, prior.id)).limit(1);
+      if (!payment || payment.amountMinor !== prior.totalAmountMinor || payment.currency !== prior.currency ||
+          !["pending", "succeeded"].includes(payment.status)) throw new BillingOrderError("invalid_request");
+      const priorAllocations = await tx.select({ orderLineId: commercialPaymentAllocations.orderLineId,
+        amountMinor: commercialPaymentAllocations.amountMinor }).from(commercialPaymentAllocations)
+        .where(and(eq(commercialPaymentAllocations.paymentId, payment.id), eq(commercialPaymentAllocations.orderId, prior.id)));
+      if (priorAllocations.length !== priorLines.length || priorLines.some((line) =>
+        priorAllocations.find((allocation) => allocation.orderLineId === line.id)?.amountMinor !== line.amountMinor)) {
+        throw new BillingOrderError("invalid_request");
+      }
+      return { id: prior.id, paymentId: payment.id, duplicate: true as const, status: prior.status, totalAmountMinor: prior.totalAmountMinor.toString() };
+    }
+
+    const [organization] = await tx.select({ id: organizations.id }).from(organizations)
+      .where(and(eq(organizations.id, request.organizationId), isNull(organizations.archivedAt))).for("update").limit(1);
+    if (!organization) throw new BillingOrderError("not_authorized");
+    const locationIds = allocated.map((line) => line.locationId).sort();
+    const locationRows = await tx.select({ id: locations.id, organizationId: locations.organizationId, marketCode: locations.marketCode, archivedAt: locations.archivedAt })
+      .from(locations).where(inArray(locations.id, locationIds)).orderBy(asc(locations.id)).for("update");
+    if (locationRows.length !== 3 || locationRows.some((location) => location.organizationId !== request.organizationId || location.archivedAt !== null || !location.marketCode)) {
+      throw new BillingOrderError("not_authorized");
+    }
+    const locationById = new Map(locationRows.map((location) => [location.id, location]));
+    const productIds = [...new Set(allocated.map((line) => line.productId))].sort();
+    await requireOrganizationProductPurchaseEligibility(tx, request.organizationId, productIds, { lockForShare: true });
+    const products = await tx.select({ id: commercialProducts.id, isActive: commercialProducts.isActive })
+      .from(commercialProducts).where(inArray(commercialProducts.id, productIds)).orderBy(asc(commercialProducts.id)).for("share");
+    if (products.length !== productIds.length || products.some((product) => !product.isActive)) throw new BillingOrderError("product_unavailable");
+
+    const [provider] = await tx.select({ code: commercialPaymentProviders.code, isEnabled: commercialPaymentProviders.isEnabled })
+      .from(commercialPaymentProviders).where(eq(commercialPaymentProviders.code, MANUAL_BANK_TRANSFER_PROVIDER_CODE)).for("share").limit(1);
+    if (!provider?.isEnabled) throw new BillingOrderError("provider_not_configured");
+
+    const routes = await tx.select({ id: commercialPaymentRoutes.id, productId: commercialPaymentRoutes.productId,
+      marketCode: commercialPaymentRoutes.marketCode, externalReference: commercialPaymentRoutes.externalReference })
+      .from(commercialPaymentRoutes).where(and(
+        eq(commercialPaymentRoutes.providerCode, MANUAL_BANK_TRANSFER_PROVIDER_CODE),
+        eq(commercialPaymentRoutes.isEnabled, true),
+        inArray(commercialPaymentRoutes.productId, productIds),
+        inArray(commercialPaymentRoutes.marketCode, locationRows.map((location) => location.marketCode!)),
+      )).orderBy(asc(commercialPaymentRoutes.productId), asc(commercialPaymentRoutes.marketCode), asc(commercialPaymentRoutes.id)).for("share");
+    const routeByPair = new Map(routes.map((route) => [`${route.productId}:${route.marketCode}`, route]));
+    for (const line of allocated) {
+      const location = locationById.get(line.locationId)!;
+      if (!routeByPair.has(`${line.productId}:${location.marketCode}`)) throw new BillingOrderError("manual_route_unavailable");
+    }
+
+    // Refuse overlapping manual coverage and duplicate active coverage. The
+    // unique request key handles retries; this interval check protects against
+    // a second invoice generated with a different request key.
+    for (const line of allocated) {
+      const [overlappingSubscription] = await tx.select({ id: locationSubscriptions.id }).from(locationSubscriptions).where(and(
+        eq(locationSubscriptions.locationId, line.locationId), eq(locationSubscriptions.productId, line.productId),
+        isNull(locationSubscriptions.invalidatedByResetId), inArray(locationSubscriptions.status, ["active", "canceled"]),
+        sql`(${locationSubscriptions.currentPeriodEndsAt} IS NULL OR (${locationSubscriptions.startsAt} < ${coverage.endsAt} AND ${locationSubscriptions.currentPeriodEndsAt} > ${coverage.startsAt}))`,
+      )).for("update").limit(1);
+      if (overlappingSubscription) throw new BillingOrderError("coverage_conflict");
+      const [overlappingTrial] = await tx.select({ id: locationCoreTrials.id }).from(locationCoreTrials).where(and(
+        eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId),
+        isNull(locationCoreTrials.invalidatedByResetId),
+        sql`${locationCoreTrials.startsAt} < ${coverage.endsAt} AND ${locationCoreTrials.endsAt} > ${coverage.startsAt}`,
+      )).limit(1);
+      if (overlappingTrial) throw new BillingOrderError("coverage_conflict");
+      const [overlappingOrderLine] = await tx.select({ id: commercialBillingOrderLines.id }).from(commercialBillingOrderLines)
+        .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
+        .where(and(eq(commercialBillingOrders.organizationId, request.organizationId),
+          inArray(commercialBillingOrders.status, ["pending", "paid"]),
+          eq(commercialBillingOrderLines.providerCode, MANUAL_BANK_TRANSFER_PROVIDER_CODE),
+          eq(commercialBillingOrderLines.locationId, line.locationId), eq(commercialBillingOrderLines.productId, line.productId),
+          sql`${commercialBillingOrderLines.billingPeriodStartsAt} < ${coverage.endsAt} AND ${commercialBillingOrderLines.billingPeriodEndsAt} > ${coverage.startsAt}`))
+        .for("update").limit(1);
+      if (overlappingOrderLine) throw new BillingOrderError("coverage_conflict");
+    }
+
+    const [order] = await tx.insert(commercialBillingOrders).values({
+      organizationId: request.organizationId, createdByUserId: null, createdByOperator: request.operator,
+      creationReason: request.reason, manualIdempotencyKey: request.idempotencyKey,
+      status: "pending", providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE, currency: request.currency,
+      totalAmountMinor: request.totalAmountMinor, quotedAt: now, createdAt: now, updatedAt: now,
+    }).returning({ id: commercialBillingOrders.id });
+    const insertedLines = await tx.insert(commercialBillingOrderLines).values(allocated.map((line) => {
+      const location = locationById.get(line.locationId)!;
+      const route = routeByPair.get(`${line.productId}:${location.marketCode}`)!;
+      return {
+        orderId: order.id, organizationId: request.organizationId, locationId: line.locationId, productId: line.productId,
+        providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE, currency: request.currency, marketCode: location.marketCode!,
+        routeId: route.id, routeExternalReference: route.externalReference, durationMonths: request.durationMonths,
+        listAmountMinor: line.amountMinor, discountAmountMinor: BigInt(0), amountMinor: line.amountMinor,
+        billingAnchorDay: coverage.anchor.dayOfMonth, billingAnchorIsEndOfMonth: coverage.anchor.isEndOfMonth,
+        billingPeriodStartsAt: coverage.startsAt, billingPeriodEndsAt: coverage.endsAt, subscriptionId: null,
+        createdAt: now, updatedAt: now,
+      };
+    })).returning({ id: commercialBillingOrderLines.id, amountMinor: commercialBillingOrderLines.amountMinor });
+    const [payment] = await tx.insert(commercialPayments).values({
+      billingOrderId: order.id, providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE,
+      paymentKey: `manual-order:${order.id}`, status: "pending", amountMinor: request.totalAmountMinor,
+      currency: request.currency, createdAt: now, updatedAt: now,
+    }).returning({ id: commercialPayments.id });
+    await tx.insert(commercialPaymentAllocations).values(insertedLines.map((line) => ({
+      orderId: order.id, paymentId: payment.id, orderLineId: line.id, amountMinor: line.amountMinor, createdAt: now,
+    })));
+    const snapshotLines = await tx.select().from(commercialBillingOrderLines).where(eq(commercialBillingOrderLines.orderId, order.id))
+      .orderBy(asc(commercialBillingOrderLines.id));
+    const quoteReference = billingOrderSnapshotReference({
+      id: order.id, organizationId: request.organizationId, providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE,
+      currency: request.currency, totalAmountMinor: request.totalAmountMinor,
+    }, snapshotLines);
+    await tx.update(commercialBillingOrders).set({ quoteReference, updatedAt: now }).where(eq(commercialBillingOrders.id, order.id));
+    return { id: order.id, paymentId: payment.id, duplicate: false as const, status: "pending" as const,
+      totalAmountMinor: request.totalAmountMinor.toString(), currency: request.currency,
+      lines: allocated.map((line) => ({ ...line, amountMinor: line.amountMinor.toString(), startsAt: coverage.startsAt.toISOString(), endsAt: coverage.endsAt.toISOString() })) };
   });
 }

@@ -24,6 +24,9 @@ async function main() {
   process.env.V2_FAKE_PROVIDER_ENABLED = "1";
   process.env.V2_PUBLIC_ORIGIN = "https://test.soundspa.bodhemusic.com";
   process.env.V2_FAKE_PROVIDER_SECRET = "rollback-only-billing-order-test-secret-32-bytes";
+  process.env.V2_ADMIN_USERNAME = "billing-integration-operator";
+  process.env.V2_ADMIN_PASSWORD = "isolated-manual-billing-password-not-for-deployment";
+  const manualOperatorAuthorization = `Basic ${Buffer.from(`${process.env.V2_ADMIN_USERNAME}:${process.env.V2_ADMIN_PASSWORD}`).toString("base64")}`;
 
   const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle, paymentLifecycle, billingOrderModel] = await Promise.all([
     import("../../db/v2/client"),
@@ -51,11 +54,11 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole !== "soundspa_v2_test" || dbIdentity.role !== "soundspa_v2_test" ||
-        Number(dbIdentity.migrationCount) !== 23 || dbIdentity.latestMigration !== "1792025178280") {
-      throw new Error("Database is not the expected disposable local database at migration 0022.");
+        Number(dbIdentity.migrationCount) !== 30 || dbIdentity.latestMigration !== "1793200478523") {
+      throw new Error("Database is not the expected disposable local database at migration 0029.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     if (baseline.rows[0]?.count !== "0") throw new Error("Disposable integration database must contain no customer or commercial fixtures before the test.");
 
@@ -110,6 +113,13 @@ async function main() {
           marketCode: "RU", productId: product.id, providerCode: provider.code,
           externalReference: `billing-order:${product.code}`,
         }))).returning();
+        const [manualProvider] = await tx.select({ code: schema.commercialPaymentProviders.code })
+          .from(schema.commercialPaymentProviders).where(eq(schema.commercialPaymentProviders.code, "manual-bank-transfer")).limit(1);
+        assert.ok(manualProvider, "migration provisions the explicit manual bank-transfer provider");
+        await tx.insert(schema.commercialPaymentRoutes).values(products.slice(0, 2).map((product) => ({
+          marketCode: "RU", productId: product.id, providerCode: manualProvider.code,
+          externalReference: `manual-bank-transfer:${product.code}`,
+        })));
 
         // A currently paid period must be extended from its existing end and
         // original month-end anchor, while the other lines start at order time.
@@ -868,6 +878,83 @@ async function main() {
         assert.deepEqual(afterReplay, paidProducts.map(({ id, currentPeriodEndsAt }) => ({ id, currentPeriodEndsAt })));
         assertionCount += 35;
 
+        const manualTestLocations = await tx.insert(schema.locations).values([1, 2, 3].map((number) => ({
+          organizationId: organization.id, name: `Manual billing ${number}`,
+          slug: `manual-billing-${suffix.slice(0, 8)}-${number}`, timezone: "Europe/Moscow", marketCode: "RU",
+        }))).returning();
+        const manualLines = manualTestLocations.map((location) => ({ locationId: location.id, productId: products[0].id }));
+        const manualInput = {
+          organizationId: organization.id, operatorAuthorization: manualOperatorAuthorization, reason: "Approved three-salon bank transfer",
+          idempotencyKey: `manual-invoice-${suffix.slice(0, 24)}`, periodStart: "2028-11-01", durationMonths: 1,
+          currency: "RUB", totalAmountMinor: "10001", lines: manualLines,
+        };
+        await assert.rejects(service.createManualBankTransferBillingOrder({ ...manualInput, operatorAuthorization: "Basic invalid" }, { db: tx, now }),
+          (error: unknown) => error instanceof service.BillingOrderError && error.code === "not_authorized");
+        const beforeManualSubscriptions = await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions);
+        const earlyInvoice = await service.createManualBankTransferBillingOrder(manualInput, {
+          db: tx, now: new Date("2028-10-25T10:00:00.000Z"),
+        });
+        assert.equal(earlyInvoice.duplicate, false);
+        assert.equal(earlyInvoice.totalAmountMinor, "10001");
+        const manualOrderLines = await tx.select().from(schema.commercialBillingOrderLines)
+          .where(eq(schema.commercialBillingOrderLines.orderId, earlyInvoice.id));
+        assert.equal(manualOrderLines.length, 3);
+        assert.equal(manualOrderLines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)), BigInt(10001));
+        assert.deepEqual(manualOrderLines.map((line) => line.amountMinor).sort((a, b) => a < b ? -1 : a > b ? 1 : 0), [BigInt(3333), BigInt(3334), BigInt(3334)]);
+        assert.ok(manualOrderLines.every((line) => line.billingPeriodStartsAt?.toISOString() === "2028-11-01T00:00:00.000Z" &&
+          line.billingPeriodEndsAt?.toISOString() === "2028-12-01T00:00:00.000Z"));
+        const manualPayment = (await tx.select().from(schema.commercialPayments)
+          .where(eq(schema.commercialPayments.id, earlyInvoice.paymentId!)))[0];
+        const manualAllocations = await tx.select().from(schema.commercialPaymentAllocations)
+          .where(eq(schema.commercialPaymentAllocations.paymentId, manualPayment.id));
+        assert.equal(manualPayment.status, "pending", "order creation records an expected transfer only");
+        assert.equal(manualAllocations.reduce((sum, row) => sum + row.amountMinor, BigInt(0)), BigInt(10001));
+        const lateRetry = await service.createManualBankTransferBillingOrder(manualInput, {
+          db: tx, now: new Date("2028-11-20T10:00:00.000Z"),
+        });
+        assert.equal(lateRetry.id, earlyInvoice.id, "late retry returns the same order rather than creating a second extension");
+        assert.equal(lateRetry.duplicate, true);
+        const earlyReceipt = await paymentLifecycle.settleTrustedBillingOrderPayment({
+          orderId: earlyInvoice.id, paymentId: earlyInvoice.paymentId!, providerCode: "manual-bank-transfer",
+          paymentKey: `manual-order:${earlyInvoice.id}`, externalPaymentId: null,
+          idempotencyKey: `bank-receipt-${suffix.slice(0, 20)}`, externalEventId: `bank-reference-${suffix.slice(0, 20)}`,
+          amountMinor: BigInt(10001), currency: "RUB", occurredAt: new Date("2028-10-27T09:00:00.000Z"),
+        }, tx);
+        assert.equal(earlyReceipt.duplicate, false);
+        const lateInvoice = await service.createManualBankTransferBillingOrder({
+          ...manualInput, idempotencyKey: `manual-invoice-dec-${suffix.slice(0, 20)}`, periodStart: "2028-12-01",
+        }, { db: tx, now: new Date("2028-11-20T10:00:00.000Z") });
+        const lateReceipt = await paymentLifecycle.settleTrustedBillingOrderPayment({
+          orderId: lateInvoice.id, paymentId: lateInvoice.paymentId!, providerCode: "manual-bank-transfer",
+          paymentKey: `manual-order:${lateInvoice.id}`, externalPaymentId: null,
+          idempotencyKey: `bank-receipt-dec-${suffix.slice(0, 20)}`, externalEventId: `bank-reference-dec-${suffix.slice(0, 20)}`,
+          amountMinor: BigInt(10001), currency: "RUB", occurredAt: new Date("2028-12-15T09:00:00.000Z"),
+        }, tx);
+        assert.equal(lateReceipt.duplicate, false);
+        const manualSubscriptionIds = [...new Set([...earlyReceipt.allocations, ...lateReceipt.allocations].map((row) => row.subscriptionId))];
+        const manualCoverage = await tx.select({ startsAt: schema.locationSubscriptions.startsAt, endsAt: schema.locationSubscriptions.currentPeriodEndsAt,
+          locationId: schema.locationSubscriptions.locationId, anchorDay: schema.locationSubscriptions.billingAnchorDay,
+          anchorIsEom: schema.locationSubscriptions.billingAnchorIsEndOfMonth }).from(schema.locationSubscriptions)
+          .where(inArray(schema.locationSubscriptions.id, manualSubscriptionIds))
+          .orderBy(asc(schema.locationSubscriptions.locationId));
+        assert.equal(manualCoverage.length, 3);
+        assert.ok(manualCoverage.every((period) => period.startsAt.toISOString() === "2028-11-01T00:00:00.000Z" &&
+          period.endsAt?.toISOString() === "2029-01-01T00:00:00.000Z" && period.anchorDay === 1 && period.anchorIsEom === false),
+        "early and late receipts preserve invoiced first-of-month coverage and anchor");
+        const duplicateReceipt = await paymentLifecycle.settleTrustedBillingOrderPayment({
+          orderId: lateInvoice.id, paymentId: lateInvoice.paymentId!, providerCode: "manual-bank-transfer",
+          paymentKey: `manual-order:${lateInvoice.id}`, externalPaymentId: null,
+          idempotencyKey: `bank-receipt-dec-${suffix.slice(0, 20)}`, externalEventId: `bank-reference-dec-${suffix.slice(0, 20)}`,
+          amountMinor: BigInt(10001), currency: "RUB", occurredAt: new Date("2028-12-15T09:00:00.000Z"),
+        }, tx);
+        assert.equal(duplicateReceipt.duplicate, true, "a repeated bank receipt event does not extend access twice");
+        await assert.rejects(service.createManualBankTransferBillingOrder({ ...manualInput, idempotencyKey: `manual-invoice-alt-${suffix.slice(0, 20)}` }, {
+          db: tx, now: new Date("2028-11-20T10:00:00.000Z"),
+        }), (error: unknown) => error instanceof service.BillingOrderError && error.code === "coverage_conflict");
+        assert.deepEqual(await tx.select({ id: schema.locationSubscriptions.id }).from(schema.locationSubscriptions).where(inArray(schema.locationSubscriptions.id, beforeManualSubscriptions.map((row) => row.id))), beforeManualSubscriptions,
+          "manual order creation itself never grants or extends entitlement");
+        assertionCount += 21;
+
         throw new Rollback("rollback-only");
       });
     } catch (error) {
@@ -878,7 +965,7 @@ async function main() {
       : [];
     assert.equal(rollbackOrganization, undefined, "fixture Organization must not remain after rollback");
     const afterRollback = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) AS count",
     );
     assert.equal(afterRollback.rows[0]?.count, "0", "all customer and commercial fixtures must be absent after rollback");
     assertionCount += 2;
@@ -1050,7 +1137,7 @@ async function main() {
       }
     }
     const finalCounts = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers) + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     assert.equal(finalCounts.rows[0]?.count, "0", "rollback and concurrent fixtures are fully removed");
     assertionCount += 1;
