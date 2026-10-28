@@ -309,6 +309,7 @@
 .musicCardActive { border-color: rgba(145, 175, 205, 0.3); }
 .ambientCardActive { border-color: rgba(138, 158, 130, 0.4); }
 .tooltipRoot { position: relative; display: inline-flex; flex: 0 0 auto; }
+.tooltipRootContents { position: static; display: contents; }
 .tooltipBubble {
   position: absolute;
   z-index: 5;

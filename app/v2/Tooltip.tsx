@@ -7,7 +7,7 @@ import { tooltipViewportPosition } from "./tooltipPosition";
 type TooltipTrigger = { "aria-describedby"?: string };
 
 /** Small player tooltip shown for pointer hover and keyboard-visible focus. */
-export function Tooltip({ content, children, placement = "cursor" }: { content: string; children: ReactElement<TooltipTrigger>; placement?: "overlay" | "above" | "cursor" }) {
+export function Tooltip({ content, children, placement = "cursor", rootClassName }: { content: string; children: ReactElement<TooltipTrigger>; placement?: "overlay" | "above" | "cursor"; rootClassName?: string }) {
   const id = useId();
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -45,7 +45,7 @@ export function Tooltip({ content, children, placement = "cursor" }: { content: 
 
   return (
     <span
-      className={s.tooltipRoot}
+      className={`${s.tooltipRoot}${rootClassName ? ` ${rootClassName}` : ""}`}
       onPointerEnter={(event) => { if (event.pointerType !== "touch") { pointerHovering.current = true; positionAtPointer(event.clientX, event.clientY); clearShowTimer(); showTimer.current = window.setTimeout(() => setHovered(true), 400); } }}
       onPointerMove={(event) => { if (event.pointerType !== "touch" && pointerHovering.current) positionAtPointer(event.clientX, event.clientY); }}
       onPointerLeave={(event) => { if (event.pointerType !== "touch") { pointerHovering.current = false; clearShowTimer(); clearCursorPosition(); setHovered(false); } }}

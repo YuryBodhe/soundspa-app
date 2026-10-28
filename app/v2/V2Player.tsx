@@ -18,6 +18,7 @@ import { accountSectionHref } from "@/app/account/accountNavigation";
 import { canStartPlayerAudio, DevicePlayerOwnership, type PlayerOwnershipState } from "./playerOwnership";
 import { playerStatusMessageKey } from "./playerStatusMessage";
 import { ambientChannelCardAction, mainPlayerAction, musicChannelCardAction, playerActionTranslationKey } from "./playerActionTooltip";
+import { ambientVolumePercent, ambientVolumeTooltipText, playbackModeTooltipKey } from "./playerControlTooltip";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -52,7 +53,9 @@ function PlayerManagementMenu() {
 
   const closeAfterSelection = () => setOpen(false);
   return <div className={s.managementMenu} ref={menuRef}>
-    <button ref={toggleRef} type="button" className={s.managementMenuToggle} aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((current) => !current)}>{t("playerManagement")}</button>
+    <Tooltip content={t("playerManagementTooltip")}>
+      <button ref={toggleRef} type="button" className={s.managementMenuToggle} aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((current) => !current)}>{t("playerManagement")}</button>
+    </Tooltip>
     {open && <nav id={menuId} className={s.managementMenuPanel} aria-label={t("playerManagement")}>
       <a href={accountSectionHref("salons")} target="_blank" rel="noopener noreferrer" onClick={closeAfterSelection}>{t("playerManagementSalons")}</a>
       <a href={accountSectionHref("devices")} target="_blank" rel="noopener noreferrer" onClick={closeAfterSelection}>{t("playerManagementDevices")}</a>
@@ -172,7 +175,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId && channel.playable !== false && channel.tracks.length) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
   const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
   const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
-  const ambientVolume = Math.round(ambientPlayback.volume * 100);
+  const ambientVolume = ambientVolumePercent(ambientPlayback.volume);
 
   useEffect(() => {
     if (!lockedChannel) return;
@@ -482,9 +485,11 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label={t("musicChannels")}>
             <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={!canStartNewLane || activeChannel.tracks.length < 2} aria-label={t("previousTrack")}><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>{t("previous")}</span></button>
-            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} disabled={!canStartNewLane} aria-label={`${t("playbackMode")}: ${playbackModeLabel}`} title={`${t("playbackMode")}: ${playbackModeLabel}`}>
-              {playbackModeLabel}
-            </button>
+            <Tooltip content={t(playbackModeTooltipKey(playbackMode))}>
+              <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} disabled={!canStartNewLane} aria-label={`${t("playbackMode")}: ${playbackModeLabel}`}>
+                {playbackModeLabel}
+              </button>
+            </Tooltip>
             <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={!canStartNewLane || activeChannel.tracks.length < 2} aria-label={t("nextTrack")}><span>{t("next")}</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div></> : <>
             <div className={s.nowPlayingLabel}>{t("player")}</div>
@@ -505,7 +510,9 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
           <div className={s.sliderWrap}>
             <div className={s.sliderTrack} /><div className={s.sliderFill} style={{ width: `${ambientVolume}%` }} />
             <div className={s.sliderThumb} style={{ left: `${ambientVolume}%` }}><span /></div>
-            <input type="range" min="0" max="100" step="1" value={ambientVolume} disabled={!canStartNewLane} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
+            <Tooltip content={ambientVolumeTooltipText(t("ambientVolumeTooltip"), ambientVolume)} rootClassName={s.tooltipRootContents}>
+              <input type="range" min="0" max="100" step="1" value={ambientVolume} disabled={!canStartNewLane} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
+            </Tooltip>
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
             {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} standby={!canStartNewLane} onSelect={() => toggleAmbient(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
