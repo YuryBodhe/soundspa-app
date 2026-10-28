@@ -30,17 +30,22 @@ test("manual order input validates exact three-salon selection, currency and ide
   const valid = validateManualBankTransferInput({
     organizationId: "99999999-9999-4999-8999-999999999999", operator: "operator", reason: "Approved March invoice",
     idempotencyKey: "invoice-2027-03-samui", periodStart: "2027-03-01", durationMonths: 1,
-    currency: "RUB", totalAmountMinor: "10001", lines,
+    currency: "RUB", totalAmountMinor: "10001", invoiceNumber: "SAM-2027-03", invoiceIssuedAt: "2027-02-20", paymentDueAt: "2027-02-24", lines,
   });
   assert.equal(valid.totalAmountMinor, BigInt(10001));
   assert.throws(() => validateManualBankTransferInput({
     organizationId: "99999999-9999-4999-8999-999999999999", operator: "operator", reason: "Approved March invoice",
     idempotencyKey: "invoice-2027-03-samui", periodStart: "2027-03-01", durationMonths: 1,
-    currency: "RUB", totalAmountMinor: "10001", lines: [lines[0], lines[0], lines[2]],
+    currency: "RUB", totalAmountMinor: "10001", invoiceNumber: "SAM-2027-03", invoiceIssuedAt: "2027-02-20", paymentDueAt: "2027-02-24", lines: [lines[0], lines[0], lines[2]],
   }), { code: "duplicate_line" });
   assert.throws(() => validateManualBankTransferInput({
     organizationId: "99999999-9999-4999-8999-999999999999", operator: "operator", reason: "Approved March invoice",
     idempotencyKey: "invoice-2027-03-samui", periodStart: "2027-03-01", durationMonths: 1,
-    currency: "RUB", totalAmountMinor: "2", lines,
+    currency: "RUB", totalAmountMinor: "2", invoiceNumber: "SAM-2027-03", invoiceIssuedAt: "2027-02-20", paymentDueAt: "2027-02-24", lines,
   }), { code: "invalid_amount" });
+  assert.throws(() => validateManualBankTransferInput({
+    organizationId: "99999999-9999-4999-8999-999999999999", operator: "operator", reason: "Approved March invoice",
+    idempotencyKey: "invoice-2027-03-samui", periodStart: "2027-03-01", durationMonths: 1,
+    currency: "RUB", totalAmountMinor: "10001", invoiceNumber: "SAM-2027-03", invoiceIssuedAt: "2027-02-20", paymentDueAt: "2027-02-19", lines,
+  }), { code: "invalid_creator" });
 });

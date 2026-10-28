@@ -449,6 +449,9 @@ export async function createManualBankTransferBillingOrder(input: {
   durationMonths: unknown;
   currency: unknown;
   totalAmountMinor: unknown;
+  invoiceNumber: unknown;
+  invoiceIssuedAt: unknown;
+  paymentDueAt: unknown;
   lines: unknown;
 }, options: { now?: Date; db?: BillingOrderDb } = {}) {
   let request: ReturnType<typeof validateManualBankTransferInput>;
@@ -479,6 +482,8 @@ export async function createManualBankTransferBillingOrder(input: {
         .orderBy(asc(commercialBillingOrderLines.locationId), asc(commercialBillingOrderLines.productId));
       const sameRequest = prior.organizationId === request.organizationId && prior.currency === request.currency &&
         prior.totalAmountMinor === request.totalAmountMinor && prior.createdByOperator === request.operator && prior.creationReason === request.reason &&
+        prior.externalInvoiceNumber === request.invoiceNumber && prior.invoiceIssuedAt?.getTime() === request.invoiceIssuedAt.getTime() &&
+        prior.paymentDueAt?.getTime() === request.paymentDueAt.getTime() &&
         priorLines.length === allocated.length && priorLines.every((line, index) =>
           line.locationId === allocated[index].locationId && line.productId === allocated[index].productId &&
           line.amountMinor === allocated[index].amountMinor && line.durationMonths === request.durationMonths &&
@@ -564,7 +569,9 @@ export async function createManualBankTransferBillingOrder(input: {
       organizationId: request.organizationId, createdByUserId: null, createdByOperator: request.operator,
       creationReason: request.reason, manualIdempotencyKey: request.idempotencyKey,
       status: "pending", providerCode: MANUAL_BANK_TRANSFER_PROVIDER_CODE, currency: request.currency,
-      totalAmountMinor: request.totalAmountMinor, quotedAt: now, createdAt: now, updatedAt: now,
+      totalAmountMinor: request.totalAmountMinor, externalInvoiceNumber: request.invoiceNumber,
+      invoiceIssuedAt: request.invoiceIssuedAt, paymentDueAt: request.paymentDueAt,
+      quotedAt: now, createdAt: now, updatedAt: now,
     }).returning({ id: commercialBillingOrders.id });
     const insertedLines = await tx.insert(commercialBillingOrderLines).values(allocated.map((line) => {
       const location = locationById.get(line.locationId)!;

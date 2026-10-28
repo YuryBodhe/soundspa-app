@@ -67,6 +67,13 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
         {soundSpaProduct ? <table className="admin-table"><thead><tr><th>Channel</th><th>Kind</th><th>SoundSpa</th><th /></tr></thead><tbody>{published.map((channel) => <tr key={`soundspa-${channel.id}`}><td>{channel.displayName}</td><td>{channel.kind === "music" ? "Music" : "Ambient"}</td><td>{soundSpaChannelIds.has(channel.id) ? <span className="badge badge-ok">INCLUDED</span> : <span className="badge badge-neutral">OFF</span>}</td><td><AccessMutationForm operation={soundSpaChannelIds.has(channel.id) ? "remove-product-channel" : "add-product-channel"} productCode="soundspa" channelId={channel.id}><button className="btn btn-sm">{soundSpaChannelIds.has(channel.id) ? "Remove from SoundSpa" : "Add to SoundSpa"}</button></AccessMutationForm></td></tr>)}</tbody></table> : <p className="text-dim">SoundSpa product is not provisioned.</p>}
       </div>
     </details>
+    <details className="admin-card admin-collapsible">
+      <summary className="admin-collapsible-summary"><span>Billing</span><span className="admin-disclosure-indicator" aria-hidden="true">⌄</span></summary>
+      <div className="admin-collapsible-content admin-billing-nav">
+        <Link href="/admin/ui/billing/payments" className="btn btn-sm">Payments</Link>
+        <Link href="/admin/ui/billing/subscriptions" className="btn btn-sm">Subscriptions</Link>
+      </div>
+    </details>
     <CustomersDirectory organizations={customerOrganizations} timeZones={getTimeZoneOptions()} />
   </>;
 }

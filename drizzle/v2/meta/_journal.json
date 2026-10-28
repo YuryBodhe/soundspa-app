@@ -211,6 +211,13 @@
       "when": 1793200478523,
       "tag": "0029_awesome_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793202149431,
+      "tag": "0030_bumpy_magneto",
+      "breakpoints": true
     }
   ]
 }

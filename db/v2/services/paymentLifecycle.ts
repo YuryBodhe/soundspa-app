@@ -53,6 +53,10 @@ export type AggregateBillingOrderSettlementInput = {
   amountMinor: bigint;
   currency: string;
   occurredAt: Date;
+  /** Present only for a bank-transfer confirmation entered by an operator. */
+  bankTransactionReference?: string;
+  confirmedByOperator?: string;
+  confirmationReason?: string;
 };
 
 export type AggregateBillingOrderSettlementResult = {
@@ -225,6 +229,13 @@ export async function settleTrustedBillingOrderPayment(
       !/^[A-Z]{3}$/.test(event.currency) || !Number.isFinite(event.occurredAt.getTime())) {
     throw new PaymentFoundationError("billing_order_invalid");
   }
+  const manual = event.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE;
+  if ((manual && (!event.bankTransactionReference?.trim() || event.bankTransactionReference.trim().length > 200 ||
+      !event.confirmedByOperator?.trim() || event.confirmedByOperator.trim().length > 200 ||
+      !event.confirmationReason?.trim() || event.confirmationReason.trim().length < 12 || event.confirmationReason.trim().length > 500)) ||
+      (!manual && (event.bankTransactionReference !== undefined || event.confirmedByOperator !== undefined || event.confirmationReason !== undefined))) {
+    throw new PaymentFoundationError("billing_order_invalid");
+  }
 
   return db.transaction(async (tx) => {
     const [provider] = await tx.select({ code: commercialPaymentProviders.code })
@@ -241,6 +252,9 @@ export async function settleTrustedBillingOrderPayment(
         payment.paymentKey !== event.paymentKey || payment.externalPaymentId !== event.externalPaymentId ||
         payment.locationId !== null || payment.productId !== null || payment.subscriptionId !== null || payment.routeId !== null) {
       throw new PaymentFoundationError("payment_identity_conflict");
+    }
+    if (manual && (!order.externalInvoiceNumber || !order.invoiceIssuedAt || !order.paymentDueAt)) {
+      throw new PaymentFoundationError("billing_order_invalid");
     }
 
     const lines = await tx.select().from(commercialBillingOrderLines)
@@ -274,6 +288,9 @@ export async function settleTrustedBillingOrderPayment(
       if (priorEvent.paymentId !== payment.id || priorEvent.paymentKey !== event.paymentKey ||
           priorEvent.idempotencyKey !== event.idempotencyKey || priorEvent.externalEventId !== event.externalEventId ||
           priorEvent.status !== "succeeded" || !sameInstant(priorEvent.occurredAt, event.occurredAt) ||
+          priorEvent.confirmedByOperator !== (event.confirmedByOperator ?? null) ||
+          priorEvent.confirmationReason !== (event.confirmationReason ?? null) ||
+          payment.bankTransactionReference !== (event.bankTransactionReference ?? null) ||
           payment.status !== "succeeded" || order.status !== "paid") {
         throw new PaymentFoundationError("payment_event_identity_conflict");
       }
@@ -304,6 +321,8 @@ export async function settleTrustedBillingOrderPayment(
       idempotencyKey: event.idempotencyKey,
       status: "succeeded",
       occurredAt: event.occurredAt,
+      confirmedByOperator: event.confirmedByOperator ?? null,
+      confirmationReason: event.confirmationReason ?? null,
     }).onConflictDoNothing().returning({ id: commercialPaymentEvents.id });
     if (!insertedEvent) throw new PaymentFoundationError("payment_event_identity_conflict");
 
@@ -399,7 +418,8 @@ export async function settleTrustedBillingOrderPayment(
       allocations.push({ orderLineId: line.id, subscriptionId: appliedSubscription.id });
     }
 
-    await tx.update(commercialPayments).set({ status: "succeeded", providerOccurredAt: event.occurredAt, updatedAt: event.occurredAt })
+    await tx.update(commercialPayments).set({ status: "succeeded", providerOccurredAt: event.occurredAt,
+      bankTransactionReference: event.bankTransactionReference ?? null, updatedAt: event.occurredAt })
       .where(and(eq(commercialPayments.id, payment.id), eq(commercialPayments.status, "pending")));
     const settledLines = await tx.select().from(commercialBillingOrderLines)
       .where(eq(commercialBillingOrderLines.orderId, order.id))

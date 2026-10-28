@@ -91,6 +91,39 @@
 .admin-location-page-header .text-dim { margin: 7px 0 0; font-size: 12px; }
 .admin-location-devices .admin-collapsible-content { padding-top: 2px; }
 .admin-table-wrap { max-width: 100%; overflow-x: auto; }
+.admin-billing-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-billing-page { display: grid; gap: 18px; }
+.admin-billing-create > p { margin-top: -4px; }
+.admin-billing-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.admin-billing-form > label, .admin-billing-confirm label { display: grid; gap: 5px; color: rgba(255,255,255,.72); font-size: 13px; }
+.admin-billing-form input, .admin-billing-form select, .admin-billing-confirm input, .admin-billing-list-heading select {
+  width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.15); border-radius: 8px;
+  background: rgba(8,8,14,.94); color: #f5f5f7; font: inherit; font-size: 14px;
+}
+.admin-billing-form fieldset { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 9px; }
+.admin-billing-form legend { padding: 0 5px; color: rgba(255,255,255,.72); font-size: 13px; }
+.admin-billing-location-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.admin-billing-location-options label { display: flex; align-items: center; gap: 8px; min-width: 0; color: rgba(255,255,255,.8); font-size: 14px; }
+.admin-billing-location-options input { width: 18px; min-height: 18px; flex: 0 0 auto; accent-color: #c3a86c; }
+.admin-billing-wide { grid-column: 1 / -1; }
+.admin-billing-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.admin-billing-list-heading .admin-card-title { margin: 0; }
+.admin-billing-list-heading label { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.68); font-size: 13px; }
+.admin-billing-list-heading select { width: auto; min-width: 140px; }
+.admin-billing-order-list { display: grid; gap: 12px; }
+.admin-billing-order { margin: 0; }
+.admin-billing-order > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.admin-billing-order h3 { margin: 0; font-size: 16px; font-weight: 550; overflow-wrap: anywhere; }
+.admin-billing-order .text-dim { font-size: 13px; }
+.admin-billing-status { padding: 4px 8px; border-radius: 999px; background: rgba(195,168,108,.12); color: #e6d4a8; font-size: 12px; text-transform: uppercase; }
+.admin-billing-lines, .admin-billing-history ul { display: grid; gap: 6px; margin: 10px 0; padding-left: 20px; }
+.admin-billing-lines li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 14px; color: rgba(255,255,255,.8); font-size: 13px; }
+.admin-billing-confirm, .admin-billing-history { border-top: 1px solid rgba(255,255,255,.07); padding-top: 10px; margin-top: 10px; }
+.admin-billing-confirm summary, .admin-billing-history summary { cursor: pointer; color: #e6d4a8; font-size: 14px; }
+.admin-billing-confirm form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.admin-billing-confirm .text-dim { margin: 0; }
+.admin-billing-feedback { margin: 0; padding: 10px 12px; border: 1px solid rgba(52,199,89,.25); border-radius: 8px; color: #65d982; }
+.admin-billing-error { border-color: rgba(255,69,58,.3); color: #ff8f87; }
 
 .admin-card-title {
   font-size: 14px;
@@ -286,6 +319,10 @@
   .product-channel-fieldset { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 640px) {
+  .admin-billing-form, .admin-billing-confirm form { grid-template-columns: minmax(0, 1fr); }
+  .admin-billing-order > header { flex-direction: column; }
+  .admin-billing-list-heading { align-items: stretch; }
+  .admin-billing-list-heading label { justify-content: space-between; }
   .admin-root { padding: 22px 14px; }
   .admin-page-header { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
   .admin-page-nav { flex-wrap: wrap; }

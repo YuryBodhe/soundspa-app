@@ -379,6 +379,9 @@ export const commercialBillingOrders = pgTable("commercial_billing_orders", {
   createdByOperator: text("created_by_operator"),
   creationReason: text("creation_reason"),
   manualIdempotencyKey: text("manual_idempotency_key"),
+  externalInvoiceNumber: text("external_invoice_number"),
+  invoiceIssuedAt: timestamp("invoice_issued_at", { withTimezone: true }),
+  paymentDueAt: timestamp("payment_due_at", { withTimezone: true }),
   status: text("status").notNull().default("draft"),
   providerCode: text("provider_code").notNull().references(() => commercialPaymentProviders.code, { onDelete: "restrict" }),
   currency: text("currency").notNull(),
@@ -395,11 +398,13 @@ export const commercialBillingOrders = pgTable("commercial_billing_orders", {
   uniqueIndex("commercial_billing_orders_id_currency_unique").on(table.id, table.currency),
   index("commercial_billing_orders_organization_created_idx").on(table.organizationId, table.createdAt),
   uniqueIndex("commercial_billing_orders_manual_idempotency_unique").on(table.manualIdempotencyKey).where(sql`${table.manualIdempotencyKey} IS NOT NULL`),
+  uniqueIndex("commercial_billing_orders_invoice_number_unique").on(table.organizationId, sql`lower(btrim(${table.externalInvoiceNumber}))`).where(sql`${table.externalInvoiceNumber} IS NOT NULL`),
   check("commercial_billing_orders_status_valid", sql`${table.status} IN ('draft', 'quoted', 'pending', 'paid', 'expired', 'canceled', 'failed')`),
   check("commercial_billing_orders_amount_nonnegative", sql`${table.totalAmountMinor} >= 0`),
   check("commercial_billing_orders_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
   check("commercial_billing_orders_quote_expiry", sql`${table.expiresAt} IS NULL OR (${table.quotedAt} IS NOT NULL AND ${table.expiresAt} > ${table.quotedAt})`),
   check("commercial_billing_orders_creator_shape", sql`(${table.providerCode} = 'manual-bank-transfer' AND ${table.createdByUserId} IS NULL AND ${table.createdByOperator} IS NOT NULL AND length(btrim(${table.createdByOperator})) BETWEEN 1 AND 200 AND ${table.creationReason} IS NOT NULL AND length(btrim(${table.creationReason})) BETWEEN 12 AND 500 AND ${table.manualIdempotencyKey} IS NOT NULL AND length(btrim(${table.manualIdempotencyKey})) BETWEEN 8 AND 128) OR (${table.providerCode} <> 'manual-bank-transfer' AND ${table.createdByUserId} IS NOT NULL AND ${table.createdByOperator} IS NULL AND ${table.creationReason} IS NULL AND ${table.manualIdempotencyKey} IS NULL)`),
+  check("commercial_billing_orders_invoice_metadata_shape", sql`(${table.externalInvoiceNumber} IS NULL AND ${table.invoiceIssuedAt} IS NULL AND ${table.paymentDueAt} IS NULL) OR (${table.providerCode} = 'manual-bank-transfer' AND length(btrim(${table.externalInvoiceNumber})) BETWEEN 1 AND 120 AND ${table.invoiceIssuedAt} IS NOT NULL AND ${table.paymentDueAt} IS NOT NULL AND ${table.paymentDueAt} >= ${table.invoiceIssuedAt})`),
 ]);
 
 /** Each line is one Location/Product entitlement purchase with a frozen route and amount. */
@@ -461,6 +466,7 @@ export const commercialPayments = pgTable("commercial_payments", {
   amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
   currency: text("currency").notNull(),
   providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  bankTransactionReference: text("bank_transaction_reference"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -475,12 +481,14 @@ export const commercialPayments = pgTable("commercial_payments", {
   uniqueIndex("commercial_payments_billing_order_unique").on(table.billingOrderId).where(sql`${table.billingOrderId} IS NOT NULL`),
   uniqueIndex("commercial_payments_provider_key_unique").on(table.providerCode, table.paymentKey),
   uniqueIndex("commercial_payments_provider_external_id_unique").on(table.providerCode, table.externalPaymentId).where(sql`${table.externalPaymentId} IS NOT NULL`),
+  uniqueIndex("commercial_payments_bank_reference_unique").on(sql`lower(btrim(${table.bankTransactionReference}))`).where(sql`${table.bankTransactionReference} IS NOT NULL`),
   index("commercial_payments_location_created_idx").on(table.locationId, table.createdAt),
   check("commercial_payments_key_nonempty", sql`length(btrim(${table.paymentKey})) > 0`),
   check("commercial_payments_status_valid", sql`${table.status} IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded')`),
   check("commercial_payments_amount_nonnegative", sql`${table.amountMinor} >= 0`),
   check("commercial_payments_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
   check("commercial_payments_scope_shape", sql`(${table.billingOrderId} IS NULL AND ${table.locationId} IS NOT NULL AND ${table.productId} IS NOT NULL) OR (${table.billingOrderId} IS NOT NULL AND ${table.locationId} IS NULL AND ${table.productId} IS NULL AND ${table.subscriptionId} IS NULL AND ${table.routeId} IS NULL)`),
+  check("commercial_payments_bank_reference_nonempty", sql`${table.bankTransactionReference} IS NULL OR length(btrim(${table.bankTransactionReference})) BETWEEN 1 AND 200`),
 ]);
 
 /** Exact per-line allocation of one aggregate provider payment. */
@@ -512,6 +520,8 @@ export const commercialPaymentEvents = pgTable("commercial_payment_events", {
   idempotencyKey: text("idempotency_key").notNull(),
   status: text("status").notNull(),
   occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  confirmedByOperator: text("confirmed_by_operator"),
+  confirmationReason: text("confirmation_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("commercial_payment_events_provider_key_unique").on(table.providerCode, table.idempotencyKey),
@@ -520,4 +530,5 @@ export const commercialPaymentEvents = pgTable("commercial_payment_events", {
   check("commercial_payment_events_key_nonempty", sql`length(btrim(${table.idempotencyKey})) > 0`),
   check("commercial_payment_events_payment_key_nonempty", sql`length(btrim(${table.paymentKey})) > 0`),
   check("commercial_payment_events_status_valid", sql`${table.status} IN ('pending', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded')`),
+  check("commercial_payment_events_confirmation_audit_shape", sql`(${table.confirmedByOperator} IS NULL AND ${table.confirmationReason} IS NULL) OR (${table.paymentId} IS NOT NULL AND ${table.confirmedByOperator} IS NOT NULL AND ${table.confirmationReason} IS NOT NULL AND length(btrim(${table.confirmedByOperator})) BETWEEN 1 AND 200 AND length(btrim(${table.confirmationReason})) BETWEEN 12 AND 500)`),
 ]);

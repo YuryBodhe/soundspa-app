@@ -24,6 +24,9 @@ export function validateManualBankTransferInput(input: {
   durationMonths: unknown;
   currency: unknown;
   totalAmountMinor: unknown;
+  invoiceNumber: unknown;
+  invoiceIssuedAt: unknown;
+  paymentDueAt: unknown;
   lines: unknown;
 }) {
   if (typeof input.organizationId !== "string" || !UUID.test(input.organizationId) ||
@@ -36,8 +39,15 @@ export function validateManualBankTransferInput(input: {
   const operator = typeof input.operator === "string" ? input.operator.trim() : "";
   const reason = typeof input.reason === "string" ? input.reason.trim() : "";
   const idempotencyKey = typeof input.idempotencyKey === "string" ? input.idempotencyKey.trim() : "";
+  const invoiceNumber = typeof input.invoiceNumber === "string" ? input.invoiceNumber.trim() : "";
+  const date = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(new Date(`${value}T00:00:00.000Z`).getTime()) && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value
+    ? new Date(`${value}T00:00:00.000Z`) : null;
+  const invoiceIssuedAt = date(input.invoiceIssuedAt);
+  const paymentDueAt = date(input.paymentDueAt);
   if (!operator || operator.length > 200 || /[\u0000-\u001f\u007f]/.test(operator) ||
       !reason || reason.length < 12 || reason.length > 500 || /[\u0000-\u001f\u007f]/.test(reason) ||
+      !invoiceNumber || invoiceNumber.length > 120 || /[\u0000-\u001f\u007f]/.test(invoiceNumber) || !invoiceIssuedAt || !paymentDueAt || paymentDueAt < invoiceIssuedAt ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(idempotencyKey)) throw new ManualBillingModelError("invalid_creator");
   if (typeof input.totalAmountMinor !== "string" || !/^[1-9]\d{0,18}$/.test(input.totalAmountMinor)) throw new ManualBillingModelError("invalid_amount");
   const totalAmountMinor = BigInt(input.totalAmountMinor);
@@ -55,7 +65,7 @@ export function validateManualBankTransferInput(input: {
   const start = new Date(`${input.periodStart}T00:00:00.000Z`);
   if (!Number.isFinite(start.getTime()) || start.toISOString().slice(0, 10) !== input.periodStart) throw new ManualBillingModelError("invalid_period");
   return {
-    organizationId: input.organizationId.toLowerCase(), operator, reason, idempotencyKey,
+    organizationId: input.organizationId.toLowerCase(), operator, reason, idempotencyKey, invoiceNumber, invoiceIssuedAt, paymentDueAt,
     periodStart: start, durationMonths: input.durationMonths, currency: input.currency,
     totalAmountMinor, lines: lines as ManualBankTransferLineInput[],
   };
