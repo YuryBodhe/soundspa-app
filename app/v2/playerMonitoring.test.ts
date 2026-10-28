@@ -56,6 +56,25 @@ test("initial failure recovers with bounded backoff and repeated start never cre
   assert.equal(timer.tasks.size, 0);
 });
 
+test("connection-state notifications expose initial gating and later monitoring recovery", async () => {
+  const timer = clock();
+  const states: string[] = [];
+  let online = false;
+  const sidecar = new PlayerMonitoringSidecar(() => playing, {
+    ...timer,
+    createSession: async () => ({ sessionId: "s", generation: 1 }),
+    sendSignal: async () => { if (!online) throw new Error("offline"); return "accepted"; },
+    onConnectionStateChange: state => states.push(state), random: () => 0,
+  });
+  await sidecar.start(); await tick();
+  assert.equal(sidecar.connectionState, "retrying");
+  online = true;
+  await timer.fire();
+  assert.equal(sidecar.connectionState, "connected");
+  assert.deepEqual(states.slice(0, 3), ["connecting", "retrying", "connected"]);
+  await sidecar.dispose();
+});
+
 test("network interruption preserves both audio lanes, coalesces state, and recovers without a new session", async () => {
   const timer = clock();
   let available = true;

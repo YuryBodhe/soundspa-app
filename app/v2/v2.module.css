@@ -211,6 +211,18 @@
   letter-spacing: 0.18em;
 }
 
+.playerOwnershipStatus {
+  margin: 0 auto 16px;
+  max-width: 720px;
+  padding: 12px 16px;
+  border: 1px solid rgba(221, 195, 126, 0.38);
+  border-radius: 12px;
+  color: #ead9a8;
+  background: rgba(221, 195, 126, 0.08);
+  text-align: center;
+  line-height: 1.5;
+}
+
 .statusDot { width: 5px; height: 5px; border-radius: 50%; background: #6d7468; }
 .statusDotPlaying { animation: dotPulse 2s ease-in-out infinite; background: #8a9e82; }
 .statusDotBuffering { animation: dotPulse 1.2s ease-in-out infinite; background: #8a9e82; }
@@ -452,3 +464,5 @@
   .statusDotBuffering { animation-duration: 0.001ms; animation-iteration-count: 1; }
 }
 .cardLocked { opacity: 0.62; cursor: pointer; }
+.card:disabled { cursor: not-allowed; opacity: 0.42; }
+.yinYangButton:disabled { cursor: wait; filter: saturate(0.45); }

@@ -28,5 +28,6 @@ test("an authorized device loads only its Location catalog", async () => {
   assert.equal(result.status, 200);
   assert.deepEqual(locations, ["location-a"]);
   assert.equal(result.body.locationId, "location-a");
+  assert.equal(result.body.deviceId, "device-a");
   assert.deepEqual(result.body.channels, ["channel"]);
 });

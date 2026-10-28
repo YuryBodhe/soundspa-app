@@ -55,7 +55,8 @@ export type MonitoringConnectionState = "idle" | "connecting" | "connected" | "r
 type SenderOptions = {
   createSession?: (signal: AbortSignal) => Promise<MonitoringClaim>;
   sendSignal?: (signal: MonitoringSignal, abortSignal: AbortSignal) => Promise<MonitoringSendResult>;
-  releaseSession?: (session: MonitoringSession) => void;
+  releaseSession?: (session: MonitoringSession) => void | Promise<void>;
+  onConnectionStateChange?: (state: MonitoringConnectionState) => void;
   random?: () => number;
   schedule?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -85,11 +86,14 @@ async function createSessionRequest(signal: AbortSignal): Promise<MonitoringClai
   return { sessionId: value.sessionId, generation: value.generation as number };
 }
 
-function releaseSessionRequest(session: MonitoringSession) {
-  void fetch("/api/v2/monitoring/session/release", {
+async function releaseSessionRequest(session: MonitoringSession) {
+  const request = fetch("/api/v2/monitoring/session/release", {
     method: "POST", credentials: "same-origin", cache: "no-store", keepalive: true,
     headers: { "Content-Type": "application/json" }, body: JSON.stringify(session),
-  }).catch(() => { /* Best effort; the database lease still expires. */ });
+  }).catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { await Promise.race([request, new Promise<void>(resolve => { timer = setTimeout(resolve, 1_000); })]); }
+  finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
 async function sendSignalRequest(signal: MonitoringSignal, abortSignal: AbortSignal): Promise<MonitoringSendResult> {
@@ -159,7 +163,7 @@ export class PlayerMonitoringSidecar {
     if (this.disposed) return Promise.resolve(false);
     if (this.startPromise) return this.startPromise;
     this.running = true;
-    this.state = "connecting";
+    this.setConnectionState("connecting");
     this.startPromise = Promise.resolve(true);
     void this.flush();
     return this.startPromise;
@@ -178,12 +182,14 @@ export class PlayerMonitoringSidecar {
     }
   }
 
-  dispose() {
-    if (this.session) { try { this.releaseSession(this.session); } catch { /* Telemetry never controls audio. */ } }
+  async dispose(): Promise<void> {
+    let release: void | Promise<void> = undefined;
+    if (this.session) { try { release = this.releaseSession(this.session); } catch { /* Telemetry never controls audio. */ } }
     this.session = null;
     this.disposed = true;
     this.stop("stopped");
     this.lifetime.abort();
+    await Promise.resolve(release).catch(() => undefined);
   }
 
   releaseForPageExit() {
@@ -210,7 +216,13 @@ export class PlayerMonitoringSidecar {
     this.running = false;
     this.pending = null;
     this.clearTimer();
+    this.setConnectionState(state);
+  }
+
+  private setConnectionState(state: MonitoringConnectionState) {
+    if (this.state === state) return;
     this.state = state;
+    this.options.onConnectionStateChange?.(state);
   }
 
   private scheduleNext(delay: number, retry: boolean) {
@@ -234,7 +246,7 @@ export class PlayerMonitoringSidecar {
           return;
         }
         if ("status" in claim) {
-          this.state = "waiting";
+          this.setConnectionState("waiting");
           // Probe before expiry too: an owner may release on page exit.
           const delay = Math.min(30_000, claim.retryAfterMs);
           this.scheduleNext(delay + Math.floor(this.random() * 5_001), true);
@@ -258,17 +270,17 @@ export class PlayerMonitoringSidecar {
       if (!this.running || this.disposed || this.pageExiting) return;
       if (result === "superseded") {
         this.session = null;
-        this.state = "waiting";
+        this.setConnectionState("waiting");
         this.scheduleNext(30_000 + Math.floor(this.random() * 5_001), true);
         return;
       }
       if (result !== "accepted") { this.stop(result); return; }
       this.failures = 0;
-      this.state = "connected";
+      this.setConnectionState("connected");
     } catch (error) {
       if (!this.running || this.disposed || this.pageExiting) return;
       if (error instanceof MonitoringTerminalError) { this.stop(error.state); return; }
-      this.state = "retrying";
+      this.setConnectionState("retrying");
       const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length)] ?? OUTAGE_PROBE_MS;
       this.failures = Math.min(this.failures + 1, RETRY_DELAYS_MS.length);
       this.scheduleNext(delay + Math.floor(this.random() * delay * 0.1), true);

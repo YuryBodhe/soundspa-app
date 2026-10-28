@@ -4,6 +4,12 @@ export const th: Dictionary = { registrationLinkSignupNotice: "คุณกำ�
   billingWizardMonthOne: "{{count}} เดือน", billingWizardMonthFew: "{{count}} เดือน", billingWizardMonthMany: "{{count}} เดือน",
   addLocation: 'เพิ่มร้านเสริมสวย', addLocationName: 'ชื่อร้านเสริมสวย', addLocationTimezone: 'เขตเวลา', addLocationSave: 'บันทึกร้านเสริมสวย', addLocationSaving: 'กำลังบันทึก…', addLocationCancel: 'ยกเลิก', addLocationInvalid: 'กรอกชื่อร้านเสริมสวยและเขตเวลา IANA ที่ถูกต้อง', addLocationDuplicate: 'มีร้านเสริมสวยชื่อนี้แล้ว', addLocationLimit: 'องค์กรมีร้านเสริมสวยถึงขีดจำกัดแล้ว', addLocationUnauthorized: 'เฉพาะเจ้าขององค์กรเท่านั้นที่เพิ่มร้านเสริมสวยได้', addLocationUnavailable: 'เพิ่มร้านเสริมสวยไม่สำเร็จ โปรดลองอีกครั้ง',
   billingWizardPreviewBanner: "ตัวอย่างในเครื่อง · ใช้เฉพาะข้อมูลจำลอง ไม่มีการสร้างรายการหรือชำระเงิน", billingWizardEmptyPreviewLabel: "ตัวอย่างสถานะว่าง · ไม่มีร้านเสริมสวยที่เข้าเงื่อนไข",
+  playerOwnershipActive: 'เครื่องเล่นกำลังทำงานอยู่ในแท็บอื่น',
+  playerOwnershipWaiting: 'กำลังรอให้แท็บเครื่องเล่นก่อนหน้าปิด',
+  playerOwnershipReady: 'พร้อมเริ่มเล่นเพลง',
+  playerOwnershipUnsupported: 'เบราว์เซอร์นี้ไม่รองรับการล็อกเครื่องเล่นแบบเอกสิทธิ์ จึงไม่สามารถเล่นเสียงได้',
+  playerMonitoringUnavailable: 'ไม่สามารถเริ่มการตรวจสอบได้ โปรดโหลดเครื่องเล่นใหม่หรือติดต่อฝ่ายสนับสนุน',
+  playerMonitoringRecovery: 'กำลังกู้คืนการเชื่อมต่อการตรวจสอบ เสียงที่กำลังเล่นจะเล่นต่อไป โปรดรอก่อนเริ่มเล่นอีกครั้ง',
   lockedChannelTooltip: "จำกัดการเข้าถึง เลือกเพื่อดูข้อมูลเพิ่มเติม", lockedChannelDialogTitle: "การเข้าถึงช่อง", lockedChannelDialogSubscriptionRequired: "ต้องมีการสมัครสมาชิกที่ใช้งานอยู่เพื่อเล่นช่องนี้", lockedChannelDialogProductsLabel: "ผลิตภัณฑ์ที่มีช่องนี้:", lockedChannelDialogNoProducts: "ไม่มีข้อมูลผลิตภัณฑ์สำหรับช่องนี้", lockedChannelDialogClose: "ปิด", lockedChannelDialogContinueListening: "ฟังต่อ", lockedChannelDialogViewSubscription: 'ดูการสมัครสมาชิก', playerUpgradeInvalidLocation: 'บัญชีของคุณไม่มีสิทธิ์ใช้ร้านเสริมสวยนี้ แต่คุณยังใช้งานส่วนอื่นของบัญชีได้', playerUpgradeUnavailable: 'ขณะนี้การสมัครสมาชิกที่เลือกยังไม่พร้อมใช้งานสำหรับสถานที่นี้', playerUpgradeSomeUnavailable: 'ขณะนี้มีบางผลิตภัณฑ์ที่ยังซื้อไม่ได้ โปรดเลือกจากตัวเลือกที่พร้อมใช้งาน', playerUpgradePrefilled: 'เลือกผลิตภัณฑ์ที่พร้อมใช้งานสำหรับช่องนี้แล้ว โปรดตรวจสอบก่อนขอใบเสนอราคา', playerUpgradeChooseProduct: 'ช่องนี้อยู่ในหลายผลิตภัณฑ์ที่ซื้อได้ ({{products}}) โปรดเลือกผลิตภัณฑ์ที่ต้องการ โดยยังไม่มีรายการใดถูกเลือก',
 
   deviceConnectFirst: "เชื่อมต่ออุปกรณ์",

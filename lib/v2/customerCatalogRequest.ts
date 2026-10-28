@@ -11,7 +11,7 @@ export async function getCustomerCatalogForDevice<T>(
   if (!device) return { status: 401, body: { error: "Device authentication failed." } };
   try {
     const channels = await loadCatalog(device.locationId);
-    return { status: 200, body: { locationId: device.locationId, organizationName: device.organizationName, locationName: device.locationName, channels } };
+    return { status: 200, body: { deviceId: device.deviceId, locationId: device.locationId, organizationName: device.organizationName, locationName: device.locationName, channels } };
   } catch {
     return { status: 503, body: { error: "Customer catalog unavailable." }, failedDeviceId: device.deviceId };
   }

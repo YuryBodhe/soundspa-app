@@ -9,12 +9,13 @@ import { useWaveCanvas } from "./useWaveCanvas";
 import { playerUpgradeAccountHref, type PlayerChannel } from "./catalog";
 import { MusicPlaybackIntent } from "./musicPlaybackIntent";
 import { clearMusicDiagnostics, exportMusicDiagnostics, musicDiagnosticsEnabled, recordMusicDiagnostic } from "../lib/audio/musicDiagnostics";
-import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
+import { advanceFailureEpisode, observeLaneProgress, PlayerMonitoringSidecar, reportPlaybackFailure, type MonitoringConnectionState, type MonitoringSnapshot, type ProgressTracker } from "./playerMonitoring";
 import { useI18n } from "../i18n/useI18n";
 import { resolveChannelTitle } from "./channelTitle";
 import { Tooltip } from "./Tooltip";
 import { activatePlayerChannelCard } from "@/lib/v2/playerChannelInteraction";
 import { accountSectionHref } from "@/app/account/accountNavigation";
+import { canStartPlayerAudio, DevicePlayerOwnership, type PlayerOwnershipState } from "./playerOwnership";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -55,11 +56,11 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   </details>;
 }
 
-function MusicCard({ channel, active, playing, onSelect, onLocked }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void }) {
+function MusicCard({ channel, active, playing, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
   const locked = channel.playable === false;
   const card = (
-    <button type="button" className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
+    <button type="button" disabled={!locked && standby} className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
@@ -71,11 +72,11 @@ function MusicCard({ channel, active, playing, onSelect, onLocked }: { channel: 
   return locked ? <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip> : card;
 }
 
-function AmbientCard({ channel, active, onSelect, onLocked }: { channel: PlayerChannel; active: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void }) {
+function AmbientCard({ channel, active, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
   const locked = channel.playable === false;
   const card = (
-    <button type="button" className={`${s.card} ${locked ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
+    <button type="button" disabled={!locked && standby && !active} className={`${s.card} ${locked ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
@@ -100,7 +101,7 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
   </header>;
 }
 
-export default function V2Player({ catalog, locationId, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; locationId?: string; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
+export default function V2Player({ catalog, deviceId, locationId, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; deviceId?: string; locationId?: string; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t, locale } = useI18n();
   const dialogTitleId = useId();
   const dialogChannelNameId = useId();
@@ -115,6 +116,14 @@ export default function V2Player({ catalog, locationId, organizationName, locati
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
   const playbackModeRef = useRef<PlaybackMode>("normal");
   const ambientEngineRef = useRef<AmbientEngine | null>(null);
+  const ownershipRef = useRef<DevicePlayerOwnership | null>(null);
+  const monitoringSidecarRef = useRef<PlayerMonitoringSidecar | null>(null);
+  const samplerRef = useRef<number | null>(null);
+  const [ownershipState, setOwnershipState] = useState<PlayerOwnershipState>(monitoringEnabled ? (deviceId ? "waiting" : "unsupported") : "owned");
+  const [monitoringState, setMonitoringState] = useState<MonitoringConnectionState>(monitoringEnabled ? "idle" : "connected");
+  const [monitoringReady, setMonitoringReady] = useState(!monitoringEnabled);
+  const ownsPlayback = !monitoringEnabled || ownershipState === "owned";
+  const canStartAudio = canStartPlayerAudio({ monitoringEnabled, lockOwned: ownsPlayback, monitoringReady, monitoringConnected: monitoringState === "connected" });
   const activeAmbientChannelRef = useRef<string | null>(null);
   const musicProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
   const ambientProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
@@ -191,24 +200,60 @@ export default function V2Player({ catalog, locationId, organizationName, locati
 
   useEffect(() => {
     if (!monitoringEnabled) return;
-    const sidecar = new PlayerMonitoringSidecar(readMonitoringSnapshot);
-    const onPageHide = () => sidecar.releaseForPageExit();
-    const onPageShow = () => sidecar.resumeAfterPageShow();
-    window.addEventListener("pagehide", onPageHide);
-    window.addEventListener("pageshow", onPageShow);
+    if (!deviceId) return;
+    const playbackIntent = musicWantsPlaybackRef.current;
     let mounted = true;
-    let sampler: number | null = null;
-    void sidecar.start().then((started) => {
-      if (mounted && started) sampler = window.setInterval(() => sidecar.update(readMonitoringSnapshot()), 1_000);
+    let sidecar: PlayerMonitoringSidecar | null = null;
+    const onPageHide = () => sidecar?.releaseForPageExit();
+    const onPageShow = () => sidecar?.resumeAfterPageShow();
+    window.addEventListener("pagehide", onPageHide);
+    const owner = new DevicePlayerOwnership(deviceId, state => {
+      if (!mounted) return;
+      setOwnershipState(state);
+      if (state !== "owned" || sidecar) return;
+      sidecar = new PlayerMonitoringSidecar(readMonitoringSnapshot, { onConnectionStateChange: connection => {
+        if (!mounted) return;
+        setMonitoringState(connection);
+        if (connection === "connected") setMonitoringReady(true);
+        if (connection === "unauthorized") {
+          playbackIntent.stop();
+          engineRef.current?.pause();
+          ambientEngineRef.current?.stop();
+          activeAmbientChannelRef.current = null;
+          const stoppedSidecar = sidecar;
+          sidecar = null;
+          monitoringSidecarRef.current = null;
+          if (samplerRef.current !== null) window.clearInterval(samplerRef.current);
+          samplerRef.current = null;
+          void owner.release(stoppedSidecar?.dispose());
+        }
+      } });
+      monitoringSidecarRef.current = sidecar;
+      void sidecar.start();
+      samplerRef.current = window.setInterval(() => sidecar?.update(readMonitoringSnapshot()), 1_000);
+      window.addEventListener("pageshow", onPageShow);
     });
+    ownershipRef.current = owner;
+    owner.start();
     return () => {
       mounted = false;
-      if (sampler !== null) window.clearInterval(sampler);
+      if (samplerRef.current !== null) window.clearInterval(samplerRef.current);
+      samplerRef.current = null;
       window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("pageshow", onPageShow);
-      sidecar.dispose();
+      if (sidecar) {
+        playbackIntent.stop();
+        engineRef.current?.pause();
+        ambientEngineRef.current?.stop();
+        activeAmbientChannelRef.current = null;
+      }
+      const oldSidecar = sidecar;
+      sidecar = null;
+      monitoringSidecarRef.current = null;
+      if (ownershipRef.current === owner) ownershipRef.current = null;
+      void owner.release(oldSidecar?.dispose());
     };
-  }, [monitoringEnabled, readMonitoringSnapshot]);
+  }, [deviceId, monitoringEnabled, readMonitoringSnapshot]);
 
   useEffect(() => {
     if (playback.status !== "error") {
@@ -279,6 +324,7 @@ export default function V2Player({ catalog, locationId, organizationName, locati
       musicWantsPlaybackRef.current.stop();
       engineRef.current?.pause();
     } else {
+      if (!canStartAudio) return;
       musicWantsPlaybackRef.current.start();
       void engineRef.current?.play();
     }
@@ -289,9 +335,10 @@ export default function V2Player({ catalog, locationId, organizationName, locati
     const playlist = channel.tracks.length ? channel.tracks : null;
     if (channel.playable === false || !channel.tracks.length) return;
     if (channel.id === activeChannelId) {
-      if (playlist) toggleMusicPlayback();
+      if (playlist && (canStartAudio || playing || buffering)) toggleMusicPlayback();
       return;
     }
+    if (!canStartAudio && musicWantsPlaybackRef.current.wantsPlayback) return;
     const shouldContinuePlaying = musicWantsPlaybackRef.current.wantsPlayback;
     setActiveChannelId(channel.id);
     if (!playlist) {
@@ -343,9 +390,23 @@ export default function V2Player({ catalog, locationId, organizationName, locati
 
   const toggleAmbient = (channel: PlayerChannel) => {
     if (channel.playable === false || !channel.tracks.length) return;
+    const isCurrentAmbient = activeAmbientChannelRef.current === channel.id;
+    if (!canStartAudio && !isCurrentAmbient) return;
     activeAmbientChannelRef.current = activeAmbientChannelRef.current === channel.id ? null : channel.id;
     void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
+
+  let standbyMessage: string | null = null;
+  if (monitoringEnabled) {
+    if (ownershipState === "unsupported") standbyMessage = t("playerOwnershipUnsupported");
+    else if (monitoringState === "unauthorized") standbyMessage = t("deviceSetupRequired");
+    else if (ownershipState === "activeElsewhere") standbyMessage = t("playerOwnershipActive");
+    else if (ownershipState !== "owned") standbyMessage = t("playerOwnershipWaiting");
+    else if (monitoringState === "rejected") standbyMessage = t("playerMonitoringUnavailable");
+    else if (monitoringState === "retrying" || monitoringState === "waiting" || monitoringState === "connecting") standbyMessage = t("playerMonitoringRecovery");
+    else if (monitoringReady && playback.status !== "playing" && playback.status !== "loading" && ambientPlayback.status !== "playing") standbyMessage = t("playerOwnershipReady");
+  }
+  const canStartNewLane = canStartAudio;
 
   return (
     <div
@@ -367,12 +428,13 @@ export default function V2Player({ catalog, locationId, organizationName, locati
       <PlayerHeader organizationName={organizationName} locationName={locationName} />
 
       <main className={s.main}>
+        {standbyMessage && <p className={s.playerOwnershipStatus} role="status" aria-live="polite">{standbyMessage}</p>}
         <section className={s.hero}>
           {activeChannel ? <>
           <div className={s.nowPlayingLabel}>{t("nowSelected")}</div>
           <h1 className={s.channelName}>{activeChannelTitle}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          <button type="button" className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={buffering ? `Pause buffering ${activeChannelTitle}` : playing ? `Pause ${activeChannelTitle}` : `Play ${activeChannelTitle}`} aria-pressed={playing} aria-busy={buffering}>
+          <button type="button" disabled={!canStartNewLane && !playing && !buffering} className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={buffering ? `Pause buffering ${activeChannelTitle}` : playing ? `Pause ${activeChannelTitle}` : `Play ${activeChannelTitle}`} aria-pressed={playing} aria-busy={buffering}>
             <span className={s.ambientGlow} />
             <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
             <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
@@ -380,11 +442,11 @@ export default function V2Player({ catalog, locationId, organizationName, locati
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label={t("musicChannels")}>
-            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label={t("previousTrack")}><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>{t("previous")}</span></button>
-            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} aria-label={`${t("playbackMode")}: ${playbackModeLabel}`} title={`${t("playbackMode")}: ${playbackModeLabel}`}>
+            <button type="button" className={s.trackButton} onClick={previousMusicTrack} disabled={!canStartNewLane || activeChannel.tracks.length < 2} aria-label={t("previousTrack")}><span className={s.skipIcon} aria-hidden="true"><i /><i /></span><span>{t("previous")}</span></button>
+            <button type="button" className={`${s.trackButton} ${s.modeButton}`} onClick={cyclePlaybackMode} disabled={!canStartNewLane} aria-label={`${t("playbackMode")}: ${playbackModeLabel}`} title={`${t("playbackMode")}: ${playbackModeLabel}`}>
               {playbackModeLabel}
             </button>
-            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={activeChannel.tracks.length < 2} aria-label={t("nextTrack")}><span>{t("next")}</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
+            <button type="button" className={s.trackButton} onClick={nextMusicTrack} disabled={!canStartNewLane || activeChannel.tracks.length < 2} aria-label={t("nextTrack")}><span>{t("next")}</span><span className={`${s.skipIcon} ${s.skipIconNext}`} aria-hidden="true"><i /><i /></span></button>
           </div></> : <>
             <div className={s.nowPlayingLabel}>{t("player")}</div>
             <h1 className={s.channelName}>{t("noChannels")}</h1>
@@ -395,7 +457,7 @@ export default function V2Player({ catalog, locationId, organizationName, locati
         <section className={s.section}>
           <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("musicChannels")}</div><div className={s.sectionCount}>{musicChannels.length} {t("channels")}</div></div>
           <div className={s.cardsRow} data-testid="music-row">
-            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
+            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} standby={!canStartNewLane} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
 
@@ -404,10 +466,10 @@ export default function V2Player({ catalog, locationId, organizationName, locati
           <div className={s.sliderWrap}>
             <div className={s.sliderTrack} /><div className={s.sliderFill} style={{ width: `${ambientVolume}%` }} />
             <div className={s.sliderThumb} style={{ left: `${ambientVolume}%` }}><span /></div>
-            <input type="range" min="0" max="100" step="1" value={ambientVolume} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
+            <input type="range" min="0" max="100" step="1" value={ambientVolume} disabled={!canStartNewLane} onChange={(event) => ambientEngineRef.current?.setVolume(Number(event.currentTarget.value) / 100)} className={s.sliderInput} aria-label={t("ambientVolume")} />
           </div>
           <div className={s.cardsRow} data-testid="ambient-row">
-            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} onSelect={() => toggleAmbient(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
+            {ambientChannels.map((channel) => <AmbientCard key={channel.id} channel={channel} active={channel.tracks.some((track) => track.id === ambientPlayback.activeTrackId)} standby={!canStartNewLane} onSelect={() => toggleAmbient(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
       </main>
