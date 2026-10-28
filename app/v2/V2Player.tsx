@@ -122,6 +122,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const samplerRef = useRef<number | null>(null);
   const [ownershipState, setOwnershipState] = useState<PlayerOwnershipState>(monitoringEnabled ? (deviceId ? "waiting" : "unsupported") : "owned");
   const [monitoringState, setMonitoringState] = useState<MonitoringConnectionState>(monitoringEnabled ? "idle" : "connected");
+  const [monitoringPreviouslyConnected, setMonitoringPreviouslyConnected] = useState(false);
   const [monitoringReady, setMonitoringReady] = useState(!monitoringEnabled);
   const ownsPlayback = !monitoringEnabled || ownershipState === "owned";
   const canStartAudio = canStartPlayerAudio({ monitoringEnabled, lockOwned: ownsPlayback, monitoringReady, monitoringConnected: monitoringState === "connected" });
@@ -215,7 +216,10 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
       sidecar = new PlayerMonitoringSidecar(readMonitoringSnapshot, { onConnectionStateChange: connection => {
         if (!mounted) return;
         setMonitoringState(connection);
-        if (connection === "connected") setMonitoringReady(true);
+        if (connection === "connected") {
+          setMonitoringReady(true);
+          setMonitoringPreviouslyConnected(true);
+        }
         if (connection === "unauthorized") {
           playbackIntent.stop();
           engineRef.current?.pause();
@@ -397,7 +401,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     void ambientEngineRef.current?.togglePlaylist(channel.id, channel.tracks);
   };
 
-  const standbyMessageKey = playerStatusMessageKey({ monitoringEnabled, ownershipState, monitoringState });
+  const standbyMessageKey = playerStatusMessageKey({ monitoringEnabled, ownershipState, monitoringState, monitoringPreviouslyConnected });
   const standbyMessage = standbyMessageKey ? t(standbyMessageKey) : null;
   const canStartNewLane = canStartAudio;
 

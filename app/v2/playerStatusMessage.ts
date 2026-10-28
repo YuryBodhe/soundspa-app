@@ -13,6 +13,7 @@ export function playerStatusMessageKey(input: {
   monitoringEnabled: boolean;
   ownershipState: PlayerOwnershipState;
   monitoringState: MonitoringConnectionState;
+  monitoringPreviouslyConnected?: boolean;
 }): PlayerStatusMessageKey | null {
   if (!input.monitoringEnabled) return null;
   if (input.ownershipState === "unsupported") return "playerOwnershipUnsupported";
@@ -20,6 +21,8 @@ export function playerStatusMessageKey(input: {
   if (input.ownershipState === "activeElsewhere") return "playerOwnershipActive";
   if (input.ownershipState !== "owned") return "playerOwnershipWaiting";
   if (input.monitoringState === "rejected") return "playerMonitoringUnavailable";
-  if (input.monitoringState === "retrying" || input.monitoringState === "waiting" || input.monitoringState === "connecting") return "playerMonitoringRecovery";
+  if (input.monitoringState === "retrying" || input.monitoringState === "waiting" || input.monitoringState === "connecting") {
+    return input.monitoringPreviouslyConnected ? "playerMonitoringRecovery" : null;
+  }
   return null;
 }

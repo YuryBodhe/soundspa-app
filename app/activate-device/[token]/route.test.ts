@@ -22,3 +22,17 @@ test("activation preview escapes customer-controlled names and does not reveal t
   assert.match(html, /&lt;script&gt;token&lt;\/script&gt;/);
   assert.doesNotMatch(html, /name="token"|value="token"/);
 });
+
+test("activation page offers all supported languages and reuses the saved locale selector", async () => {
+  const html = await renderDeviceActivationPage("en", undefined, 410).text();
+  assert.match(html, /id="activation-language"/);
+  assert.match(html, /aria-label="Select language"/);
+  for (const locale of ["en", "ru", "vi", "th"]) assert.match(html, new RegExp(`<option value="${locale}">`));
+  assert.match(html, /<script src="\/activation-language\.js" defer><\/script>/);
+  assert.match(html, /script-src 'self'/);
+});
+
+test("activation locale follows browser Accept-Language and a validated explicit hint", () => {
+  assert.equal(resolveDeviceActivationLocale(new Request("https://soundspa.test/activate-device/token", { headers: { "accept-language": "vi-VN,vi;q=0.9,en;q=0.8" } })), "vi");
+  assert.equal(resolveDeviceActivationLocale(new Request("https://soundspa.test/activate-device/token?lang=th", { headers: { "accept-language": "ru" } })), "th");
+});
