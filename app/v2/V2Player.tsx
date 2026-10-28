@@ -17,6 +17,7 @@ import { activatePlayerChannelCard } from "@/lib/v2/playerChannelInteraction";
 import { accountSectionHref } from "@/app/account/accountNavigation";
 import { canStartPlayerAudio, DevicePlayerOwnership, type PlayerOwnershipState } from "./playerOwnership";
 import { playerStatusMessageKey } from "./playerStatusMessage";
+import { ambientChannelCardAction, mainPlayerAction, musicChannelCardAction, playerActionTranslationKey } from "./playerActionTooltip";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -82,11 +83,12 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   </details>;
 }
 
-function MusicCard({ channel, active, playing, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; playing: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
+function MusicCard({ channel, active, playing, buffering, musicWantsPlayback, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; playing: boolean; buffering: boolean; musicWantsPlayback: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
   const locked = channel.playable === false;
+  const action = musicChannelCardAction({ locked, standby, hasTracks: channel.tracks.length > 0, active, playing, buffering, musicWantsPlayback });
   const card = (
-    <button type="button" disabled={!locked && standby} className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
+    <button type="button" disabled={!locked && standby} className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : action ? `${t(playerActionTranslationKey(action))}: ${title}` : title} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
@@ -95,14 +97,16 @@ function MusicCard({ channel, active, playing, onSelect, onLocked, standby }: { 
       <span className={s.cardBody}><span className={s.cardTitle}>{title}</span><span className={s.cardMood}>{locked ? t("locked") : channel.mood}</span></span>
     </button>
   );
-  return locked ? <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip> : card;
+  if (locked) return <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip>;
+  return action ? <Tooltip content={t(playerActionTranslationKey(action))}>{card}</Tooltip> : card;
 }
 
 function AmbientCard({ channel, active, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
   const locked = channel.playable === false;
+  const action = ambientChannelCardAction({ locked, standby, hasTracks: channel.tracks.length > 0, active });
   const card = (
-    <button type="button" disabled={!locked && standby && !active} className={`${s.card} ${locked ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : undefined} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
+    <button type="button" disabled={!locked && standby && !active} className={`${s.card} ${locked ? s.cardLocked : ""} ${s.ambientCard} ${active ? s.ambientCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : action ? `${t(playerActionTranslationKey(action))}: ${title}` : title} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
         {channel.image && <img src={channel.image} alt="" />}
         <span className={s.cardOverlay} />
@@ -111,7 +115,8 @@ function AmbientCard({ channel, active, onSelect, onLocked, standby }: { channel
       <span className={s.cardBody}><span className={s.cardTitle}>{title}</span>{locked && <span className={s.cardMood}>{t("locked")}</span>}</span>
     </button>
   );
-  return locked ? <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip> : card;
+  if (locked) return <Tooltip content={t("lockedChannelTooltip")}>{card}</Tooltip>;
+  return action ? <Tooltip content={t(playerActionTranslationKey(action))}>{card}</Tooltip> : card;
 }
 
 function WaveVisualization({ playing }: { playing: boolean }) {
@@ -159,6 +164,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
+  const [musicWantsPlayback, setMusicWantsPlayback] = useState(false);
   const [lockedChannel, setLockedChannel] = useState<PlayerChannel | null>(null);
   const lockedDialogRef = useRef<HTMLDialogElement | null>(null);
   const lockedDialogCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -247,6 +253,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
         }
         if (connection === "unauthorized") {
           playbackIntent.stop();
+          setMusicWantsPlayback(false);
           engineRef.current?.pause();
           ambientEngineRef.current?.stop();
           activeAmbientChannelRef.current = null;
@@ -273,6 +280,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
       window.removeEventListener("pageshow", onPageShow);
       if (sidecar) {
         playbackIntent.stop();
+        setMusicWantsPlayback(false);
         engineRef.current?.pause();
         ambientEngineRef.current?.stop();
         activeAmbientChannelRef.current = null;
@@ -352,10 +360,12 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status, intent: musicWantsPlaybackRef.current });
     if (playback.status === "playing" || playback.status === "loading") {
       musicWantsPlaybackRef.current.stop();
+      setMusicWantsPlayback(false);
       engineRef.current?.pause();
     } else {
       if (!canStartAudio) return;
       musicWantsPlaybackRef.current.start();
+      setMusicWantsPlayback(true);
       void engineRef.current?.play();
     }
   };
@@ -429,6 +439,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const standbyMessageKey = playerStatusMessageKey({ monitoringEnabled, ownershipState, monitoringState, monitoringPreviouslyConnected });
   const standbyMessage = standbyMessageKey ? t(standbyMessageKey) : null;
   const canStartNewLane = canStartAudio;
+  const moonAction = mainPlayerAction({ hasTrack: Boolean(activeChannel?.tracks.length), canStart: canStartNewLane, playing, buffering });
 
   return (
     <div
@@ -456,11 +467,17 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
           <div className={s.nowPlayingLabel}>{t("nowSelected")}</div>
           <h1 className={s.channelName}>{activeChannelTitle}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          <button type="button" disabled={!canStartNewLane && !playing && !buffering} className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={buffering ? `Pause buffering ${activeChannelTitle}` : playing ? `Pause ${activeChannelTitle}` : `Play ${activeChannelTitle}`} aria-pressed={playing} aria-busy={buffering}>
+          {moonAction ? <Tooltip content={t(playerActionTranslationKey(moonAction))} placement="above">
+            <button type="button" disabled={!canStartNewLane && !playing && !buffering} className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={`${t(playerActionTranslationKey(moonAction))}: ${activeChannelTitle}`} aria-pressed={playing} aria-busy={buffering}>
+              <span className={s.ambientGlow} />
+              <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
+              <Image src="/yin-yang.png" alt="" width={240} height={240} className={s.yinYangImage} priority />
+            </button>
+          </Tooltip> : <button type="button" disabled={!canStartNewLane && !playing && !buffering} className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={activeChannelTitle ?? t("playPause")} aria-pressed={playing} aria-busy={buffering}>
             <span className={s.ambientGlow} />
             <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
-            <Image src="/yin-yang.png" alt="Play / Pause" width={240} height={240} className={s.yinYangImage} priority />
-          </button>
+            <Image src="/yin-yang.png" alt="" width={240} height={240} className={s.yinYangImage} priority />
+          </button>}
           <WaveVisualization playing={playing} />
           <div className={s.statusLine} title={currentTrackName ?? playback.error ?? undefined}><span className={`${s.statusDot} ${playing ? s.statusDotPlaying : ""} ${buffering ? s.statusDotBuffering : ""}`} /><span className={`${playing ? s.statusPlaying : buffering ? s.statusBuffering : ""} ${s.statusText}`}>{playbackLabel}</span></div>
           <div className={s.trackControls} aria-label={t("musicChannels")}>
@@ -479,7 +496,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
         <section className={s.section}>
           <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("musicChannels")}</div><div className={s.sectionCount}>{musicChannels.length} {t("channels")}</div></div>
           <div className={s.cardsRow} data-testid="music-row">
-            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} standby={!canStartNewLane} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
+            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} buffering={buffering} musicWantsPlayback={musicWantsPlayback} standby={!canStartNewLane} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
 

@@ -141,6 +141,7 @@
   color: inherit;
   cursor: pointer;
 }
+.yinYangButton:focus-visible { outline: 2px solid #d4c9b0; outline-offset: 6px; border-radius: 50%; }
 
 .yinYangImage {
   position: relative;
@@ -329,6 +330,8 @@
   visibility: hidden;
 }
 .tooltipBubbleVisible { opacity: 1; transform: translateY(0); visibility: visible; }
+.tooltipBubbleAbove { top: auto; right: auto; bottom: calc(100% + 8px); left: 50%; width: max-content; max-width: min(220px, calc(100vw - 32px)); transform: translate(-50%, -3px); }
+.tooltipBubbleVisible.tooltipBubbleAbove { transform: translate(-50%, 0); }
 .lockedDialog {
   width: min(420px, calc(100vw - 32px));
   max-height: min(80vh, 620px);

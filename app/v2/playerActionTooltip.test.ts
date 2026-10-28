@@ -1,0 +1,64 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { en } from "@/app/i18n/dictionaries/en";
+import { ru } from "@/app/i18n/dictionaries/ru";
+import { vi } from "@/app/i18n/dictionaries/vi";
+import { th } from "@/app/i18n/dictionaries/th";
+import { ambientChannelCardAction, mainPlayerAction, musicChannelCardAction, playerActionTranslationKey } from "./playerActionTooltip";
+
+test("main moon action tooltip follows play, stop, and unavailable state", () => {
+  assert.equal(mainPlayerAction({ hasTrack: true, canStart: true, playing: false, buffering: false }), "play");
+  assert.equal(mainPlayerAction({ hasTrack: true, canStart: false, playing: true, buffering: false }), "stop");
+  assert.equal(mainPlayerAction({ hasTrack: true, canStart: false, playing: false, buffering: true }), "stop");
+  assert.equal(mainPlayerAction({ hasTrack: true, canStart: false, playing: false, buffering: false }), null);
+  assert.equal(mainPlayerAction({ hasTrack: false, canStart: true, playing: false, buffering: false }), null);
+});
+
+test("music card action reflects whether it plays, stops, or only selects", () => {
+  const available = { locked: false, standby: false, hasTracks: true, active: false, playing: false, buffering: false, musicWantsPlayback: false };
+  assert.equal(musicChannelCardAction(available), "select");
+  assert.equal(musicChannelCardAction({ ...available, musicWantsPlayback: true }), "play");
+  assert.equal(musicChannelCardAction({ ...available, active: true }), "play");
+  assert.equal(musicChannelCardAction({ ...available, active: true, playing: true }), "stop");
+  assert.equal(musicChannelCardAction({ ...available, active: true, buffering: true }), "stop");
+  assert.equal(musicChannelCardAction({ ...available, locked: true }), null);
+  assert.equal(musicChannelCardAction({ ...available, standby: true }), null);
+  assert.equal(musicChannelCardAction({ ...available, hasTracks: false }), null);
+});
+
+test("ambient card action toggles only available playable lanes", () => {
+  const available = { locked: false, standby: false, hasTracks: true, active: false };
+  assert.equal(ambientChannelCardAction(available), "play");
+  assert.equal(ambientChannelCardAction({ ...available, active: true }), "stop");
+  assert.equal(ambientChannelCardAction({ ...available, locked: true }), null);
+  assert.equal(ambientChannelCardAction({ ...available, hasTracks: false }), null);
+  assert.equal(ambientChannelCardAction({ ...available, standby: true }), null);
+  assert.equal(ambientChannelCardAction({ ...available, standby: true, active: true }), "stop");
+});
+
+test("play, stop, and select actions have localized labels in every player locale", () => {
+  const dictionaries = [en, ru, vi, th];
+  for (const dictionary of dictionaries) {
+    assert.ok(dictionary[playerActionTranslationKey("play")].trim());
+    assert.ok(dictionary[playerActionTranslationKey("stop")].trim());
+    assert.ok(dictionary[playerActionTranslationKey("select")].trim());
+  }
+  assert.equal(ru.playerActionPlay, "Воспроизвести");
+  assert.equal(ru.playerActionStop, "Остановить");
+});
+
+test("tooltips wait 400ms, ignore touch hover, and describe the keyboard-focusable trigger", async () => {
+  const source = await readFile(new URL("./Tooltip.tsx", import.meta.url), "utf8");
+  assert.match(source, /setTimeout\(\(\) => setHovered\(true\), 400\)/);
+  assert.match(source, /event\.pointerType !== "touch"/);
+  assert.match(source, /aria-describedby/);
+  assert.match(source, /role="tooltip"/);
+});
+
+test("player uses action-specific tooltips while locked and unavailable cards never receive play labels", async () => {
+  const source = await readFile(new URL("./V2Player.tsx", import.meta.url), "utf8");
+  assert.match(source, /if \(locked\) return <Tooltip content=\{t\("lockedChannelTooltip"\)\}>\{card\}<\/Tooltip>/);
+  assert.match(source, /return action \? <Tooltip content=\{t\(playerActionTranslationKey\(action\)\)\}>\{card\}<\/Tooltip> : card/);
+  assert.match(source, /aria-label=\{locked \? `\$\{title\}\. \$\{t\("locked"\)\}` : action \? `\$\{t\(playerActionTranslationKey\(action\)\)\}: \$\{title\}` : title\}/);
+});

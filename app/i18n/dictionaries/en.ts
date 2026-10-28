@@ -3,7 +3,7 @@ export const en = { registrationLinkSignupNotice: "You are signing up through a 
   musicChannels: "Music channels", channels: "channels", ambient: "Ambient", previous: "Previous", next: "Next",
   standard: "Standard", shuffle: "Shuffle", repeatOne: "Repeat one", playing: "Playing", buffering: "Buffering", paused: "Paused", ready: "Ready",
   playingTrack: "Playing track", playbackError: "Playback error", readyToPlay: "Ready to play", plannedChannel: "Planned channel", locked: "Locked",
-  noChannels: "No channels currently available", noPlayableChannels: "There are no playable music channels for this location.", playPause: "Play / Pause",
+  noChannels: "No channels currently available", noPlayableChannels: "There are no playable music channels for this location.", playerActionPlay: 'Play', playerActionStop: 'Stop', playerActionSelect: 'Select channel', playPause: "Play / Pause",
   previousTrack: "Previous track", nextTrack: "Next track", playbackMode: "Playback mode", ambientVolume: "Ambient volume",
   loadingCatalog: "Loading catalog", deviceSetupRequired: "Device setup required", unauthorizedDevice: "This player is not authorized for a V2 device.",
   catalogUnavailable: "Catalog unavailable", unableToLoadCatalog: "Unable to load the customer catalog.", player: "Player", prototypeAccess: "Prototype access", noAccount: "Local test · no account required",
