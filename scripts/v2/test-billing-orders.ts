@@ -15,6 +15,18 @@ function assertDisposableLocalTarget(databaseUrl: string): URL {
   return parsed;
 }
 
+function postgresErrorCode(error: unknown): string | undefined {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const row = current as { code?: unknown; cause?: unknown };
+    if (typeof row.code === "string") return row.code;
+    current = row.cause;
+  }
+  return undefined;
+}
+
 async function main() {
   const databaseUrl = process.env.V2_DATABASE_URL;
   if (!databaseUrl) throw new Error("V2_DATABASE_URL must point to a disposable local PostgreSQL database.");
@@ -55,8 +67,8 @@ async function main() {
     if (!dbIdentity || dbIdentity.database !== "soundspa_v2" ||
         !new Set(["127.0.0.1", "::1"]).has(address) || isIP(address) === 0 ||
         expectedLocalRole !== "soundspa_v2_test" || dbIdentity.role !== "soundspa_v2_test" ||
-        Number(dbIdentity.migrationCount) !== 32 || dbIdentity.latestMigration !== "1793202676620") {
-      throw new Error("Database is not the expected disposable local database at migration 0031.");
+        Number(dbIdentity.migrationCount) !== 33 || dbIdentity.latestMigration !== "1793203358425") {
+      throw new Error("Database is not the expected disposable local database at migration 0032.");
     }
     const baseline = await v2Pool.query<{ count: string }>(
       "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM location_billing_permissions) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_partner_benefits) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
@@ -565,6 +577,23 @@ async function main() {
           .innerJoin(schema.locationSubscriptions, eq(schema.locationSubscriptions.id, schema.commercialBillingOrderLines.subscriptionId))
           .where(eq(schema.commercialPaymentAllocations.orderId, prepaidOrder.id));
         assert.equal(paidLines.length, 3);
+        const validProviderLine = paidLines[0];
+        assert.notEqual(validProviderLine.durationMonths, null);
+        const validProviderDuration = validProviderLine.durationMonths!;
+        assert.ok(validProviderDuration >= 1 && validProviderDuration <= 12);
+        await tx.update(schema.commercialBillingOrderLines).set({ durationMonths: validProviderDuration })
+          .where(eq(schema.commercialBillingOrderLines.id, validProviderLine.lineId));
+        await assert.rejects(
+          tx.transaction(async (nestedTx) => nestedTx.update(schema.commercialBillingOrderLines).set({ durationMonths: null })
+            .where(eq(schema.commercialBillingOrderLines.id, validProviderLine.lineId))),
+          (error: unknown) => postgresErrorCode(error) === "23514",
+          "non-manual provider lines reject NULL duration at the database constraint",
+        );
+        const [providerLineAfterRejectedNull] = await tx.select({ durationMonths: schema.commercialBillingOrderLines.durationMonths })
+          .from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.id, validProviderLine.lineId));
+        assert.equal(providerLineAfterRejectedNull.durationMonths, validProviderDuration,
+          "a valid non-manual provider duration remains accepted after the rejected NULL update");
+        assertionCount += 5;
         assert.equal(paidLines.reduce((sum, line) => sum + line.amountMinor, BigInt(0)), BigInt(1_728_000));
         const paidByLocation = new Map(paidLines.map((line) => [line.locationId, line]));
         assert.equal(paidByLocation.get(locations[0].id)?.periodEnd?.toISOString(), "2026-11-30T10:00:00.000Z", "existing month-end anchor is retained");
@@ -1204,6 +1233,17 @@ async function main() {
       assert.equal(customPeriodInvoice.lines[0].amountMinor, "1");
       assert.equal(customPeriodInvoice.lines[0].startsAt, "2030-08-15T00:00:00.000Z");
       assert.equal(customPeriodInvoice.lines[0].endsAt, "2030-09-10T00:00:00.000Z", "period end is exclusive and retained exactly");
+      const [customPeriodLine] = await v2Db.select({ providerCode: schema.commercialBillingOrderLines.providerCode,
+        durationMonths: schema.commercialBillingOrderLines.durationMonths,
+        startsAt: schema.commercialBillingOrderLines.billingPeriodStartsAt,
+        endsAt: schema.commercialBillingOrderLines.billingPeriodEndsAt,
+      }).from(schema.commercialBillingOrderLines).where(eq(schema.commercialBillingOrderLines.orderId, customPeriodInvoice.id));
+      assert.equal(customPeriodLine.providerCode, "manual-bank-transfer");
+      assert.equal(customPeriodLine.durationMonths, null, "manual custom-period lines use NULL duration");
+      assert.equal(customPeriodLine.startsAt?.toISOString(), "2030-08-15T00:00:00.000Z");
+      assert.equal(customPeriodLine.endsAt?.toISOString(), "2030-09-10T00:00:00.000Z",
+        "the database constraint accepts a manual line with valid explicit custom-period dates");
+      assertionCount += 4;
       const customRetry = await service.createManualBankTransferBillingOrder({
         organizationId: (await v2Db.select({ organizationId: schema.locations.organizationId }).from(schema.locations)
           .where(eq(schema.locations.id, raceFixture.locationId)).limit(1))[0].organizationId,
