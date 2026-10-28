@@ -57,8 +57,8 @@ test("quick filters distinguish offline, partial, playing and not playing", () =
   const rows = buildMonitoringLocationRows(makeSnapshot());
   assert.deepEqual(filterMonitoringLocations(rows, "", "offline").map((row) => row.location.id), ["loc-offline"]);
   assert.deepEqual(filterMonitoringLocations(rows, "", "partially-online").map((row) => row.location.id), ["loc-partial"]);
-  assert.deepEqual(filterMonitoringLocations(rows, "", "playing").map((row) => row.location.id), ["loc-offline", "loc-online-playing"]);
-  assert.deepEqual(filterMonitoringLocations(rows, "", "not-playing").map((row) => row.location.id), ["loc-partial", "loc-online-idle", "loc-no-devices"]);
+  assert.deepEqual(filterMonitoringLocations(rows, "", "playing").map((row) => row.location.id), ["loc-online-playing"]);
+  assert.deepEqual(filterMonitoringLocations(rows, "", "not-playing").map((row) => row.location.id), ["loc-offline", "loc-partial", "loc-online-idle"]);
 });
 
 test("relative time uses the supplied snapshot asOf and keeps exact absence safe", () => {
@@ -66,4 +66,21 @@ test("relative time uses the supplied snapshot asOf and keeps exact absence safe
   assert.equal(formatMonitoringRelativeTime(time(4 * 60), asOf), "4 min ago");
   assert.equal(formatMonitoringRelativeTime(time(72 * 60), asOf), "1 h 12 min ago");
   assert.equal(formatMonitoringRelativeTime(null, asOf), "—");
+});
+
+
+test("operational rows exclude pending, revoked and archived devices but preserve inventory", () => {
+  const snapshot = makeSnapshot();
+  const location = snapshot.organizations[0]!.locations[1]!;
+  location.devices.push({ ...location.devices[0]!, id: "pending", activationState: "pending" });
+  location.devices.push({ ...location.devices[0]!, id: "revoked", status: "revoked" });
+  let row = buildMonitoringLocationRows(snapshot).find(row => row.location.id === location.id)!;
+  assert.equal(row.deviceCount, 1);
+  assert.equal(row.playingCount, 1);
+  assert.equal(row.location.devices.length, 3);
+  snapshot.organizations[0]!.archived = true;
+  row = buildMonitoringLocationRows(snapshot).find(row => row.location.id === location.id)!;
+  assert.equal(row.status, "Inactive");
+  assert.equal(row.deviceCount, 0);
+  assert.equal(row.playingCount, 0);
 });

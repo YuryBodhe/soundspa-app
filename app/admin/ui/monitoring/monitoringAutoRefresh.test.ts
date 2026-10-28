@@ -60,3 +60,26 @@ test("stop clears the interval, aborts the active request and prevents late upda
   await controller.refresh();
   assert.equal(updates, 0);
 });
+
+test("a hung dashboard request times out and a later refresh recovers", async () => {
+  let requestSignal: AbortSignal | undefined;
+  let hung = true;
+  let errors = 0;
+  let updates = 0;
+  let refreshing = false;
+  const controller = createMonitoringAutoRefresh({
+    fetchSnapshot: signal => {
+      requestSignal = signal;
+      return hung ? new Promise(() => {}) : Promise.resolve(snapshot);
+    },
+    onSnapshot: () => updates++, onError: () => errors++, onRefreshing: value => { refreshing = value; },
+  }, () => 1 as unknown as ReturnType<typeof setInterval>, () => {}, 5);
+  await controller.refresh();
+  assert.equal(requestSignal?.aborted, true);
+  assert.equal(errors, 1);
+  assert.equal(refreshing, false);
+  hung = false;
+  await controller.refresh();
+  assert.equal(updates, 1);
+  controller.stop();
+});

@@ -78,6 +78,11 @@ export function resolveMonitoringChannelName(channelId: string | null, channelNa
   return channelName?.trim() || "Unknown / deleted channel";
 }
 
+/** Operational totals exclude inventory that cannot legitimately signal. */
+export function isOperationalMonitoringDevice(device: Pick<MonitoringDeviceInput, "status" | "activationState">): boolean {
+  return device.status === "active" && device.activationState === "activated";
+}
+
 export function buildMonitoringSnapshot(asOf: Date, organizations: MonitoringOrganizationInput[]): MonitoringSnapshotV1 {
   if (!Number.isFinite(asOf.getTime())) throw new TypeError("Invalid monitoring as-of timestamp");
   let locationCount = 0;
@@ -94,7 +99,8 @@ export function buildMonitoringSnapshot(asOf: Date, organizations: MonitoringOrg
       locations: [...organization.locations]
         .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
         .map((location) => {
-          locationCount++;
+          const locationActive = !organization.archived && !location.archived;
+          if (locationActive) locationCount++;
           return {
             id: location.id,
             name: location.name,
@@ -102,10 +108,12 @@ export function buildMonitoringSnapshot(asOf: Date, organizations: MonitoringOrg
             devices: [...location.devices]
               .sort((a, b) => (a.label ?? "").localeCompare(b.label ?? "") || a.id.localeCompare(b.id))
               .map((device) => {
-                deviceCount++;
-                const online = device.lastSeenAt !== null
+                const operational = locationActive && isOperationalMonitoringDevice(device);
+                if (operational) deviceCount++;
+                const online = operational && device.lastSeenAt !== null
+                  && asOf.getTime() >= device.lastSeenAt.getTime()
                   && asOf.getTime() - device.lastSeenAt.getTime() <= MONITORING_ONLINE_THRESHOLD_SECONDS * 1000;
-                const playerActiveNow = device.music.state === "playing" || device.ambient.state === "playing";
+                const playerActiveNow = online && (device.music.state === "playing" || device.ambient.state === "playing");
                 if (online) onlineDeviceCount++;
                 if (playerActiveNow) playingDeviceCount++;
                 return {
@@ -129,7 +137,7 @@ export function buildMonitoringSnapshot(asOf: Date, organizations: MonitoringOrg
     asOf: asOf.toISOString(),
     onlineThresholdSeconds: MONITORING_ONLINE_THRESHOLD_SECONDS,
     summary: {
-      organizationCount: organizations.length,
+      organizationCount: organizations.filter((organization) => !organization.archived).length,
       locationCount,
       deviceCount,
       onlineDeviceCount,

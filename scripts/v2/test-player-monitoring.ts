@@ -39,7 +39,7 @@ assert.equal(errorBody, JSON.stringify({ lane: "music" }), "client reporting sen
 globalThis.fetch = async () => { throw new Error("offline"); };
 await assert.doesNotReject(reportPlaybackFailure("ambient"), "analytics transport failure cannot escape into player behavior");
 globalThis.fetch = originalFetch;
-let releaseFirst!: (ok: boolean) => void;
+let releaseFirst!: (ok: "accepted") => void;
 let active = 0;
 let maximumActive = 0;
 const sent: MonitoringSignal[] = [];
@@ -49,21 +49,22 @@ const sidecar = new PlayerMonitoringSidecar(() => base, {
     sent.push(signal);
     active += 1; maximumActive = Math.max(maximumActive, active);
     if (sent.length === 1) {
-      const ok = await new Promise<boolean>((resolve) => { releaseFirst = resolve; });
+      const ok = await new Promise<"accepted">((resolve) => { releaseFirst = resolve; });
       active -= 1; return ok;
     }
-    active -= 1; return true;
+    active -= 1; return "accepted" as const;
   },
   random: () => 0,
 });
 await sidecar.start();
+await new Promise((resolve) => setImmediate(resolve));
 assert.equal(sent.length, 1, "session establishment sends an initial snapshot");
 const second: MonitoringSnapshot = { music: { state: "playing", channelId: "music-b" }, ambient: { state: "idle", channelId: null } };
 const third: MonitoringSnapshot = { music: { state: "playing", channelId: "music-c" }, ambient: { state: "playing", channelId: "ambient-a" } };
 sidecar.update(second);
 sidecar.update(third);
 assert.equal(sent.length, 1, "only one signal may be in flight; intermediate pending state coalesces");
-releaseFirst(true);
+releaseFirst("accepted");
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(sent.length, 2);
 assert.equal(sent[1].music.channelId, "music-c", "latest state is sent after the in-flight request");
@@ -84,7 +85,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(failureCalls, 1);
 failed.update({ music: { state: "paused", channelId: "music-a" }, ambient: { state: "idle", channelId: null } });
 await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(failureCalls, 2, "a later meaningful transition may retry, without a timer loop");
+assert.equal(failureCalls, 1, "state changes coalesce during outage backoff rather than causing a retry storm");
 failed.dispose();
 console.info("PASS: actual-progression truth, seek exclusion, independent lane snapshots, one-in-flight latest-state coalescing, and silent failure isolation.");
 }

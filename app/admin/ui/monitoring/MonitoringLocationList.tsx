@@ -29,13 +29,13 @@ export default function MonitoringLocationList({ snapshot }: { snapshot: Monitor
 
     <div className="monitoring-table-wrap">
       <table className="admin-table monitoring-table">
-        <thead><tr><th>Location</th><th>Organization</th><th>Devices</th><th>Status</th><th>Playing</th><th>Last seen</th></tr></thead>
+        <thead><tr><th>Location</th><th>Organization</th><th>Active devices</th><th>Status</th><th>Playing</th><th>Last seen</th></tr></thead>
         <tbody>
           {rows.map((row) => <tr key={row.location.id}>
             <td><Link className="monitoring-location-link" href={`/admin/ui/monitoring/locations/${encodeURIComponent(row.location.id)}`}>{row.location.name}<span aria-hidden="true"> →</span></Link></td>
             <td>{row.organizationName}</td>
             <td>{row.deviceCount}</td>
-            <td><span className={`badge ${row.status === "Online" ? "badge-ok" : row.status === "Partially Online" ? "badge-partial" : row.status === "No Devices" ? "badge-neutral" : "badge-warn"}`}>{row.status}</span></td>
+            <td><span className={`badge ${row.status === "Online" ? "badge-ok" : row.status === "Partially Online" ? "badge-partial" : (row.status === "No Devices" || row.status === "Inactive") ? "badge-neutral" : "badge-warn"}`}>{row.status}</span></td>
             <td>{row.playingCount} / {row.deviceCount}</td>
             <td>{row.lastSeenAt ? <time dateTime={row.lastSeenAt} title={row.lastSeenAt}>{formatMonitoringRelativeTime(row.lastSeenAt, snapshot.asOf)}</time> : "—"}</td>
           </tr>)}

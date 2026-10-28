@@ -66,7 +66,8 @@ test("Offline Devices retain last-known independent lane state and channels", ()
   ] }]));
   const row = snapshot.organizations[0]?.locations[0]?.devices[0];
   assert.equal(row?.online, false);
-  assert.equal(row?.playerActiveNow, true);
+  assert.equal(row?.playerActiveNow, false);
+  assert.equal(snapshot.summary.playingDeviceCount, 0);
   assert.deepEqual(row?.music, musicPlaying);
   assert.equal(row?.ambient.state, "paused");
 });
@@ -94,13 +95,35 @@ test("Organizations without Locations and an entirely empty catalog are represen
   assert.deepEqual(buildMonitoringSnapshot(asOf, []).organizations, []);
 });
 
-test("revoked status is independent from Online and missing current-channel names remain safe", () => {
+test("revoked devices do not count as operational and missing current-channel names remain safe", () => {
   const snapshot = buildMonitoringSnapshot(asOf, org([{ id: locationId, name: "Location", archived: false, devices: [
     device("revoked", { status: "revoked", activationState: "revoked", music: { state: "paused", channelId: channelId, channelName: null } }),
   ] }]));
   const row = snapshot.organizations[0]?.locations[0]?.devices[0];
   assert.equal(row?.status, "revoked");
-  assert.equal(row?.online, true);
+  assert.equal(row?.online, false);
+  assert.equal(snapshot.summary.deviceCount, 0);
   assert.equal(resolveMonitoringChannelName(row?.music.channelId ?? null, row?.music.channelName ?? null), "Unknown / deleted channel");
   assert.equal(resolveMonitoringChannelName(null, "ignored"), null);
+});
+
+
+test("pending and archived inventory stays visible without inflating operational totals", () => {
+  const snapshot = buildMonitoringSnapshot(asOf, [
+    ...org([{ id: locationId, name: "Live", archived: false, devices: [
+      device("active", { music: musicPlaying }),
+      device("pending", { activationState: "pending", music: musicPlaying }),
+      device("revoked", { status: "revoked", music: musicPlaying }),
+    ] }, { id: "archived", name: "Archived", archived: true, devices: [device("old", { music: musicPlaying })] }]),
+    { id: "old-org", name: "Archived organization", archived: true, locations: [
+      { id: "old-loc", name: "Old", archived: false, devices: [device("old-device", { music: musicPlaying })] },
+    ] },
+  ]);
+  assert.deepEqual(snapshot.summary, { organizationCount: 1, locationCount: 1, deviceCount: 1, onlineDeviceCount: 1, playingDeviceCount: 1 });
+  assert.equal(snapshot.organizations.length, 2);
+  const all = snapshot.organizations.flatMap(o => o.locations.flatMap(l => l.devices));
+  assert.equal(all.length, 5);
+  assert.equal(all.filter(d => d.online).length, 1);
+  assert.equal(all.filter(d => d.playerActiveNow).length, 1);
+  assert.ok(all.every(d => d.music.state === "playing"), "last-known lanes are preserved for every inventory record");
 });

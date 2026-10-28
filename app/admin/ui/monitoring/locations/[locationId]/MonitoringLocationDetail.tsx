@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { MonitoringSnapshotV1 } from "../../../../../../db/v2/monitoringSnapshotModel";
-import { formatMonitoringRelativeTime, getMonitoringLocationStatus } from "../../monitoringUiModel";
+import { formatMonitoringRelativeTime, getMonitoringLocationStatus, operationalMonitoringDevices } from "../../monitoringUiModel";
 import { useMonitoringSnapshot } from "../../useMonitoringSnapshot";
 
 type Lane = { state: string | null; channelId: string | null; channelName: string | null };
@@ -22,10 +22,11 @@ export default function MonitoringLocationDetail({ initialSnapshot, locationId }
   const location = organization?.locations.find((item) => item.id === locationId);
   if (!organization || !location) return <section role="status" className="admin-card text-dim">This Location is no longer available in the current snapshot.</section>;
 
-  const deviceCount = location.devices.length;
-  const onlineCount = location.devices.filter((device) => device.online).length;
-  const playingCount = location.devices.filter((device) => device.playerActiveNow).length;
-  const status = getMonitoringLocationStatus(deviceCount, onlineCount);
+  const operational = operationalMonitoringDevices(location, organization.archived);
+  const deviceCount = operational.length;
+  const onlineCount = operational.filter((device) => device.online).length;
+  const playingCount = operational.filter((device) => device.online && device.playerActiveNow).length;
+  const status = organization.archived || location.archived ? "Inactive" : getMonitoringLocationStatus(deviceCount, onlineCount);
 
   return <>
     <div className="admin-page-header">
@@ -44,8 +45,8 @@ export default function MonitoringLocationDetail({ initialSnapshot, locationId }
     </div>
 
     <section className="monitoring-summary monitoring-detail-summary" aria-label="Location status summary">
-      <SummaryItem label="Status" value={status} tone={status === "Online" ? "online" : status === "Partially Online" ? "partial" : status === "No Devices" ? undefined : "warn"} />
-      <SummaryItem label="Devices" value={deviceCount} />
+      <SummaryItem label="Status" value={status} tone={status === "Online" ? "online" : status === "Partially Online" ? "partial" : (status === "No Devices" || status === "Inactive") ? undefined : "warn"} />
+      <SummaryItem label="Active devices" value={deviceCount} />
       <SummaryItem label="Online" value={onlineCount} tone="online" />
       <SummaryItem label="Playing" value={playingCount} tone="playing" />
     </section>
@@ -53,17 +54,17 @@ export default function MonitoringLocationDetail({ initialSnapshot, locationId }
     <details className="monitoring-technical-details">
       <summary>Technical details</summary>
       <p>Location ID <code>{location.id}</code></p>
-      {!!deviceCount && <ul>{location.devices.map((device) => <li key={device.id}>{device.label} · <code>{device.id}</code></li>)}</ul>}
+      {!!location.devices.length && <ul>{location.devices.map((device) => <li key={device.id}>{device.label} · <code>{device.id}</code></li>)}</ul>}
     </details>
 
-    {!deviceCount && <section className="admin-card text-dim">No Devices are assigned to this Location.</section>}
-    {!!deviceCount && <section className="monitoring-device-list" aria-label={`Devices at ${location.name}`}>
+    {!location.devices.length && <section className="admin-card text-dim">No Devices are assigned to this Location.</section>}
+    {!!location.devices.length && <section className="monitoring-device-list" aria-label={`Devices at ${location.name}`}>
       {location.devices.map((device) => <article className={`admin-card monitoring-device ${device.online ? "" : "monitoring-device-offline"}`} key={device.id}>
         <div className="monitoring-device-header">
           <div><h2>{device.label}</h2></div>
           <div className="monitoring-badges">
             <span className={`badge ${device.online ? "badge-ok" : "badge-warn"}`}>{device.online ? "ONLINE" : "OFFLINE"}</span>
-            <span className={`badge ${device.playerActiveNow ? "badge-ok" : "badge-neutral"}`}>{device.playerActiveNow ? "PLAYING" : "NOT PLAYING"}</span>
+            <span className={`badge ${device.online && device.playerActiveNow ? "badge-ok" : "badge-neutral"}`}>{device.online && device.playerActiveNow ? "PLAYING" : "NOT PLAYING"}</span>
             <span className={`badge ${device.status === "active" ? "badge-neutral" : "badge-warn"}`}>{device.status.toUpperCase()}</span>
             <span className="badge badge-neutral">{device.activationState.toUpperCase()}</span>
           </div>

@@ -60,3 +60,23 @@ test("Partially Online uses the yellow status treatment in list and detail", () 
   assert.match(detail, /monitoring-summary-partial/);
   assert.match(detail, /<strong>Partially Online<\/strong>/);
 });
+
+test("offline playing history remains readable without a current PLAYING badge", () => {
+  const historical: MonitoringSnapshotV1 = structuredClone(snapshot);
+  historical.organizations[0]!.locations[0]!.devices[0]!.music = { state: "playing", channelId: "music", channelName: "Relax" };
+  const html = renderToStaticMarkup(createElement(MonitoringLocationDetail, { initialSnapshot: historical, locationId: "loc-uuid-secret" }));
+  assert.match(html, /NOT PLAYING/);
+  assert.doesNotMatch(html, />PLAYING<\/span>/);
+  assert.match(html, /playing — Relax/);
+  assert.match(html, /last-known state/);
+});
+
+test("pending devices remain available in detail when operational device count is zero", () => {
+  const pending: MonitoringSnapshotV1 = structuredClone(snapshot);
+  pending.organizations[0]!.locations[0]!.devices[0]!.activationState = "pending";
+  const html = renderToStaticMarkup(createElement(MonitoringLocationDetail, { initialSnapshot: pending, locationId: "loc-uuid-secret" }));
+  assert.match(html, /Active devices/);
+  assert.match(html, /Front Desk/);
+  assert.match(html, /PENDING/);
+  assert.match(html, /device-uuid-secret/);
+});

@@ -1,6 +1,6 @@
-import type { MonitoringSnapshotV1 } from "../../../../db/v2/monitoringSnapshotModel";
+import { isOperationalMonitoringDevice, type MonitoringSnapshotV1 } from "../../../../db/v2/monitoringSnapshotModel";
 
-export type MonitoringLocationStatus = "Online" | "Partially Online" | "Offline" | "No Devices";
+export type MonitoringLocationStatus = "Online" | "Partially Online" | "Offline" | "No Devices" | "Inactive";
 export type MonitoringFilter = "all" | "offline" | "not-playing" | "playing" | "partially-online";
 
 export interface MonitoringLocationRow {
@@ -22,18 +22,26 @@ export function getMonitoringLocationStatus(deviceCount: number, onlineCount: nu
   return "Online";
 }
 
+export function operationalMonitoringDevices(
+  location: MonitoringSnapshotV1["organizations"][number]["locations"][number],
+  organizationArchived = false,
+) {
+  return organizationArchived || location.archived ? [] : location.devices.filter(isOperationalMonitoringDevice);
+}
+
 export function buildMonitoringLocationRows(snapshot: MonitoringSnapshotV1): MonitoringLocationRow[] {
   const rows = snapshot.organizations.flatMap((organization) => organization.locations.map((location) => {
-    const deviceCount = location.devices.length;
-    const onlineCount = location.devices.filter((device) => device.online).length;
-    const playingCount = location.devices.filter((device) => device.playerActiveNow).length;
-    const status = getMonitoringLocationStatus(deviceCount, onlineCount);
+    const operational = operationalMonitoringDevices(location, organization.archived);
+    const deviceCount = operational.length;
+    const onlineCount = operational.filter((device) => device.online).length;
+    const playingCount = operational.filter((device) => device.online && device.playerActiveNow).length;
+    const status = organization.archived || location.archived ? "Inactive" : getMonitoringLocationStatus(deviceCount, onlineCount);
     const priority = status === "Offline" ? 0
       : status === "Partially Online" ? 1
       : status === "Online" && playingCount === 0 ? 2
       : status === "Online" ? 3
       : 4;
-    const lastSeenAt = location.devices
+    const lastSeenAt = operational
       .map((device) => device.lastSeenAt)
       .filter((value): value is string => value !== null)
       .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
@@ -58,7 +66,7 @@ export function filterMonitoringLocations(
       .some((value) => value.toLocaleLowerCase().includes(needle));
     const matchesFilter = filter === "all"
       || (filter === "offline" && row.status === "Offline")
-      || (filter === "not-playing" && row.playingCount === 0)
+      || (filter === "not-playing" && row.deviceCount > 0 && row.playingCount === 0)
       || (filter === "playing" && row.playingCount > 0)
       || (filter === "partially-online" && row.status === "Partially Online");
     return matchesQuery && matchesFilter;

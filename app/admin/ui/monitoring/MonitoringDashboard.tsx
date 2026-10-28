@@ -23,8 +23,8 @@ export default function MonitoringDashboard({ initialSnapshot }: { initialSnapsh
       </div>
     </div>
     <section className="monitoring-summary" aria-label="Current monitoring summary">
-      <SummaryItem label="Locations" value={snapshot.summary.locationCount} />
-      <SummaryItem label="Devices" value={snapshot.summary.deviceCount} />
+      <SummaryItem label="Active Locations" value={snapshot.summary.locationCount} />
+      <SummaryItem label="Active devices" value={snapshot.summary.deviceCount} />
       <SummaryItem label="Online" value={snapshot.summary.onlineDeviceCount} tone="online" />
       <SummaryItem label="Playing" value={snapshot.summary.playingDeviceCount} tone="playing" />
     </section>

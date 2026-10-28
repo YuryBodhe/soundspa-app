@@ -1,3 +1,4 @@
+import { boundedMonitoringRequest, MONITORING_REQUEST_TIMEOUT_MS } from "../../../../lib/v2/monitoringRequest";
 import type { MonitoringSnapshotV1 } from "../../../../db/v2/monitoringSnapshotModel";
 
 export const MONITORING_AUTO_REFRESH_MS = 60_000;
@@ -13,6 +14,7 @@ export function createMonitoringAutoRefresh(
   callbacks: RefreshCallbacks,
   schedule: (callback: () => void, delay: number) => ReturnType<typeof setInterval> = (callback, delay) => setInterval(callback, delay),
   cancel: (timer: ReturnType<typeof setInterval>) => void = clearInterval,
+  timeoutMs = MONITORING_REQUEST_TIMEOUT_MS,
 ) {
   let timer: ReturnType<typeof setInterval> | null = null;
   let controller: AbortController | null = null;
@@ -25,7 +27,7 @@ export function createMonitoringAutoRefresh(
     controller = new AbortController();
     callbacks.onRefreshing(true);
     try {
-      const snapshot = await callbacks.fetchSnapshot(controller.signal);
+      const snapshot = await boundedMonitoringRequest(callbacks.fetchSnapshot, controller.signal, timeoutMs);
       if (!stopped) callbacks.onSnapshot(snapshot);
     } catch (error) {
       if (!stopped && !(error instanceof Error && error.name === "AbortError")) callbacks.onError(error);
