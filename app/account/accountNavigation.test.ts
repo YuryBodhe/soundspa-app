@@ -28,6 +28,16 @@ test("player management opens only relative account section links in safe new ta
   }
 });
 
+test("player management menu supports toggle, outside-pointer, Escape, and item dismissal", async () => {
+  const source = await readFile(new URL("../v2/V2Player.tsx", import.meta.url), "utf8");
+  assert.match(source, /aria-expanded=\{open\}/);
+  assert.match(source, /onClick=\{\(\) => setOpen\(\(current\) => !current\)\}/);
+  assert.match(source, /document\.addEventListener\("pointerdown", closeOnOutsidePointer\)/);
+  assert.match(source, /event\.key !== "Escape"/);
+  assert.match(source, /toggleRef\.current\?\.focus\(\)/);
+  assert.match(source, /onClick=\{closeAfterSelection\}/);
+});
+
 test("player and onboarding navigation labels are translated in every supported locale", () => {
   for (const dictionary of [en, ru, vi, th]) {
     for (const key of ["playerManagement", "playerManagementSalons", "playerManagementDevices", "playerManagementSubscription", "accountSubscriptionSection", "devicePrimaryName"] as const) {

@@ -406,8 +406,9 @@ input[type="button"]:active {
 .customer-account-devices li span:nth-child(n+2) { color: rgba(245,240,230,.62); }
 .customer-account-activation { display: grid; gap: 8px; margin-top: 16px; padding: 14px; border: 1px solid rgba(195,168,108,.28); border-radius: 8px; }
 .customer-account-activation h4, .customer-account-activation p { margin: 0; }
-.customer-account-activation a { overflow-wrap: anywhere; color: #d5bd84; }
-.customer-account-activation button { justify-self: start; min-height: 42px; padding: 8px 12px; border: 1px solid rgba(195,168,108,.35); border-radius: 7px; background: transparent; color: #d5bd84; font: inherit; cursor: pointer; }
+.customer-account-activation-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.customer-account-activation-actions a, .customer-account-activation-actions button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 8px 12px; border: 1px solid rgba(195,168,108,.35); border-radius: 7px; background: transparent; color: #d5bd84; font: inherit; text-align: center; text-decoration: none; cursor: pointer; }
+.customer-account-activation-actions a:focus-visible, .customer-account-activation-actions button:focus-visible { outline: 2px solid #e1c783; outline-offset: 2px; }
 .customer-account-logout { margin-top: 18px; }
 .customer-billing-location { margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid rgba(245,240,230,.1); }
 .customer-billing-location > h4 { margin-top: 0 !important; }

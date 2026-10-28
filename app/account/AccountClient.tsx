@@ -553,9 +553,9 @@ function Content() {
       <button className="customer-auth-submit" type="submit" disabled={deviceSaving}>{deviceSaving ? t("deviceCreating") : t("deviceCreateLink")}</button>
     </form> : <button className="customer-billing-secondary" type="button" disabled={deviceSaving} onClick={() => { setConnectingLocationId(location.id); setDeviceError(""); setActivationLink(null); }}>{t(hasActivatedDevice ? "deviceAddAnother" : "deviceConnectFirst")}</button>}
     {activationLink?.locationId === location.id && <div className="customer-account-activation" role="status" aria-live="polite">
-      <p>{t("deviceLinkInstruction")}</p><a href={activationLink.url} target="_blank" rel="noreferrer">{activationLink.url}</a>
-      <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString())}</p>
-      <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button>
+      <div className="customer-account-activation-actions"><a className="customer-account-activation-open" href={activationLink.url}>{t("deviceOpenPlayer")}</a>
+        <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button></div>
+      <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString(locale))}</p>
     </div>}
   </section>;
 
@@ -586,9 +586,9 @@ function Content() {
               <button className="customer-billing-secondary" type="button" disabled={firstDeviceBusy || deviceSaving} onClick={() => { const location = group.locations.find((item) => item.id === selectedFirstDeviceLocationId); if (location) void createDeviceLink(location, firstDeviceName); }}>{deviceSaving ? t("deviceCreating") : t("deviceConnectOther")}</button>
             </div>
             {activationLink && group.locations.some((location) => location.id === activationLink.locationId) && <div className="customer-account-activation" role="status" aria-live="polite">
-              <p>{t("deviceLinkInstruction")}</p><a href={activationLink.url} target="_blank" rel="noopener noreferrer">{activationLink.url}</a>
+              <div className="customer-account-activation-actions"><a className="customer-account-activation-open" href={activationLink.url}>{t("deviceOpenPlayer")}</a>
+                <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button></div>
               <p>{t("deviceLinkExpires").replace("{{date}}", new Date(activationLink.expiresAt).toLocaleString(locale))}</p>
-              <button type="button" onClick={() => void copyActivationLink()}>{linkCopied ? t("deviceLinkCopied") : t("deviceCopyLink")}</button>
             </div>}
           </section>}
           <div id={organizationIndex === 0 ? accountSectionId("salons") : undefined} className="customer-account-locations-heading"><h2>{t("accountSalonCount").replace("{{count}}", String(group.locations.length))}</h2>

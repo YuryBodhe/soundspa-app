@@ -25,14 +25,39 @@ function LanguageSelector() {
 
 function PlayerManagementMenu() {
   const { t } = useI18n();
-  return <details className={s.managementMenu}>
-    <summary>{t("playerManagement")}</summary>
-    <nav className={s.managementMenuPanel} aria-label={t("playerManagement")}>
-      <a href={accountSectionHref("salons")} target="_blank" rel="noopener noreferrer">{t("playerManagementSalons")}</a>
-      <a href={accountSectionHref("devices")} target="_blank" rel="noopener noreferrer">{t("playerManagementDevices")}</a>
-      <a href={accountSectionHref("subscriptions")} target="_blank" rel="noopener noreferrer">{t("playerManagementSubscription")}</a>
-    </nav>
-  </details>;
+  const [open, setOpen] = useState(false);
+  const menuId = useId();
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const closeAfterSelection = () => setOpen(false);
+  return <div className={s.managementMenu} ref={menuRef}>
+    <button ref={toggleRef} type="button" className={s.managementMenuToggle} aria-expanded={open} aria-controls={menuId} onClick={() => setOpen((current) => !current)}>{t("playerManagement")}</button>
+    {open && <nav id={menuId} className={s.managementMenuPanel} aria-label={t("playerManagement")}>
+      <a href={accountSectionHref("salons")} target="_blank" rel="noopener noreferrer" onClick={closeAfterSelection}>{t("playerManagementSalons")}</a>
+      <a href={accountSectionHref("devices")} target="_blank" rel="noopener noreferrer" onClick={closeAfterSelection}>{t("playerManagementDevices")}</a>
+      <a href={accountSectionHref("subscriptions")} target="_blank" rel="noopener noreferrer" onClick={closeAfterSelection}>{t("playerManagementSubscription")}</a>
+    </nav>}
+  </div>;
 }
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
