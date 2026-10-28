@@ -49,11 +49,13 @@ export function observeLaneProgress(input: {
 }
 
 export type MonitoringSession = { sessionId: string; generation: number };
+export type MonitoringClaim = MonitoringSession | { status: "owner_active"; retryAfterMs: number };
 export type MonitoringSendResult = "accepted" | "superseded" | "unauthorized" | "rejected";
-export type MonitoringConnectionState = "idle" | "connecting" | "connected" | "retrying" | "superseded" | "unauthorized" | "rejected" | "stopped";
+export type MonitoringConnectionState = "idle" | "connecting" | "connected" | "retrying" | "waiting" | "superseded" | "unauthorized" | "rejected" | "stopped";
 type SenderOptions = {
-  createSession?: (signal: AbortSignal) => Promise<MonitoringSession>;
+  createSession?: (signal: AbortSignal) => Promise<MonitoringClaim>;
   sendSignal?: (signal: MonitoringSignal, abortSignal: AbortSignal) => Promise<MonitoringSendResult>;
+  releaseSession?: (session: MonitoringSession) => void;
   random?: () => number;
   schedule?: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -64,11 +66,16 @@ class MonitoringTerminalError extends Error {
   constructor(readonly state: "unauthorized" | "rejected") { super("Monitoring request rejected"); }
 }
 
-async function createSessionRequest(signal: AbortSignal): Promise<MonitoringSession> {
+async function createSessionRequest(signal: AbortSignal): Promise<MonitoringClaim> {
   const response = await fetch("/api/v2/monitoring/session", {
     method: "POST", credentials: "same-origin", cache: "no-store", signal,
   });
   if (response.status === 401 || response.status === 403) throw new MonitoringTerminalError("unauthorized");
+  if (response.status === 409) {
+    const value = await response.json() as { status?: string; retryAfterMs?: number };
+    if (value.status !== "owner_active" || !Number.isFinite(value.retryAfterMs)) throw new Error("Invalid owner-active response");
+    return { status: "owner_active", retryAfterMs: Math.max(1_000, Math.min(240_000, value.retryAfterMs!)) };
+  }
   if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) throw new MonitoringTerminalError("rejected");
   if (!response.ok) throw new Error("Monitoring session unavailable");
   const value = await response.json() as Partial<MonitoringSession>;
@@ -76,6 +83,13 @@ async function createSessionRequest(signal: AbortSignal): Promise<MonitoringSess
     throw new Error("Invalid monitoring session response");
   }
   return { sessionId: value.sessionId, generation: value.generation as number };
+}
+
+function releaseSessionRequest(session: MonitoringSession) {
+  void fetch("/api/v2/monitoring/session/release", {
+    method: "POST", credentials: "same-origin", cache: "no-store", keepalive: true,
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(session),
+  }).catch(() => { /* Best effort; the database lease still expires. */ });
 }
 
 async function sendSignalRequest(signal: MonitoringSignal, abortSignal: AbortSignal): Promise<MonitoringSendResult> {
@@ -112,6 +126,7 @@ export class PlayerMonitoringSidecar {
   private inFlight = false;
   private running = false;
   private disposed = false;
+  private pageExiting = false;
   private lastObservedKey = "";
   private musicSequence = 0;
   private ambientSequence = 0;
@@ -123,6 +138,7 @@ export class PlayerMonitoringSidecar {
   private state: MonitoringConnectionState = "idle";
   private readonly createSession: NonNullable<SenderOptions["createSession"]>;
   private readonly sendSignal: NonNullable<SenderOptions["sendSignal"]>;
+  private readonly releaseSession: NonNullable<SenderOptions["releaseSession"]>;
   private readonly random: () => number;
   private readonly schedule: NonNullable<SenderOptions["schedule"]>;
   private readonly cancel: NonNullable<SenderOptions["cancel"]>;
@@ -130,6 +146,7 @@ export class PlayerMonitoringSidecar {
   constructor(private readonly readSnapshot: () => MonitoringSnapshot, private readonly options: SenderOptions = {}) {
     this.createSession = options.createSession ?? createSessionRequest;
     this.sendSignal = options.sendSignal ?? sendSignalRequest;
+    this.releaseSession = options.releaseSession ?? releaseSessionRequest;
     this.random = options.random ?? Math.random;
     this.schedule = options.schedule ?? setTimeout;
     this.cancel = options.cancel ?? clearTimeout;
@@ -162,9 +179,25 @@ export class PlayerMonitoringSidecar {
   }
 
   dispose() {
+    if (this.session) { try { this.releaseSession(this.session); } catch { /* Telemetry never controls audio. */ } }
+    this.session = null;
     this.disposed = true;
     this.stop("stopped");
     this.lifetime.abort();
+  }
+
+  releaseForPageExit() {
+    this.pageExiting = true;
+    if (this.session) { try { this.releaseSession(this.session); } catch { /* Best effort. */ } }
+    this.session = null;
+    this.clearTimer();
+  }
+
+  resumeAfterPageShow() {
+    this.pageExiting = false;
+    if (!this.running || this.disposed || this.inFlight) return;
+    this.clearTimer();
+    void this.flush();
   }
 
   private clearTimer() {
@@ -191,13 +224,27 @@ export class PlayerMonitoringSidecar {
   }
 
   private async flush(): Promise<void> {
-    if (this.inFlight || !this.running || this.disposed) return;
+    if (this.inFlight || !this.running || this.disposed || this.pageExiting) return;
     this.inFlight = true;
     try {
       if (!this.session) {
-        this.session = await boundedMonitoringRequest(this.createSession, this.lifetime.signal, this.options.requestTimeoutMs);
+        const claim = await boundedMonitoringRequest(this.createSession, this.lifetime.signal, this.options.requestTimeoutMs);
+        if (!this.running || this.disposed || this.pageExiting) {
+          if (!("status" in claim)) this.releaseSession(claim);
+          return;
+        }
+        if ("status" in claim) {
+          this.state = "waiting";
+          // Probe before expiry too: an owner may release on page exit.
+          const delay = Math.min(30_000, claim.retryAfterMs);
+          this.scheduleNext(delay + Math.floor(this.random() * 5_001), true);
+          return;
+        }
+        this.session = claim;
+        this.musicSequence = 0;
+        this.ambientSequence = 0;
       }
-      if (!this.running || this.disposed) return;
+      if (!this.running || this.disposed || this.pageExiting) return;
       // Read on every retry/heartbeat so recovered telemetry reflects current audio.
       const snapshot = this.pending ?? this.readSnapshot();
       this.pending = null;
@@ -208,12 +255,18 @@ export class PlayerMonitoringSidecar {
         ambient: { ...snapshot.ambient, sequence: ++this.ambientSequence },
       };
       const result = await boundedMonitoringRequest(abortSignal => this.sendSignal(signal, abortSignal), this.lifetime.signal, this.options.requestTimeoutMs);
-      if (!this.running || this.disposed) return;
+      if (!this.running || this.disposed || this.pageExiting) return;
+      if (result === "superseded") {
+        this.session = null;
+        this.state = "waiting";
+        this.scheduleNext(30_000 + Math.floor(this.random() * 5_001), true);
+        return;
+      }
       if (result !== "accepted") { this.stop(result); return; }
       this.failures = 0;
       this.state = "connected";
     } catch (error) {
-      if (!this.running || this.disposed) return;
+      if (!this.running || this.disposed || this.pageExiting) return;
       if (error instanceof MonitoringTerminalError) { this.stop(error.state); return; }
       this.state = "retrying";
       const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length)] ?? OUTAGE_PROBE_MS;
@@ -222,7 +275,7 @@ export class PlayerMonitoringSidecar {
     } finally {
       this.inFlight = false;
     }
-    if (!this.running || this.disposed || this.retryScheduled) return;
+    if (!this.running || this.disposed || this.pageExiting || this.retryScheduled) return;
     if (this.pending) void this.flush();
     else this.scheduleNext(120_000 + Math.floor(this.random() * 15_001), false);
   }

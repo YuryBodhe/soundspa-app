@@ -19,5 +19,10 @@ export async function POST(request: Request) {
   if (!device) return Response.json({ error: "Device authentication failed." }, { status: 401, headers: { "Cache-Control": "no-store" } });
 
   const session = await beginMonitoringSession(device.deviceId);
-  return Response.json(session, { headers: { "Cache-Control": "no-store" } });
+  if (session.status === "owner_active") {
+    return Response.json({ status: "owner_active", retryAfterMs: session.retryAfterMs }, {
+      status: 409, headers: { "Cache-Control": "no-store" },
+    });
+  }
+  return Response.json({ sessionId: session.sessionId, generation: session.generation }, { headers: { "Cache-Control": "no-store" } });
 }

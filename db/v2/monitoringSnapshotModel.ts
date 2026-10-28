@@ -17,6 +17,7 @@ export interface MonitoringDeviceInput {
   activationState: MonitoringActivationState;
   lastSeenAt: Date | null;
   lastPlaybackObservedAt: Date | null;
+  hasAcceptedHeartbeat: boolean;
   music: MonitoringLaneInput;
   ambient: MonitoringLaneInput;
 }
@@ -110,7 +111,7 @@ export function buildMonitoringSnapshot(asOf: Date, organizations: MonitoringOrg
               .map((device) => {
                 const operational = locationActive && isOperationalMonitoringDevice(device);
                 if (operational) deviceCount++;
-                const online = operational && device.lastSeenAt !== null
+                const online = operational && device.hasAcceptedHeartbeat && device.lastSeenAt !== null
                   && asOf.getTime() >= device.lastSeenAt.getTime()
                   && asOf.getTime() - device.lastSeenAt.getTime() <= MONITORING_ONLINE_THRESHOLD_SECONDS * 1000;
                 const playerActiveNow = online && (device.music.state === "playing" || device.ambient.state === "playing");

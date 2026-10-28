@@ -5,6 +5,9 @@ import { deviceCurrentState, hourlyChannelPlayback, hourlyDevicePlayback } from 
 import { calculatePlaybackAccountingCredit, type PlaybackAccountingBaseline } from "./playbackAccounting";
 
 export type MonitoringLane = "music" | "ambient";
+// Heartbeats are 120–135 seconds apart. 240 seconds allows a delayed heartbeat
+// while leaving 60 seconds before the dashboard's 300-second offline threshold.
+export const MONITORING_LEASE_MS = 240_000;
 export type MonitoringPlaybackState = "idle" | "playing" | "paused" | "buffering" | "error";
 type MonitoringTx = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
 
@@ -137,29 +140,51 @@ export async function acceptMonitoringSnapshot(input: {
   });
 }
 
-/** Atomically supersede the device's prior Player session and both lane sequence baselines. */
+/** Claim only a released or stale per-device lease, serialized by its row lock. */
 export async function beginMonitoringSession(deviceId: string) {
   const sessionId = randomUUID();
-  const [row] = await v2Db.insert(deviceCurrentState).values({
-    deviceId,
-    monitoringGeneration: 1,
-    musicSessionId: sessionId,
-    musicSequence: 0,
-    ambientSessionId: sessionId,
-    ambientSequence: 0,
-  }).onConflictDoUpdate({
-    target: deviceCurrentState.deviceId,
-    set: {
-      monitoringGeneration: sql`${deviceCurrentState.monitoringGeneration} + 1`,
-      musicSessionId: sessionId,
-      musicSequence: 0,
-      ambientSessionId: sessionId,
-      ambientSequence: 0,
-      updatedAt: sql`now()`,
-    },
-  }).returning({ generation: deviceCurrentState.monitoringGeneration });
+  return v2Db.transaction(async (tx) => {
+    await tx.insert(deviceCurrentState).values({ deviceId }).onConflictDoNothing();
+    const [current] = await tx.select({
+      generation: deviceCurrentState.monitoringGeneration,
+      musicSessionId: deviceCurrentState.musicSessionId,
+      ambientSessionId: deviceCurrentState.ambientSessionId,
+      updatedAt: deviceCurrentState.updatedAt,
+    }).from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, deviceId)).for("update");
+    if (!current) throw new Error("Monitoring state unavailable");
+    const now = await readDatabaseClock(tx);
+    const remaining = MONITORING_LEASE_MS - (now.getTime() - current.updatedAt.getTime());
+    if ((current.musicSessionId || current.ambientSessionId) && remaining > 0) {
+      return { status: "owner_active" as const, retryAfterMs: Math.max(1_000, Math.ceil(remaining)) };
+    }
+    const [claimed] = await tx.update(deviceCurrentState).set({
+      monitoringGeneration: current.generation + 1,
+      musicSessionId: sessionId, musicSequence: 0,
+      ambientSessionId: sessionId, ambientSequence: 0,
+      updatedAt: now,
+    }).where(eq(deviceCurrentState.deviceId, deviceId))
+      .returning({ generation: deviceCurrentState.monitoringGeneration });
+    return { status: "acquired" as const, sessionId, generation: claimed.generation };
+  });
+}
 
-  return { sessionId, generation: row.generation };
+/** Late exits cannot release a newer generation. Historical lane values remain intact. */
+export async function releaseMonitoringSession(input: { deviceId: string; sessionId: string; generation: number }) {
+  return v2Db.transaction(async (tx) => {
+    const [current] = await tx.select({
+      generation: deviceCurrentState.monitoringGeneration,
+      musicSessionId: deviceCurrentState.musicSessionId,
+      ambientSessionId: deviceCurrentState.ambientSessionId,
+    }).from(deviceCurrentState).where(eq(deviceCurrentState.deviceId, input.deviceId)).for("update");
+    if (!current || current.generation !== input.generation
+      || current.musicSessionId !== input.sessionId || current.ambientSessionId !== input.sessionId) return false;
+    await tx.update(deviceCurrentState).set({
+      musicSessionId: null, musicSequence: null,
+      ambientSessionId: null, ambientSequence: null,
+      updatedAt: await readDatabaseClock(tx),
+    }).where(eq(deviceCurrentState.deviceId, input.deviceId));
+    return true;
+  });
 }
 
 /**

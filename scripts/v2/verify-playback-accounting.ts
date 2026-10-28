@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { channels, deviceCurrentState, devices, hourlyChannelPlayback, hourlyDevicePlayback, locations, organizations } from "../../db/v2/schema";
-import { acceptMonitoringSnapshot, beginMonitoringSession } from "../../db/v2/services/monitoringSessions";
+import { acceptMonitoringSnapshot, beginMonitoringSession, releaseMonitoringSession } from "../../db/v2/services/monitoringSessions";
 import type { MonitoringLaneSignal } from "../../db/v2/services/monitoringSessions";
 
 async function main() {
@@ -58,7 +58,16 @@ async function main() {
     };
 
     let logicalMs = Date.now() + 10_000;
-    let session = await beginMonitoringSession(device.id);
+    let priorSession: { sessionId: string; generation: number } | null = null;
+    const claimSession = async () => {
+      if (priorSession) await releaseMonitoringSession({ deviceId: device.id, ...priorSession });
+      const claim = await beginMonitoringSession(device.id);
+      assert.equal(claim.status, "acquired");
+      if (claim.status !== "acquired") throw new Error("Synthetic monitoring claim was refused");
+      priorSession = { sessionId: claim.sessionId, generation: claim.generation };
+      return priorSession;
+    };
+    let session = await claimSession();
     const send = (seqMusic: number, musicState: MonitoringLaneSignal["state"], musicId: string | null,
       seqAmbient: number, ambientState: MonitoringLaneSignal["state"], ambientId: string | null,
       atMs: number, current = session) => acceptMonitoringSnapshot({
@@ -81,7 +90,7 @@ async function main() {
     assert.equal(await rowSum(hourlyChannelPlayback, "ambient"), 0);
 
     logicalMs += 60 * 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     result = await send(1, "idle", null, 1, "playing", ambientChannel.id, logicalMs);
     assert.deepEqual(result.accepted, { music: true, ambient: true });
     const ambientBaselineActive = await rowSum(hourlyDevicePlayback);
@@ -95,7 +104,7 @@ async function main() {
     assert.equal(await rowSum(hourlyChannelPlayback, "ambient") - ambientBaselineAmbient, 120);
 
     logicalMs += 60 * 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     result = await send(1, "playing", musicChannel.id, 1, "playing", ambientChannel.id, logicalMs);
     assert.deepEqual(result.accepted, { music: true, ambient: true });
     const bothBaselineActive = await rowSum(hourlyDevicePlayback);
@@ -109,7 +118,7 @@ async function main() {
     assert.equal(await rowSum(hourlyChannelPlayback, "ambient") - bothBaselineAmbient, 120);
 
     logicalMs += 60 * 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     result = await send(1, "playing", musicChannel.id, 1, "idle", null, logicalMs);
     assert.deepEqual(result.accepted, { music: true, ambient: true });
     const cappedBaseline = await rowSum(hourlyDevicePlayback);
@@ -120,13 +129,13 @@ async function main() {
 
     // A new session's first signal is a fresh baseline, never a bridge from the old one.
     logicalMs += 60 * 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     result = await send(1, "playing", musicChannel.id, 1, "idle", null, logicalMs);
     assert.deepEqual(result.accepted, { music: true, ambient: true });
     const sessionBoundaryBaseline = await rowSum(hourlyDevicePlayback);
     const oldSession = session;
     logicalMs += 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     const freshSession = session;
     const activeBeforeStale = await rowSum(hourlyDevicePlayback);
     const [currentBeforeStale] = await v2Db.select({
@@ -156,7 +165,7 @@ async function main() {
     // Concurrent same-device signals serialize on device_current_state. Whether
     // sequence 2 or 3 wins the lock first, their shared previous interval is once.
     logicalMs += 60 * 60_000;
-    session = await beginMonitoringSession(device.id);
+    session = await claimSession();
     result = await send(1, "playing", musicChannel.id, 1, "idle", null, logicalMs);
     assert.deepEqual(result.accepted, { music: true, ambient: true });
     const concurrentBaseline = await rowSum(hourlyDevicePlayback);

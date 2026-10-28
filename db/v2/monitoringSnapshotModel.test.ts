@@ -16,6 +16,7 @@ function device(id: string, overrides: Partial<MonitoringDeviceInput> = {}): Mon
   return {
     id, label: "Device", status: "active", activationState: "activated",
     lastSeenAt: atFiveMinutes, lastPlaybackObservedAt: null,
+    hasAcceptedHeartbeat: true,
     music: idle, ambient: idle, ...overrides,
   };
 }
@@ -70,6 +71,16 @@ test("Offline Devices retain last-known independent lane state and channels", ()
   assert.equal(snapshot.summary.playingDeviceCount, 0);
   assert.deepEqual(row?.music, musicPlaying);
   assert.equal(row?.ambient.state, "paused");
+});
+
+test("a newly claimed or released session is offline before its first accepted heartbeat", () => {
+  const snapshot = buildMonitoringSnapshot(asOf, org([{ id: locationId, name: "Location", archived: false, devices: [
+    device("claimed", { lastSeenAt: asOf, hasAcceptedHeartbeat: false, music: musicPlaying }),
+  ] }]));
+  const row = snapshot.organizations[0]?.locations[0]?.devices[0];
+  assert.equal(row?.online, false);
+  assert.equal(row?.playerActiveNow, false);
+  assert.deepEqual(row?.music, musicPlaying);
 });
 
 test("pending/active Devices without current state are safe and do not leak credentials", () => {

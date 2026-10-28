@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
-import { isCurrentMonitoringSignal, beginMonitoringSession } from "../../db/v2/services/monitoringSessions";
+import { isCurrentMonitoringSignal, beginMonitoringSession, releaseMonitoringSession } from "../../db/v2/services/monitoringSessions";
 import { authenticateDeviceCredential } from "../../db/v2/queries/devices";
 import { deviceCurrentState, devices, locations, organizations } from "../../db/v2/schema";
 
@@ -75,14 +75,21 @@ async function main() {
     assert.equal(first.generation, 1);
 
     const second = await beginMonitoringSession(activeId);
-    assert.equal(second.generation, first.generation + 1);
-    assert.notEqual(second.sessionId, first.sessionId);
+    assert.equal(second.status, "owner_active", "a healthy owner must not be superseded");
+    await releaseMonitoringSession({ deviceId: activeId, ...first });
+    const afterRelease = await beginMonitoringSession(activeId);
+    assert.equal(afterRelease.status, "acquired");
+    if (afterRelease.status !== "acquired") throw new Error("Released owner was not claimable");
+    assert.equal(afterRelease.generation, first.generation + 1);
+    assert.notEqual(afterRelease.sessionId, first.sessionId);
 
+    await releaseMonitoringSession({ deviceId: activeId, sessionId: afterRelease.sessionId, generation: afterRelease.generation });
     const concurrent = await Promise.all(Array.from({ length: 6 }, () => beginMonitoringSession(activeId)));
-    const concurrentGenerations = concurrent.map((item) => item.generation).sort((a, b) => a - b);
-    assert.equal(new Set(concurrentGenerations).size, concurrentGenerations.length, "concurrent session starts must get unique generations");
-    assert.deepEqual(concurrentGenerations, Array.from({ length: 6 }, (_, index) => second.generation + index + 1));
-    const newest = concurrent.reduce((a, b) => a.generation > b.generation ? a : b);
+    const winners = concurrent.filter((item) => item.status === "acquired");
+    assert.equal(winners.length, 1, "concurrent claims must have exactly one owner");
+    assert.equal(concurrent.filter((item) => item.status === "owner_active").length, 5);
+    const newest = winners[0]!;
+    if (newest.status !== "acquired") throw new Error("Missing winner");
     const [current] = await v2Db.select({
       generation: deviceCurrentState.monitoringGeneration,
       musicSessionId: deviceCurrentState.musicSessionId,

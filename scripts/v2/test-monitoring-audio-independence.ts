@@ -71,7 +71,7 @@ async function main() {
     mode = "healthy"; await fire();
     assert.equal(sidecar.connectionState, "connected"); advance();
     mode = "superseded"; await fire();
-    assert.equal(sidecar.connectionState, "superseded"); advance();
+    assert.equal(sidecar.connectionState, "waiting"); advance();
     assert.equal(music.getSnapshot().status, "playing");
     assert.equal(ambient.getSnapshot().status, "playing");
     console.info("PASS: real music/ambient engine instances keep playing through telemetry initialization failure, hung request, recovery and session supersession (mock media elements).");

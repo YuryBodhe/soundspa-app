@@ -90,27 +90,30 @@ test("network interruption preserves both audio lanes, coalesces state, and reco
   sidecar.dispose();
 });
 
-test("two player tabs use newest-session ownership without a takeover retry loop", async () => {
+test("healthy owner keeps telemetry while waiting tab claims after release", async () => {
   let generation = 0;
   let creates = 0;
+  let owner: number | null = null;
   const aClock = clock(); const bClock = clock();
   const make = (timer: ReturnType<typeof clock>) => new PlayerMonitoringSidecar(() => playing, {
     ...timer, random: () => 0,
-    createSession: async () => { creates++; return { sessionId: `s${++generation}`, generation }; },
-    sendSignal: async signal => signal.generation === generation ? "accepted" : "superseded",
+    createSession: async () => { creates++; if (owner !== null) return { status: "owner_active", retryAfterMs: 240_000 }; owner = ++generation; return { sessionId: `s${owner}`, generation: owner }; },
+    sendSignal: async signal => signal.generation === owner ? "accepted" : "superseded",
+    releaseSession: session => { if (owner === session.generation) owner = null; },
   });
   const a = make(aClock); const b = make(bClock);
   await a.start(); await tick();
   await b.start(); await tick();
-  await aClock.fire();
-  assert.equal(a.connectionState, "superseded");
-  assert.equal(aClock.tasks.size, 0);
-  a.update({ ...playing, music: { state: "paused", channelId: "music" } });
-  await a.start(); await tick();
-  assert.equal(creates, 2, "the old tab cannot reclaim the session automatically");
+  assert.equal(a.connectionState, "connected");
+  assert.equal(b.connectionState, "waiting");
+  assert.equal(bClock.tasks.size, 1);
+  await bClock.fire();
+  assert.equal(b.connectionState, "waiting");
+  a.dispose();
   await bClock.fire();
   assert.equal(b.connectionState, "connected");
-  a.dispose(); b.dispose();
+  assert.equal(creates, 4);
+  b.dispose();
 });
 
 test("hung session and heartbeat requests time out, abort and recover; late results are ignored", async () => {
@@ -152,7 +155,7 @@ test("hung session and heartbeat requests time out, abort and recover; late resu
   }
 });
 
-test("default HTTP transport interprets accepted payloads and stops on superseded or invalid credentials", async () => {
+test("default HTTP transport waits on superseded and stops on invalid credentials", async () => {
   const original = globalThis.fetch;
   try {
     for (const result of ["superseded", "unauthorized", "rejected"] as const) {
@@ -164,8 +167,8 @@ test("default HTTP transport interprets accepted payloads and stops on supersede
       };
       const sidecar = new PlayerMonitoringSidecar(() => playing, { ...timer });
       await sidecar.start(); await tick();
-      assert.equal(sidecar.connectionState, result);
-      assert.equal(timer.tasks.size, 0);
+      assert.equal(sidecar.connectionState, result === "superseded" ? "waiting" : result);
+      assert.equal(timer.tasks.size, result === "superseded" ? 1 : 0);
       sidecar.dispose();
     }
   } finally { globalThis.fetch = original; }
@@ -215,4 +218,67 @@ test("HTTP session overload and heartbeat failure recover without reload; author
     assert.equal(timer.tasks.size, 0);
     unauthorized.dispose();
   } finally { globalThis.fetch = original; }
+});
+
+test("owner-active HTTP response retries passively without sending a heartbeat", async () => {
+  const original = globalThis.fetch;
+  const timer = clock();
+  let calls = 0; let heartbeats = 0;
+  try {
+    globalThis.fetch = async input => {
+      if (String(input).endsWith("/session")) {
+        calls++;
+        return calls === 1
+          ? Response.json({ status: "owner_active", retryAfterMs: 240_000 }, { status: 409 })
+          : Response.json({ sessionId: "s", generation: 2 });
+      }
+      heartbeats++;
+      return Response.json({ accepted: { music: true, ambient: true } });
+    };
+    const sidecar = new PlayerMonitoringSidecar(() => playing, { ...timer, random: () => 0, releaseSession: () => {} });
+    await sidecar.start(); await tick();
+    assert.equal(sidecar.connectionState, "waiting");
+    assert.equal(heartbeats, 0);
+    assert.equal(await timer.fire(), 30_000);
+    assert.equal(sidecar.connectionState, "connected");
+    assert.equal(heartbeats, 1);
+    sidecar.dispose();
+  } finally { globalThis.fetch = original; }
+});
+
+test("page exit releases only an owned session and page restoration resumes telemetry", async () => {
+  const timer = clock();
+  const released: number[] = [];
+  let generation = 0;
+  const sidecar = new PlayerMonitoringSidecar(() => playing, {
+    ...timer, random: () => 0,
+    createSession: async () => ({ sessionId: "s", generation: ++generation }),
+    sendSignal: async () => "accepted",
+    releaseSession: session => { released.push(session.generation); },
+  });
+  await sidecar.start(); await tick();
+  sidecar.releaseForPageExit();
+  assert.deepEqual(released, [1]);
+  sidecar.resumeAfterPageShow(); await tick();
+  assert.equal(sidecar.connectionState, "connected");
+  assert.equal(generation, 2);
+  sidecar.dispose();
+  assert.deepEqual(released, [1, 2]);
+});
+
+test("page exit during a delayed claim releases that claim without emitting idle telemetry", async () => {
+  let resolveClaim!: (value: { sessionId: string; generation: number }) => void;
+  const released: number[] = [];
+  let heartbeats = 0;
+  const sidecar = new PlayerMonitoringSidecar(() => playing, {
+    createSession: async () => new Promise(resolve => { resolveClaim = resolve; }),
+    sendSignal: async () => { heartbeats++; return "accepted"; },
+    releaseSession: session => { released.push(session.generation); },
+  });
+  await sidecar.start(); await tick();
+  sidecar.releaseForPageExit();
+  resolveClaim({ sessionId: "late", generation: 3 }); await tick();
+  assert.deepEqual(released, [3]);
+  assert.equal(heartbeats, 0);
+  sidecar.dispose();
 });

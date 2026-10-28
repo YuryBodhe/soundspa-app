@@ -28,6 +28,8 @@ async function queryMonitoringSnapshot(tx: V2Transaction): Promise<MonitoringSna
     deviceRevokedAt: devices.revokedAt,
     credentialConfigured: sql<boolean>`${devices.credentialHash} IS NOT NULL`,
     lastSeenAt: deviceCurrentState.lastSeenAt,
+    musicSequence: deviceCurrentState.musicSequence,
+    ambientSequence: deviceCurrentState.ambientSequence,
     lastPlaybackObservedAt: deviceCurrentState.lastPlaybackAt,
     musicState: deviceCurrentState.musicPlaybackState,
     musicChannelId: deviceCurrentState.musicCurrentChannelId,
@@ -68,6 +70,7 @@ async function queryMonitoringSnapshot(tx: V2Transaction): Promise<MonitoringSna
       status: row.deviceRevokedAt || row.deviceStatus === "revoked" ? "revoked" : "active",
       activationState: row.deviceRevokedAt || row.deviceStatus === "revoked" ? "revoked" : row.credentialConfigured ? "activated" : "pending",
       lastSeenAt: row.lastSeenAt,
+      hasAcceptedHeartbeat: (row.musicSequence ?? 0) > 0 || (row.ambientSequence ?? 0) > 0,
       lastPlaybackObservedAt: row.lastPlaybackObservedAt,
       music: {
         state: row.musicState,

@@ -192,6 +192,10 @@ export default function V2Player({ catalog, locationId, organizationName, locati
   useEffect(() => {
     if (!monitoringEnabled) return;
     const sidecar = new PlayerMonitoringSidecar(readMonitoringSnapshot);
+    const onPageHide = () => sidecar.releaseForPageExit();
+    const onPageShow = () => sidecar.resumeAfterPageShow();
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
     let mounted = true;
     let sampler: number | null = null;
     void sidecar.start().then((started) => {
@@ -200,6 +204,8 @@ export default function V2Player({ catalog, locationId, organizationName, locati
     return () => {
       mounted = false;
       if (sampler !== null) window.clearInterval(sampler);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       sidecar.dispose();
     };
   }, [monitoringEnabled, readMonitoringSnapshot]);
