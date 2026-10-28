@@ -15,16 +15,40 @@ test("main moon action tooltip follows play, stop, and unavailable state", () =>
   assert.equal(mainPlayerAction({ hasTrack: false, canStart: true, playing: false, buffering: false }), null);
 });
 
-test("music card action reflects whether it plays, stops, or only selects", () => {
-  const available = { locked: false, standby: false, hasTracks: true, active: false, playing: false, buffering: false, musicWantsPlayback: false };
-  assert.equal(musicChannelCardAction(available), "select");
-  assert.equal(musicChannelCardAction({ ...available, musicWantsPlayback: true }), "play");
+test("every available music card offers play unless its active channel is already playing", () => {
+  const available = { locked: false, standby: false, hasTracks: true, active: false, playing: false, buffering: false };
+  assert.equal(musicChannelCardAction(available), "play");
   assert.equal(musicChannelCardAction({ ...available, active: true }), "play");
   assert.equal(musicChannelCardAction({ ...available, active: true, playing: true }), "stop");
   assert.equal(musicChannelCardAction({ ...available, active: true, buffering: true }), "stop");
   assert.equal(musicChannelCardAction({ ...available, locked: true }), null);
   assert.equal(musicChannelCardAction({ ...available, standby: true }), null);
   assert.equal(musicChannelCardAction({ ...available, hasTracks: false }), null);
+});
+
+test("one-click channel selection plays a new channel through the existing engine path", async () => {
+  const source = await readFile(new URL("./V2Player.tsx", import.meta.url), "utf8");
+  const selection = source.match(/const selectMusic = \(channel: PlayerChannel\) => \{([\s\S]*?)\n  \};/)?.[1] ?? "";
+  assert.ok(selection);
+  assert.match(selection, /channel\.playable === false \|\| !channel\.tracks\.length\) return/);
+  const sameChannel = selection.match(/if \(channel\.id === activeChannelId\) \{([\s\S]*?)\n    \}/)?.[1] ?? "";
+  assert.match(sameChannel, /toggleMusicPlayback\(\)/);
+  assert.doesNotMatch(sameChannel, /replaceMusicEngine|\.play\(/);
+  assert.match(selection, /if \(!canStartAudio\) return/);
+  assert.match(selection, /replaceMusicEngine\(channel\.id, playlist\)/);
+  assert.match(selection, /setActiveChannelId\(channel\.id\);[\s\S]*?musicWantsPlaybackRef\.current\.start\(\);\s*void engine\?\.play\(\);/);
+});
+
+test("initial player setup does not autoplay and card action matches the localized play label", async () => {
+  const source = await readFile(new URL("./V2Player.tsx", import.meta.url), "utf8");
+  const setup = source.match(/useEffect\(\(\) => \{\s*const initial = playableMusicChannels\[0\];([\s\S]*?)\n  \}, \[replaceMusicEngine, playableMusicChannels\]\);/)?.[1] ?? "";
+  assert.ok(setup);
+  assert.match(setup, /replaceMusicEngine\(initial\.id, initial\.tracks\)/);
+  assert.doesNotMatch(setup, /\.play\(/);
+  assert.match(source, /musicChannelCardAction\(\{ locked, standby, hasTracks: channel\.tracks\.length > 0, active, playing, buffering \}\)/);
+  assert.match(source, /const togglePlayback = \(\) => \{\s*if \(activeChannel\?\.tracks\.length && engineChannelIdRef\.current === activeChannelId\) toggleMusicPlayback\(\);/);
+  assert.equal(ru[playerActionTranslationKey("play")], "Воспроизвести");
+  for (const dictionary of [en, ru, vi, th]) assert.ok(dictionary[playerActionTranslationKey("play")].trim());
 });
 
 test("ambient card action toggles only available playable lanes", () => {

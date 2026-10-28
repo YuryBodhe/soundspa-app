@@ -86,10 +86,10 @@ function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
   </details>;
 }
 
-function MusicCard({ channel, active, playing, buffering, musicWantsPlayback, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; playing: boolean; buffering: boolean; musicWantsPlayback: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
+function MusicCard({ channel, active, playing, buffering, onSelect, onLocked, standby }: { channel: PlayerChannel; active: boolean; playing: boolean; buffering: boolean; onSelect: () => void; onLocked: (trigger: HTMLButtonElement) => void; standby: boolean }) {
   const { t, locale } = useI18n(); const title = resolveChannelTitle(channel.title, channel.localizedTitles, locale);
   const locked = channel.playable === false;
-  const action = musicChannelCardAction({ locked, standby, hasTracks: channel.tracks.length > 0, active, playing, buffering, musicWantsPlayback });
+  const action = musicChannelCardAction({ locked, standby, hasTracks: channel.tracks.length > 0, active, playing, buffering });
   const card = (
     <button type="button" disabled={!locked && standby} className={`${s.card} ${locked ? s.cardLocked : ""} ${active ? s.musicCardActive : ""}`} onClick={(event) => activatePlayerChannelCard(channel, onSelect, () => onLocked(event.currentTarget))} aria-label={locked ? `${title}. ${t("locked")}` : action ? `${t(playerActionTranslationKey(action))}: ${title}` : title} aria-haspopup={locked ? "dialog" : undefined} aria-pressed={locked ? undefined : active}>
       <span className={s.cardImage}>
@@ -167,7 +167,6 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
-  const [musicWantsPlayback, setMusicWantsPlayback] = useState(false);
   const [lockedChannel, setLockedChannel] = useState<PlayerChannel | null>(null);
   const lockedDialogRef = useRef<HTMLDialogElement | null>(null);
   const lockedDialogCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -256,7 +255,6 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
         }
         if (connection === "unauthorized") {
           playbackIntent.stop();
-          setMusicWantsPlayback(false);
           engineRef.current?.pause();
           ambientEngineRef.current?.stop();
           activeAmbientChannelRef.current = null;
@@ -283,7 +281,6 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
       window.removeEventListener("pageshow", onPageShow);
       if (sidecar) {
         playbackIntent.stop();
-        setMusicWantsPlayback(false);
         engineRef.current?.pause();
         ambientEngineRef.current?.stop();
         activeAmbientChannelRef.current = null;
@@ -363,12 +360,10 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     recordMusicDiagnostic("ui-play-pause", { channelId: activeChannelId, status: playback.status, intent: musicWantsPlaybackRef.current });
     if (playback.status === "playing" || playback.status === "loading") {
       musicWantsPlaybackRef.current.stop();
-      setMusicWantsPlayback(false);
       engineRef.current?.pause();
     } else {
       if (!canStartAudio) return;
       musicWantsPlaybackRef.current.start();
-      setMusicWantsPlayback(true);
       void engineRef.current?.play();
     }
   };
@@ -381,8 +376,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
       if (playlist && (canStartAudio || playing || buffering)) toggleMusicPlayback();
       return;
     }
-    if (!canStartAudio && musicWantsPlaybackRef.current.wantsPlayback) return;
-    const shouldContinuePlaying = musicWantsPlaybackRef.current.wantsPlayback;
+    if (!canStartAudio) return;
     setActiveChannelId(channel.id);
     if (!playlist) {
       engineRef.current?.pause();
@@ -391,7 +385,8 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     const engine = engineChannelIdRef.current === channel.id
       ? engineRef.current
       : replaceMusicEngine(channel.id, playlist);
-    if (shouldContinuePlaying) void engine?.play();
+    musicWantsPlaybackRef.current.start();
+    void engine?.play();
   };
 
   const togglePlayback = () => {
@@ -501,7 +496,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
         <section className={s.section}>
           <div className={s.sectionHeader}><div className={s.sectionLabel}>{t("musicChannels")}</div><div className={s.sectionCount}>{musicChannels.length} {t("channels")}</div></div>
           <div className={s.cardsRow} data-testid="music-row">
-            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} buffering={buffering} musicWantsPlayback={musicWantsPlayback} standby={!canStartNewLane} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
+            {musicChannels.map((channel) => <MusicCard key={channel.id} channel={channel} active={channel.id === activeChannelId} playing={playing} buffering={buffering} standby={!canStartNewLane} onSelect={() => selectMusic(channel)} onLocked={(trigger) => showLockedChannelInfo(channel, trigger)} />)}
           </div>
         </section>
 

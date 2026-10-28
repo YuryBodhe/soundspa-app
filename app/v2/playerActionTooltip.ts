@@ -18,11 +18,10 @@ export function musicChannelCardAction(input: {
   active: boolean;
   playing: boolean;
   buffering: boolean;
-  musicWantsPlayback: boolean;
 }): PlayerAction | null {
   if (input.locked || input.standby || !input.hasTracks) return null;
-  if (input.active) return input.playing || input.buffering ? "stop" : "play";
-  return input.musicWantsPlayback ? "play" : "select";
+  if (input.active && (input.playing || input.buffering)) return "stop";
+  return "play";
 }
 
 export function ambientChannelCardAction(input: { locked: boolean; standby: boolean; hasTracks: boolean; active: boolean }): PlayerAction | null {
