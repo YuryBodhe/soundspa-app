@@ -314,24 +314,34 @@
   z-index: 5;
   top: 7px;
   left: 7px;
-  right: 7px;
-  padding: 7px 8px;
-  border: 1px solid rgba(212, 201, 176, 0.3);
-  border-radius: 7px;
-  background: rgba(7, 7, 10, 0.96);
-  color: #e0d5c0;
-  font-size: 11px;
+  width: max-content;
+  max-width: min(220px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(35, 35, 40, 0.74);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #f2eee6;
+  font-size: 12px;
   line-height: 1.35;
   opacity: 0;
   pointer-events: none;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.2);
   text-align: center;
   transform: translateY(-3px);
-  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
   visibility: hidden;
 }
 .tooltipBubbleVisible { opacity: 1; transform: translateY(0); visibility: visible; }
-.tooltipBubbleAbove { top: auto; right: auto; bottom: calc(100% + 8px); left: 50%; width: max-content; max-width: min(220px, calc(100vw - 32px)); transform: translate(-50%, -3px); }
+.tooltipBubbleCursor { position: fixed; top: 0; left: 0; right: auto; bottom: auto; }
+.tooltipBubbleVisible.tooltipBubbleCursor { transform: translateY(0); }
+.tooltipBubbleAbove { top: auto; right: auto; bottom: calc(100% + 8px); left: 50%; width: max-content; max-width: min(220px, calc(100vw - 16px)); transform: translate(-50%, -3px); }
 .tooltipBubbleVisible.tooltipBubbleAbove { transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .tooltipBubble { transition-duration: 0.01ms; }
+}
 .lockedDialog {
   width: min(420px, calc(100vw - 32px));
   max-height: min(80vh, 620px);

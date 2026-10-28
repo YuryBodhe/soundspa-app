@@ -467,7 +467,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
           <div className={s.nowPlayingLabel}>{t("nowSelected")}</div>
           <h1 className={s.channelName}>{activeChannelTitle}</h1>
           <div className={s.channelMood}>{activeChannel.mood}</div>
-          {moonAction ? <Tooltip content={t(playerActionTranslationKey(moonAction))} placement="above">
+          {moonAction ? <Tooltip content={t(playerActionTranslationKey(moonAction))}>
             <button type="button" disabled={!canStartNewLane && !playing && !buffering} className={`${s.yinYangButton} ${playing ? s.yinYangPlaying : ""} ${buffering ? s.yinYangBuffering : ""}`} onClick={togglePlayback} aria-label={`${t(playerActionTranslationKey(moonAction))}: ${activeChannelTitle}`} aria-pressed={playing} aria-busy={buffering}>
               <span className={s.ambientGlow} />
               <span className={`${s.halo} ${s.haloOne}`} /><span className={`${s.halo} ${s.haloTwo}`} /><span className={`${s.halo} ${s.haloThree}`} />
