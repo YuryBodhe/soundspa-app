@@ -40,7 +40,7 @@ type ActivationLink = { locationId: string; url: string; expiresAt: string };
 type BillingPlan = {
   productId: string; productName: string;
   purchaseEligible: boolean;
-  status: "trial" | "subscription" | "partner" | "expired" | "available";
+  status: "trial" | "subscription" | "partner" | "upcoming" | "expired" | "available";
   trialEndsAt: string | null; paidStartsAt: string | null; paidThrough: string | null; trialActive: boolean;
   scheduledPaidPeriods: { startsAt: string; endsAt: string }[]; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
@@ -522,6 +522,7 @@ function Content() {
       ? `${t("billingCanceled")}${plan.paidThrough ? ` ${t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough))}` : ""}`
       : plan.paidThrough ? t("billingPaidThrough").replace("{{date}}", displayDate(plan.paidThrough)) : t("billingSubscription");
     else if (plan.status === "partner") statusText = t("billingPartnerStatus");
+    else if (plan.status === "upcoming") statusText = t("billingUpcoming");
     else statusText = t(plan.status === "expired" ? "billingExpired" : "billingAvailable");
     const activeTrialText = plan.trialActive && plan.status !== "trial" && plan.trialEndsAt
       ? t("billingTrialEnds").replace("{{date}}", displayDate(plan.trialEndsAt)) : "";
@@ -533,7 +534,8 @@ function Content() {
     : t("billingTrial");
   const planStatusKey = (plan: Pick<BillingPlan, "status" | "subscriptionCanceled">) => plan.status === "trial" ? "billingTrial"
     : plan.status === "subscription" ? (plan.subscriptionCanceled ? "billingCanceled" : "billingSubscription")
-      : plan.status === "partner" ? "billingPartnerStatus"
+        : plan.status === "partner" ? "billingPartnerStatus"
+          : plan.status === "upcoming" ? "billingUpcoming"
         : plan.status === "expired" ? "billingExpired" : "billingAvailable";
   const locationGroups = new Map<string, { organizationName: string; canCreateLocations: boolean; locations: CustomerLocation[] }>();
   for (const location of result?.locations ?? []) {

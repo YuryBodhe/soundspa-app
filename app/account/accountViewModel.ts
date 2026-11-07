@@ -1,4 +1,4 @@
-export type AccountPlanStatus = "trial" | "subscription" | "partner" | "expired" | "available";
+export type AccountPlanStatus = "trial" | "subscription" | "partner" | "upcoming" | "expired" | "available";
 
 export type AccountPlanSnapshot = {
   productId: string;
@@ -62,6 +62,7 @@ export function accountLocationPresentation<T extends AccountLocationPlan>(
   );
   const summaryProducts = products.filter((product) =>
     product.status === "trial" || product.status === "subscription" || product.status === "partner" ||
+    product.status === "upcoming" ||
     accountScheduledPaidPeriodRanges(product.scheduledPaidPeriods, (value) => value).length > 0,
   );
   const accessWindows = new Set(activeProducts.map((product) => product.accessExpiresAt ?? "indefinite"));

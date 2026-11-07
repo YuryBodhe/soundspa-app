@@ -71,12 +71,13 @@ test("collapsed summaries can show scheduled paid coverage beside an active tria
 
 test("a future-only paid Product remains in the collapsed summary without claiming current access", () => {
   const view = accountLocationPresentation([{
-    productId: "basic", productName: "SoundSpa Basic", status: "expired",
+    productId: "basic", productName: "SoundSpa Basic", status: "upcoming",
     trialEndsAt: null, paidThrough: null, trialActive: false,
     scheduledPaidPeriods: [{ startsAt: "2026-11-06T00:00:00.000Z", endsAt: "2026-12-06T00:00:00.000Z" }],
   }], [], now);
   assert.equal(view.activeProductCount, 0);
   assert.deepEqual(view.summaryProducts.map((plan) => plan.productId), ["basic"]);
+  assert.equal(view.summaryProducts[0].status, "upcoming");
   assert.equal(view.accessExpiresAt, null);
 });
 
@@ -173,6 +174,8 @@ test("compact Account labels and organization billing action are localized in ev
   const dictionaries = await Promise.all(["en", "ru", "vi", "th"].map((locale) => readFile(new URL(`../i18n/dictionaries/${locale}.ts`, import.meta.url), "utf8")));
   for (const dictionary of dictionaries) {
     assert.match(dictionary, /billingWizardOpen:/);
+    assert.match(dictionary, /billingUpcoming:/);
+    assert.match(dictionary, /billingExistingPaidThrough:/);
     assert.match(dictionary, /accountAccessActive:/);
     assert.match(dictionary, /accountNoActiveAccess:/);
     assert.match(dictionary, /accountTrialUntil:/);

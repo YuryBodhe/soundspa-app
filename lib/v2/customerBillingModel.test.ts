@@ -19,6 +19,13 @@ test("an independent active partner benefit remains available without paid subsc
   assert.equal(resolveCustomerBillingStatus({}, now), "available");
 });
 
+test("future paid coverage is Upcoming rather than Expired after a trial ends", () => {
+  assert.equal(resolveCustomerBillingStatus({
+    trial: { status: "expired", startsAt: "2026-09-01T00:00:00.000Z", endsAt: "2026-10-01T00:00:00.000Z" },
+    subscription: { status: "active", startsAt: "2026-11-25T00:00:00.000Z", currentPeriodEndsAt: "2027-01-25T00:00:00.000Z" },
+  }, now), "upcoming");
+});
+
 test("a Location without current or prior entitlement has available billing status", () => {
   assert.equal(resolveCustomerBillingStatus({}, now), "available");
   assert.equal(resolveCustomerBillingStatus({ trial: { status: "active", startsAt: "2026-10-01", endsAt: "2026-10-10" } }, now), "trial");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isIP } from "node:net";
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 class Rollback extends Error {}
 
@@ -40,7 +40,7 @@ async function main() {
   process.env.V2_ADMIN_PASSWORD = "isolated-manual-billing-password-not-for-deployment";
   const manualOperatorAuthorization = `Basic ${Buffer.from(`${process.env.V2_ADMIN_USERNAME}:${process.env.V2_ADMIN_PASSWORD}`).toString("base64")}`;
 
-  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle, paymentLifecycle, billingOrderModel, manualBillingAdmin] = await Promise.all([
+  const [{ v2Db, v2Pool }, schema, service, permissionService, customerBilling, aggregateFake, singleFake, orderRead, orderLifecycle, paymentLifecycle, billingOrderModel, manualBillingAdmin, trialService, commercialProductQueries, effectiveAccessQueries] = await Promise.all([
     import("../../db/v2/client"),
     import("../../db/v2/schema"),
     import("../../db/v2/services/billingOrders"),
@@ -53,6 +53,9 @@ async function main() {
     import("../../db/v2/services/paymentLifecycle"),
     import("../../db/v2/services/billingOrderModel"),
     import("../../db/v2/services/manualBillingAdmin"),
+    import("../../db/v2/queries/coreTrials"),
+    import("../../db/v2/queries/commercialProducts"),
+    import("../../db/v2/queries/effectiveAccess"),
   ]);
   const assertAggregateError = async (operation: Promise<unknown>, code: string) => {
     await assert.rejects(operation, (error: unknown) => error instanceof aggregateFake.FakeBillingOrderError && error.code === code);
@@ -820,6 +823,7 @@ async function main() {
         assert.equal(multiProductQuote.lines[0].billingPeriodEndsAt, "2026-12-08T10:00:00.000Z");
         assert.equal(multiProductQuote.lines[1].billingPeriodStartsAt, paidEndsAt.toISOString());
         assert.equal(multiProductQuote.lines[1].billingPeriodEndsAt, "2026-11-23T10:00:00.000Z");
+        assert.equal(multiProductQuote.lines[1].existingPaidThroughAt, paidEndsAt.toISOString(), "the customer quote shows the existing paid-through date before buying the next period");
         const independentDurationQuote = await service.previewPrepaidBillingOrder({
           ...multiProductRequest,
           lines: [
@@ -1042,19 +1046,40 @@ async function main() {
         raceOrganizationId = organization.id;
         const [owner] = await tx.insert(schema.users).values({ email: `billing-race-${raceSuffix}@example.test`, emailVerifiedAt: raceNow }).returning();
         await tx.insert(schema.organizationMembers).values({ organizationId: organization.id, userId: owner.id, role: "owner" });
-        const raceLocations = await tx.insert(schema.locations).values([1, 2, 3, 4].map((number) => ({
+        const raceLocations = await tx.insert(schema.locations).values([1, 2, 3, 4, 5].map((number) => ({
           organizationId: organization.id, name: `Concurrent checkout ${number}`, slug: `billing-race-${raceSuffix.slice(0, 10)}-${number}`,
           timezone: "Europe/Moscow", marketCode: "RU",
         }))).returning();
         const [product] = await tx.insert(schema.commercialProducts).values({
-          code: `billing-race-${raceSuffix}`, name: "Concurrent checkout product", kind: "core",
+          code: commercialProductQueries.SOUNDSPA_PRODUCT_CODE, name: "Concurrent checkout product", kind: "core",
           priceMinor: 108_000, currency: "RUB", billingIntervalMonths: 1, isActive: true,
         }).returning();
+        const [channel] = await tx.select({ id: schema.channels.id }).from(schema.channels)
+          .where(and(eq(schema.channels.isPublished, true), isNull(schema.channels.archivedAt))).limit(1);
+        assert.ok(channel, "a published channel exists for trial-to-paid effective-access assertions");
+        await tx.insert(schema.commercialProductChannels).values({ productId: product.id, channelId: channel.id });
         const [raceProvider] = await tx.insert(schema.commercialPaymentProviders).values({ code: "fake-staging", displayName: "Staging Fake Provider", isEnabled: true }).returning();
         const [route] = await tx.insert(schema.commercialPaymentRoutes).values({
           marketCode: "RU", productId: product.id, providerCode: raceProvider.code,
           externalReference: `billing-race:${raceSuffix}`, isEnabled: true,
         }).returning();
+        const continuityLocation = raceLocations[3];
+        const naturalTrialEnd = new Date(raceNow.getTime() + 24 * 60 * 60_000);
+        const continuityPaidStartsAt = new Date(naturalTrialEnd.getTime() + 3 * 24 * 60 * 60_000);
+        const continuityPaidEndsAt = new Date(continuityPaidStartsAt.getTime() + 30 * 24 * 60 * 60_000);
+        await tx.insert(schema.locationCoreTrials).values({
+          locationId: continuityLocation.id, productId: product.id, status: "active",
+          startsAt: new Date(raceNow.getTime() - 24 * 60 * 60_000), endsAt: naturalTrialEnd,
+        });
+        await tx.insert(schema.locationSubscriptions).values({
+          locationId: continuityLocation.id, productId: product.id, provider: raceProvider.code,
+          providerSubscriptionRef: null, status: "active", startsAt: continuityPaidStartsAt,
+          currentPeriodEndsAt: continuityPaidEndsAt,
+        });
+        await tx.insert(schema.locationCoreTrials).values({
+          locationId: raceLocations[4].id, productId: product.id, status: "active",
+          startsAt: new Date(raceNow.getTime() - 24 * 60 * 60_000), endsAt: naturalTrialEnd,
+        });
         const [manualProvider] = await tx.select({ code: schema.commercialPaymentProviders.code })
           .from(schema.commercialPaymentProviders).where(eq(schema.commercialPaymentProviders.code, "manual-bank-transfer")).limit(1);
         assert.ok(manualProvider);
@@ -1066,8 +1091,40 @@ async function main() {
         const requested = { authenticatedUserId: owner.id, organizationId: organization.id, lines: [{ locationId: location.id, productId: product.id, durationMonths: 1 }] };
         const first = await service.createPrepaidBillingOrder(requested, { db: tx, now: raceNow, env: process.env });
         const second = await service.createPrepaidBillingOrder(requested, { db: tx, now: raceNow, env: process.env });
-        return { ownerId: owner.id, locationId: location.id, locationIds: raceLocations.map((row) => row.id), productId: product.id, routeId: route.id, firstId: first.id, secondId: second.id, now: raceNow };
+        return { ownerId: owner.id, locationId: location.id, continuityLocationId: continuityLocation.id, noPaidLocationId: raceLocations[4].id, channelId: channel.id, continuityPaidStartsAt, continuityPaidEndsAt, naturalTrialEnd, locationIds: raceLocations.slice(0, 4).map((row) => row.id), productId: product.id, routeId: route.id, firstId: first.id, secondId: second.id, now: raceNow };
       });
+      const concurrentTrialEndings = await Promise.all([
+        trialService.endSoundSpaTrial(raceFixture.continuityLocationId, v2Db, raceFixture.now),
+        trialService.endSoundSpaTrial(raceFixture.continuityLocationId, v2Db, raceFixture.now),
+      ]);
+      assert.deepEqual(concurrentTrialEndings.map(({ deferredUntil }) => deferredUntil?.toISOString()),
+        [raceFixture.continuityPaidStartsAt.toISOString(), raceFixture.continuityPaidStartsAt.toISOString()],
+        "concurrent operator requests preserve the scheduled paid start");
+      const [deferredTrial] = await v2Db.select({ status: schema.locationCoreTrials.status, endsAt: schema.locationCoreTrials.endsAt })
+        .from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, raceFixture.continuityLocationId)).limit(1);
+      assert.equal(deferredTrial?.status, "active", "deferred trial remains active until the paid period starts");
+      assert.equal(deferredTrial?.endsAt.toISOString(), raceFixture.continuityPaidStartsAt.toISOString(),
+        "serialized retries do not shorten or extend access inconsistently");
+      const betweenPeriods = new Map((await effectiveAccessQueries.resolveEffectiveChannelAccess(
+        raceFixture.continuityLocationId, raceFixture.naturalTrialEnd, v2Db,
+      )).map((channel) => [channel.id, channel]));
+      assert.ok(betweenPeriods.get(raceFixture.channelId)?.accessSources.includes("trial"),
+        "trial continuity grants access through the gap before scheduled paid coverage");
+      const atPaidBoundary = new Map((await effectiveAccessQueries.resolveEffectiveChannelAccess(
+        raceFixture.continuityLocationId, raceFixture.continuityPaidStartsAt, v2Db,
+      )).map((channel) => [channel.id, channel]));
+      assert.ok(!atPaidBoundary.get(raceFixture.channelId)?.accessSources.includes("trial"),
+        "the trial uses a half-open end at the paid period boundary");
+      assert.ok(atPaidBoundary.get(raceFixture.channelId)?.accessSources.includes("subscription"),
+        "paid subscription access starts exactly at its stored period boundary");
+      const noFuturePaymentResult = await trialService.endSoundSpaTrial(raceFixture.noPaidLocationId, v2Db, raceFixture.now);
+      assert.equal(noFuturePaymentResult.deferredUntil, null, "a trial with no paid future coverage ends immediately");
+      const noPaidAccess = new Map((await effectiveAccessQueries.resolveEffectiveChannelAccess(
+        raceFixture.noPaidLocationId, raceFixture.now, v2Db,
+      )).map((channel) => [channel.id, channel]));
+      assert.ok(!noPaidAccess.get(raceFixture.channelId)?.accessSources.includes("trial"),
+        "immediate operator termination removes trial access when no paid future period exists");
+      assertionCount += 7;
       const competing = await Promise.allSettled([
         aggregateFake.createFakeProviderBillingOrderCheckout({ authenticatedUserId: raceFixture.ownerId, billingOrderId: raceFixture.firstId }, raceFixture.now),
         aggregateFake.createFakeProviderBillingOrderCheckout({ authenticatedUserId: raceFixture.ownerId, billingOrderId: raceFixture.secondId }, raceFixture.now),
@@ -1322,10 +1379,14 @@ async function main() {
           const raceLocations = await tx.select({ id: schema.locations.id }).from(schema.locations)
             .where(eq(schema.locations.organizationId, raceOrganizationId!));
           const raceLocationIds = raceLocations.map((location) => location.id);
-          if (raceLocationIds.length > 0) await tx.delete(schema.locationSubscriptions).where(inArray(schema.locationSubscriptions.locationId, raceLocationIds));
+          if (raceLocationIds.length > 0) {
+            await tx.delete(schema.locationSubscriptions).where(inArray(schema.locationSubscriptions.locationId, raceLocationIds));
+            await tx.delete(schema.locationCoreTrials).where(inArray(schema.locationCoreTrials.locationId, raceLocationIds));
+          }
           const raceProducts = await tx.select({ id: schema.commercialProducts.id }).from(schema.commercialProducts)
-            .where(eq(schema.commercialProducts.code, `billing-race-${raceSuffix}`));
+            .where(eq(schema.commercialProducts.code, commercialProductQueries.SOUNDSPA_PRODUCT_CODE));
           const raceProductIds = raceProducts.map((product) => product.id);
+          if (raceProductIds.length > 0) await tx.delete(schema.commercialProductChannels).where(inArray(schema.commercialProductChannels.productId, raceProductIds));
           if (raceProductIds.length > 0) await tx.delete(schema.commercialPaymentRoutes).where(inArray(schema.commercialPaymentRoutes.productId, raceProductIds));
           await tx.delete(schema.organizationMembers).where(eq(schema.organizationMembers.organizationId, raceOrganizationId!));
           await tx.delete(schema.locations).where(eq(schema.locations.organizationId, raceOrganizationId!));
@@ -1337,7 +1398,7 @@ async function main() {
       }
     }
     const finalCounts = await v2Pool.query<{ count: string }>(
-      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
+      "SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) + (SELECT count(*) FROM commercial_products) + (SELECT count(*) FROM commercial_product_organization_authorizations) + (SELECT count(*) FROM commercial_product_visibility_events) + (SELECT count(*) FROM commercial_payment_providers WHERE code <> 'manual-bank-transfer') + (SELECT count(*) FROM commercial_payment_routes) + (SELECT count(*) FROM commercial_payment_route_events) + (SELECT count(*) FROM commercial_billing_resets) + (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_billing_order_lines) + (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM commercial_payments) + (SELECT count(*) FROM commercial_payment_events) + (SELECT count(*) FROM commercial_payment_allocations) + (SELECT count(*) FROM gift_access_invitations) + (SELECT count(*) FROM organization_channel_gift_grants) AS count",
     );
     assert.equal(finalCounts.rows[0]?.count, "0", "rollback and concurrent fixtures are fully removed");
     assertionCount += 1;

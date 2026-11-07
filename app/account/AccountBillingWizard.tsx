@@ -8,7 +8,7 @@ import { buildPlayerUpgradeWizardSelection, type PlayerUpgradeHandoff } from "./
 export type BillingWizardPlan = {
   productId: string; productName: string;
   purchaseEligible: boolean;
-  status: "trial" | "subscription" | "partner" | "expired" | "available";
+  status: "trial" | "subscription" | "partner" | "upcoming" | "expired" | "available";
   trialEndsAt: string | null; paidThrough: string | null; subscriptionId: string | null;
   subscriptionCanceled: boolean; routes: { id: string; providerName: string }[];
 };
@@ -18,7 +18,7 @@ export type BillingWizardLocation = {
 };
 type Quote = {
   currency: string; totalAmountMinor: string;
-  lines: Array<{ locationId: string; locationName: string; productId: string; productName: string; durationMonths: number; amountMinor: string; billingPeriodStartsAt?: string | null; billingPeriodEndsAt?: string | null }>;
+  lines: Array<{ locationId: string; locationName: string; productId: string; productName: string; durationMonths: number; amountMinor: string; existingPaidThroughAt?: string | null; billingPeriodStartsAt?: string | null; billingPeriodEndsAt?: string | null }>;
 };
 export type BillingOrderHistoryItem = {
   id: string; organizationId: string; status: string; currency: string; totalAmountMinor: string; createdAt: string; expiresAt: string | null;
@@ -44,6 +44,10 @@ function durationText(months: number, locale: string, t: (key: import("@/app/i18
   const plural = new Intl.PluralRules(locale).select(months);
   const key = plural === "one" ? "billingWizardMonthOne" : plural === "few" ? "billingWizardMonthFew" : plural === "many" ? "billingWizardMonthMany" : "billingWizardMonths";
   return t(key).replace("{{count}}", String(months));
+}
+
+function displayDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
 }
 
 export default function AccountBillingWizard({ organizationId, organizationName, locations, supportedMarkets = [], onSaveMarket, orders = [], ordersUnavailable = false, onRefreshOrders, onPaymentConfirmed, previewOnly = false, playerHandoff, subscriptionSectionId }: Props) {
@@ -244,7 +248,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
     const amount = Number(amountMinor) / 100;
     return new Intl.NumberFormat(locale, { style: "currency", currency }).format(amount);
   }
-  const statusLabel = (product: BillingWizardPlan) => product.status === "trial" ? t("billingTrial") : product.status === "subscription" ? (product.subscriptionCanceled ? t("billingCanceled") : t("billingSubscription")) : product.status === "partner" ? t("billingPartnerStatus") : product.status === "expired" ? t("billingExpired") : t("billingAvailable");
+  const statusLabel = (product: BillingWizardPlan) => product.status === "trial" ? t("billingTrial") : product.status === "subscription" ? (product.subscriptionCanceled ? t("billingCanceled") : t("billingSubscription")) : product.status === "partner" ? t("billingPartnerStatus") : product.status === "upcoming" ? t("billingUpcoming") : product.status === "expired" ? t("billingExpired") : t("billingAvailable");
   const orderStatusLabel = (status: string) => t(billingOrderStatusKey(status) as import("@/app/i18n/types").TranslationKey);
   const displayOrderDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
   const lineIssue = (location: BillingWizardLocation, product: BillingWizardPlan) => !location.marketCode ? t("billingWizardMarketsMustBeSaved") : marketSelections[location.id] && marketSelections[location.id] !== location.marketCode ? t("billingWizardMarketUnsaved") : product.routes.length === 0 ? t("billingNoRoute") : "";
@@ -305,7 +309,7 @@ export default function AccountBillingWizard({ organizationId, organizationName,
           const period = line.billingPeriodStartsAt && line.billingPeriodEndsAt
             ? formatBillingPeriodRange(line.billingPeriodStartsAt, line.billingPeriodEndsAt, locale)
             : null;
-          return <li key={billingLineKey(line.locationId, line.productId)}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span>{period && <small className="customer-billing-wizard-period-estimate">{t("billingWizardExpectedPeriod").replace("{{period}}", period)}</small>}</li>;
+          return <li key={billingLineKey(line.locationId, line.productId)}><strong>{line.locationName}</strong><span>{line.productName} · {durationText(line.durationMonths, locale, t)}</span><span>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(line.amountMinor, quote.currency)}</span>{line.existingPaidThroughAt && <small className="customer-billing-wizard-period-estimate">{t("billingExistingPaidThrough").replace("{{date}}", displayDate(line.existingPaidThroughAt, locale))}</small>}{period && <small className="customer-billing-wizard-period-estimate">{t("billingWizardExpectedPeriod").replace("{{period}}", period)}</small>}</li>;
         })}</ul>
         <div className="customer-billing-wizard-total"><span>{t("billingWizardTotal")}</span><strong>{previewOnly ? t("billingWizardQuoteUnavailable") : formatAmount(quote.totalAmountMinor, quote.currency)}</strong></div>
         <p className="customer-billing-wizard-note">{previewOnly ? t("billingWizardPreviewOnly") : t("billingWizardPrepaidNotice")}</p>

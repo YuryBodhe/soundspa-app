@@ -211,7 +211,10 @@ test("order review displays only server-calculated UTC period estimates with a s
   assert.match(source, /line\.billingPeriodStartsAt && line\.billingPeriodEndsAt/);
   assert.match(source, /formatBillingPeriodRange\(line\.billingPeriodStartsAt, line\.billingPeriodEndsAt, locale\)/);
   assert.match(source, /billingWizardEstimatedDatesNote/);
+  assert.match(source, /line\.existingPaidThroughAt/);
+  assert.match(source, /billingExistingPaidThrough/);
   for (const dictionary of [en, ru, vi, th]) {
+    assert.match(dictionary, /billingExistingPaidThrough:/);
     assert.match(dictionary, /billingWizardExpectedPeriod:/);
     assert.match(dictionary, /billingWizardEstimatedDatesNote:/);
   }

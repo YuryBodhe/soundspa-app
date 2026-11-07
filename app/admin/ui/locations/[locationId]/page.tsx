@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { operatorAuthStatus } from "../../../../../lib/v2/adminOperator";
-import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../../../../../db/v2/queries/trialPolicy";
+import { planSafeTrialTermination, SOUNDSPA_BASIC_TRIAL_DAYS } from "../../../../../db/v2/queries/trialPolicy";
 import AccessMutationForm from "../../accessMutationForm";
 import DeleteLocationPanel from "../../deleteLocationPanel";
 import DeviceProvisioningPanel from "../../deviceProvisioningPanel";
@@ -17,7 +17,7 @@ export default async function AdminLocationPage({ params, searchParams }: {
   if (operatorAuthStatus((await headers()).get("authorization")) !== 200) throw new Error("V2 operator authorization required.");
   const [{ locationId }, query] = await Promise.all([params, searchParams]);
   if (!UUID.test(locationId)) notFound();
-  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { getSoundSpaTrial }, { and, eq, isNull }, { commercialProductChannels, locations, organizations }, { v2Db }] = await Promise.all([
+  const [{ resolveEffectiveChannelAccess }, { getSoundSpaProduct }, { getHiddenChannelIds }, { getSoundSpaTrial }, { and, eq, inArray, isNull }, { commercialProductChannels, locationSubscriptions, locations, organizations }, { v2Db }] = await Promise.all([
     import("../../../../../db/v2/queries/effectiveAccess"), import("../../../../../db/v2/queries/commercialProducts"), import("../../../../../db/v2/queries/locationChannelVisibility"), import("../../../../../db/v2/queries/coreTrials"), import("drizzle-orm"), import("../../../../../db/v2/schema"), import("../../../../../db/v2/client"),
   ]);
   const [selected] = await v2Db.select({ location: locations, organization: organizations }).from(locations)
@@ -33,7 +33,14 @@ export default async function AdminLocationPage({ params, searchParams }: {
     getSoundSpaProduct(),
   ]);
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
-  const trialIsActive = soundSpaTrial?.trial.status === "active" && soundSpaTrial.trial.endsAt > new Date();
+  const now = new Date();
+  const trialIsActive = soundSpaTrial?.trial.status === "active" && soundSpaTrial.trial.startsAt <= now && soundSpaTrial.trial.endsAt > now;
+  const paidPeriods = soundSpaProduct ? await v2Db.select({ startsAt: locationSubscriptions.startsAt, endsAt: locationSubscriptions.currentPeriodEndsAt })
+    .from(locationSubscriptions).where(and(eq(locationSubscriptions.locationId, selected.location.id), eq(locationSubscriptions.productId, soundSpaProduct.id),
+      isNull(locationSubscriptions.invalidatedByResetId), inArray(locationSubscriptions.status, ["active", "canceled"]))) : [];
+  const trialTermination = trialIsActive && soundSpaTrial
+    ? planSafeTrialTermination({ now, naturalTrialEnd: soundSpaTrial.trial.endsAt, paidPeriods })
+    : null;
 
   return <>
     <div className="admin-page-header admin-location-page-header">
@@ -44,7 +51,9 @@ export default async function AdminLocationPage({ params, searchParams }: {
     <section className="admin-card">
       <h2 className="admin-card-title">SoundSpa Basic</h2>
       <p className="text-dim">{soundSpaChannelIds.size} channels · Access: {trialIsActive ? "TRIAL" : soundSpaTrial ? "USED" : "NONE"}</p>
-      {trialIsActive ? <><p className="text-dim">Started: {soundSpaTrial.trial.startsAt.toLocaleString()} · Ends: {soundSpaTrial.trial.endsAt.toLocaleString()}</p><AccessMutationForm operation="end-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">End trial now</button></AccessMutationForm></> : !soundSpaTrial ? <AccessMutationForm operation="start-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">Start {SOUNDSPA_BASIC_TRIAL_DAYS}-day trial</button></AccessMutationForm> : <p className="text-dim">This Location has already used its trial.</p>}
+      {trialIsActive ? <><p className="text-dim">Started: {soundSpaTrial.trial.startsAt.toLocaleString()} · Ends: {soundSpaTrial.trial.endsAt.toLocaleString()}</p>
+        {trialTermination && <p role="status" className="text-dim">Ending this trial will be deferred until {trialTermination.deferredUntil.toLocaleString()}; scheduled paid coverage begins on {trialTermination.paidStartsAt.toLocaleString()}. Access will be preserved until then; paid order dates will not change.</p>}
+        <AccessMutationForm operation="end-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">{trialTermination ? "End trial after paid coverage starts" : "End trial now"}</button></AccessMutationForm></> : !soundSpaTrial ? <AccessMutationForm operation="start-trial" locationId={selected.location.id} channelId="00000000-0000-4000-8000-000000000000"><button className="btn btn-sm">Start {SOUNDSPA_BASIC_TRIAL_DAYS}-day trial</button></AccessMutationForm> : <p className="text-dim">This Location has already used its trial.</p>}
     </section>
     {!selected.organization.archivedAt && <section className="admin-card"><h2 className="admin-card-title">Player preview</h2><a className="btn btn-primary" href={`/admin/ui/locations/${encodeURIComponent(selected.location.id)}/player-preview`} target="_blank" rel="noopener noreferrer">Open Player Preview</a></section>}
     {!selected.organization.archivedAt && <details className="admin-card admin-collapsible admin-location-devices">

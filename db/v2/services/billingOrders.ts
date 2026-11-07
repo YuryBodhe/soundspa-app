@@ -158,7 +158,7 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
   const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
     .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
   try {
-    return planNextSubscriptionPeriod({
+    const period = planNextSubscriptionPeriod({
       now,
       durationMonths,
       subscriptions: subscriptions.map((row) => ({
@@ -167,6 +167,10 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
       })),
       trial,
     });
+    const existingPaidThroughAt = subscriptions
+      .filter((row) => (row.status === "active" || row.status === "canceled") && row.currentPeriodEndsAt !== null && row.currentPeriodEndsAt > now)
+      .reduce<Date | null>((latest, row) => !latest || row.currentPeriodEndsAt! > latest ? row.currentPeriodEndsAt : latest, null);
+    return { ...period, existingPaidThroughAt };
   } catch (error) {
     if (error instanceof RangeError && error.message === "unbounded_subscription_requires_policy") {
       throw new BillingOrderError("unbounded_subscription_requires_policy");
@@ -301,6 +305,7 @@ export async function previewPrepaidBillingOrder(input: {
         listAmountMinor: quote.listAmountMinor.toString(),
         discountAmountMinor: quote.discountAmountMinor.toString(),
         amountMinor: quote.amountMinor.toString(),
+        existingPaidThroughAt: period.existingPaidThroughAt?.toISOString() ?? null,
         billingPeriodStartsAt: period.startsAt.toISOString(),
         billingPeriodEndsAt: period.endsAt.toISOString(),
       })),
@@ -427,6 +432,7 @@ export async function createPrepaidBillingOrder(input: {
         listAmountMinor: quote.listAmountMinor.toString(),
         discountAmountMinor: quote.discountAmountMinor.toString(),
         amountMinor: quote.amountMinor.toString(),
+        existingPaidThroughAt: period.existingPaidThroughAt?.toISOString() ?? null,
         billingPeriodStartsAt: period.startsAt.toISOString(),
         billingPeriodEndsAt: period.endsAt.toISOString(),
         subscriptionId: period.subscriptionId,

@@ -10,7 +10,7 @@ function date(value: Date | string | null | undefined): number | null {
   return Number.isFinite(result) ? result : null;
 }
 
-export type CustomerBillingStatus = "trial" | "subscription" | "partner" | "expired" | "available";
+export type CustomerBillingStatus = "trial" | "subscription" | "partner" | "upcoming" | "expired" | "available";
 
 /** Mirrors commercial access windows for customer-facing status only. */
 export function resolveCustomerBillingStatus(entitlement: BillingEntitlement, now: Date): CustomerBillingStatus {
@@ -24,6 +24,9 @@ export function resolveCustomerBillingStatus(entitlement: BillingEntitlement, no
   const benefit = entitlement.partnerBenefit;
   if (benefit && (date(benefit.startsAt) ?? Infinity) <= nowMs &&
       (benefit.endsAt == null || (date(benefit.endsAt) ?? -Infinity) > nowMs)) return "partner";
+  if (subscription && (subscription.status === "active" || subscription.status === "canceled") &&
+      (date(subscription.startsAt) ?? Infinity) > nowMs &&
+      (subscription.currentPeriodEndsAt == null || (date(subscription.currentPeriodEndsAt) ?? -Infinity) > nowMs)) return "upcoming";
   return trial || subscription || benefit ? "expired" : "available";
 }
 

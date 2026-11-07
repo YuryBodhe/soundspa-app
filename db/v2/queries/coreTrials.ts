@@ -1,8 +1,8 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { v2Db } from "../client";
-import { commercialProducts, locationCoreTrials, locations } from "../schema";
+import { commercialProducts, locationCoreTrials, locationSubscriptions, locations } from "../schema";
 import { SOUNDSPA_PRODUCT_CODE } from "./commercialProducts";
-import { SOUNDSPA_BASIC_TRIAL_DAYS, soundSpaBasicTrialEndsAt } from "./trialPolicy";
+import { planSafeTrialTermination, SOUNDSPA_BASIC_TRIAL_DAYS, soundSpaBasicTrialEndsAt } from "./trialPolicy";
 
 export async function getSoundSpaTrial(locationId: string, db: Pick<typeof v2Db, "select"> = v2Db) {
   const [row] = await db.select({ trial: locationCoreTrials, product: commercialProducts })
@@ -36,10 +36,48 @@ export async function startSoundSpaTrial(locationId: string, db: TrialDb = v2Db,
   return insertSoundSpaTrial(locationId, db, durationDays, now);
 }
 
-export async function endSoundSpaTrial(locationId: string, db: Pick<typeof v2Db, "update" | "select"> = v2Db) {
+type EndTrialTx = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
+type EndTrialDb = Pick<typeof v2Db, "update" | "select"> & Partial<Pick<typeof v2Db, "transaction">>;
+
+async function endSoundSpaTrialInTransaction(locationId: string, db: Pick<typeof v2Db, "update" | "select">, now: Date) {
+  // Billing checkouts and payment settlement use the Location row as their
+  // serialization point too, so a paid period cannot race past this decision.
+  const [location] = await db.select({ id: locations.id }).from(locations).where(eq(locations.id, locationId)).for("update").limit(1);
+  if (!location) throw new Error("Location was not found.");
   const existing = await getSoundSpaTrial(locationId, db);
-  if (!existing || existing.trial.status !== "active") throw new Error("No active SoundSpa Basic trial exists.");
-  const endedAt = new Date();
-  const [trial] = await db.update(locationCoreTrials).set({ status: "expired", endsAt: endedAt, updatedAt: endedAt }).where(eq(locationCoreTrials.id, existing.trial.id)).returning();
-  return trial;
+  if (!existing || existing.trial.status !== "active" || existing.trial.startsAt > now || existing.trial.endsAt <= now) {
+    throw new Error("No active SoundSpa Basic trial exists.");
+  }
+
+  const paidPeriods = await db.select({ startsAt: locationSubscriptions.startsAt, endsAt: locationSubscriptions.currentPeriodEndsAt })
+    .from(locationSubscriptions).where(and(
+      eq(locationSubscriptions.locationId, locationId),
+      eq(locationSubscriptions.productId, existing.trial.productId),
+      isNull(locationSubscriptions.invalidatedByResetId),
+      // Canceled subscriptions retain their paid coverage through the period.
+      // Expired rows do not grant access and must not defer a trial end.
+      inArray(locationSubscriptions.status, ["active", "canceled"]),
+    ));
+  const continuity = planSafeTrialTermination({ now, naturalTrialEnd: existing.trial.endsAt, paidPeriods });
+  if (continuity) {
+    const deferredUntil = new Date(Math.max(existing.trial.endsAt.getTime(), continuity.deferredUntil.getTime()));
+    if (deferredUntil > existing.trial.endsAt) {
+      const [trial] = await db.update(locationCoreTrials).set({ endsAt: deferredUntil, updatedAt: now })
+        .where(eq(locationCoreTrials.id, existing.trial.id)).returning();
+      return { trial, deferredUntil, paidStartsAt: continuity.paidStartsAt };
+    }
+    // A period beginning at the original trial boundary needs no stored change;
+    // date-based access ends the trial exactly as paid access begins.
+    return { trial: existing.trial, deferredUntil, paidStartsAt: continuity.paidStartsAt };
+  }
+
+  const [trial] = await db.update(locationCoreTrials).set({ status: "expired", endsAt: now, updatedAt: now })
+    .where(eq(locationCoreTrials.id, existing.trial.id)).returning();
+  return { trial, deferredUntil: null, paidStartsAt: null };
+}
+
+export async function endSoundSpaTrial(locationId: string, db: EndTrialDb = v2Db, now = new Date()) {
+  if (!Number.isFinite(now.getTime())) throw new Error("Invalid trial termination date.");
+  if (db.transaction) return db.transaction((tx: EndTrialTx) => endSoundSpaTrialInTransaction(locationId, tx, now));
+  return endSoundSpaTrialInTransaction(locationId, db, now);
 }
