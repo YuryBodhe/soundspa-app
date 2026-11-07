@@ -13,3 +13,11 @@ redis_data/
 backups/
 *.log
 .DS_Store
+# Staging/customer reset operations stay available in the source tree for local
+# tests and audited operations, but must never enter Docker build contexts.
+scripts/v2/reset-test-billing.ts
+scripts/v2/test-billing-reset-db.ts
+scripts/v2/reset-v2-staging-customer-data.ts
+scripts/v2/test-v2-staging-customer-data-reset-db.ts
+scripts/v2/reset-staging-customer-data.ts
+scripts/v2/test-reset-staging-customer-data-db.ts
