@@ -31,10 +31,11 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
   const productChannels = new Map<string, typeof productComposition>();
   for (const item of productComposition) productChannels.set(item.productId, [...(productChannels.get(item.productId) ?? []), item]);
   const soundSpaChannelIds = new Set(soundSpaProduct ? (await v2Db.select({ channelId: commercialProductChannels.channelId }).from(commercialProductChannels).where(eq(commercialProductChannels.productId, soundSpaProduct.id))).map(({ channelId }) => channelId) : []);
-  const customerOrganizations = customers.map(({ organization, locations: customerLocations, deviceCount }) => ({
+  const customerOrganizations = customers.map(({ organization, locations: customerLocations, deviceCount, ownerLoginEmails }) => ({
     id: organization.id,
     name: organization.name,
     contactEmail: organization.contactEmail,
+    ownerLoginEmails,
     archived: Boolean(organization.archivedAt),
     deletionBlockers: [] as string[],
     lifecycleHistory: [] as Array<{ action: string; operator: string; reason: string; occurredAt: string }>,

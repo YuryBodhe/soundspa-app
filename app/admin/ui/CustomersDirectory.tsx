@@ -12,6 +12,7 @@ export type OrganizationOverview = {
   id: string;
   name: string;
   contactEmail: string | null;
+  ownerLoginEmails: string[];
   archived: boolean;
   deletionBlockers: string[];
   lifecycleHistory: Array<{ action: string; operator: string; reason: string; occurredAt: string }>;
@@ -41,6 +42,12 @@ export default function CustomersDirectory({ organizations, timeZones }: { organ
         {pagination.items.map((organization) => <article className="admin-customer-organization" key={organization.id}>
           <div className="admin-customer-organization-heading"><h3>{organization.name}</h3><span className={`badge ${organization.archived ? "badge-neutral" : "badge-ok"}`}>{organization.archived ? "ARCHIVED" : "ACTIVE"}</span></div>
           <div className="admin-customer-organization-meta">
+            <div className="admin-owner-login-emails" aria-label="Owner login email">
+              <span className="text-dim">Owner login email:</span>
+              {organization.ownerLoginEmails.length > 0
+                ? <span>{organization.ownerLoginEmails.join(", ")}</span>
+                : <span className="text-dim">No owner account linked</span>}
+            </div>
             <OrganizationContactEmailForm organizationId={organization.id} contactEmail={organization.contactEmail} />
             <span>{organization.locations.length} Location(s) · {organization.deviceCount} Device(s)</span>
           </div>

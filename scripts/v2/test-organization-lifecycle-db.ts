@@ -18,6 +18,7 @@ import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAcce
 import { listCustomerBilling } from "../../db/v2/services/customerBilling";
 import { listCustomerLocationsWithDevices } from "../../db/v2/services/customerDevices";
 import { createManualBankTransferBillingOrder } from "../../db/v2/services/billingOrders";
+import { listOrganizationsWithLocations } from "../../db/v2/queries/core";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const operator = "lifecycle integration operator";
@@ -104,10 +105,19 @@ async function main() {
   await seedEveryProtectedCategory();
 
   const marker = randomUUID();
-  const [org] = await v2Db.insert(organizations).values({ name: `Lifecycle archive ${marker}` }).returning({ id: organizations.id, name: organizations.name });
+  const contactEmail = `billing-${marker}@archive-lifecycle.invalid`;
+  const [org] = await v2Db.insert(organizations).values({ name: `Lifecycle archive ${marker}`, contactEmail }).returning({ id: organizations.id, name: organizations.name });
   const [location] = await v2Db.insert(locations).values({ organizationId: org.id, name: "Archive fixture", slug: `arch-${marker.slice(0, 8)}`, timezone: "UTC" }).returning({ id: locations.id });
-  const [owner] = await v2Db.insert(users).values({ email: `${marker}@archive-lifecycle.invalid`, displayName: "Archive lifecycle owner", emailVerifiedAt: new Date() }).returning({ id: users.id });
+  const [owner] = await v2Db.insert(users).values({ email: `a-${marker}@archive-lifecycle.invalid`, displayName: "Archive lifecycle owner", emailVerifiedAt: new Date() }).returning({ id: users.id, email: users.email });
   await v2Db.insert(organizationMembers).values({ organizationId: org.id, userId: owner.id, role: "owner" });
+  const singleOwnerDirectoryEntry = (await listOrganizationsWithLocations()).find(({ organization }) => organization.id === org.id);
+  assert.deepEqual(singleOwnerDirectoryEntry?.ownerLoginEmails, [owner.email], "directory shows the linked owner's authentication email");
+  assert.equal(singleOwnerDirectoryEntry?.organization.contactEmail, contactEmail, "editable contact email remains a separate field");
+  assert(!singleOwnerDirectoryEntry?.ownerLoginEmails.includes(contactEmail), "contact email is never presented as an owner login");
+  const [secondOwner] = await v2Db.insert(users).values({ email: `z-${marker}@archive-lifecycle.invalid`, displayName: "Second lifecycle owner", emailVerifiedAt: new Date() }).returning({ id: users.id, email: users.email });
+  await v2Db.insert(organizationMembers).values({ organizationId: org.id, userId: secondOwner.id, role: "owner" });
+  const multipleOwnerDirectoryEntry = (await listOrganizationsWithLocations()).find(({ organization }) => organization.id === org.id);
+  assert.deepEqual(multipleOwnerDirectoryEntry?.ownerLoginEmails, [owner.email, secondOwner.email], "directory lists all owners in deterministic order");
   const credential = randomBytes(32).toString("base64url");
   const [device] = await v2Db.insert(devices).values({ locationId: location.id, label: "Archive fixture", credentialHash: hash(credential) }).returning({ id: devices.id });
   const [product] = await v2Db.insert(commercialProducts).values({ code: `arch-${marker}`, name: "Archive entitlement", kind: "core" }).returning({ id: commercialProducts.id });
@@ -173,9 +183,13 @@ async function main() {
   if (latestLifecycleEvent.length) assert.equal(concurrentState.archivedAt === null, latestLifecycleEvent.at(-1)?.action === "restored", "concurrent state matches the last committed lifecycle transition");
   assert.deepEqual(beforeOrgHistory, []);
 
-  const [empty] = await v2Db.insert(organizations).values({ name: `Lifecycle delete ${marker}` }).returning({ id: organizations.id, name: organizations.name });
+  const unlinkedContactEmail = `contact-${marker}@unlinked-owner.invalid`;
+  const [empty] = await v2Db.insert(organizations).values({ name: `Lifecycle delete ${marker}`, contactEmail: unlinkedContactEmail }).returning({ id: organizations.id, name: organizations.name });
   const [emptyLocation] = await v2Db.insert(locations).values({ organizationId: empty.id, name: "Delete fixture", slug: `del-${marker.slice(0, 8)}`, timezone: "UTC" }).returning({ id: locations.id });
   await v2Db.insert(devices).values({ locationId: emptyLocation.id, label: "Delete fixture" });
+  const noOwnerDirectoryEntry = (await listOrganizationsWithLocations()).find(({ organization }) => organization.id === empty.id);
+  assert.deepEqual(noOwnerDirectoryEntry?.ownerLoginEmails, [], "organizations without a linked owner have no login email and do not fall back to contact email");
+  assert.equal(noOwnerDirectoryEntry?.organization.contactEmail, unlinkedContactEmail);
   const deleted = await deleteOrganization(empty.id, empty.name);
   assert.equal(deleted.removed.locations, 1);
   assert.equal(deleted.removed.devices, 1);
@@ -204,7 +218,7 @@ async function main() {
     await tx.delete(monitoringLifecycleEvents).where(eq(monitoringLifecycleEvents.organizationId, org.id));
     await tx.delete(devices).where(eq(devices.id, device.id));
     await tx.delete(organizationMembers).where(eq(organizationMembers.organizationId, org.id));
-    await tx.delete(users).where(eq(users.id, owner.id));
+    await tx.delete(users).where(sql`${users.id} IN (${owner.id}::uuid, ${secondOwner.id}::uuid)`);
     await tx.delete(locationSubscriptions).where(eq(locationSubscriptions.locationId, location.id));
     await tx.delete(locationCoreTrials).where(eq(locationCoreTrials.locationId, location.id));
     await tx.delete(commercialProductChannels).where(eq(commercialProductChannels.productId, product.id));

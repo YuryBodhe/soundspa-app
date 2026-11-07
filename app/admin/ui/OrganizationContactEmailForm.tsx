@@ -45,7 +45,7 @@ export default function OrganizationContactEmailForm({ organizationId, contactEm
   }
 
   return <div className="admin-contact-email">
-    <div className="admin-contact-email-summary"><span className="text-dim">Contact:</span> <span>{contactEmail || "Not set"}</span>
+    <div className="admin-contact-email-summary"><span className="text-dim">Contact email:</span> <span>{contactEmail || "Not set"}</span>
       <button type="button" className="btn btn-sm" aria-expanded={editing} onClick={() => { setMessage(null); setEditing((open) => !open); }}>{editing ? "Cancel" : contactEmail ? "Edit email" : "Add email"}</button>
     </div>
     {editing && <form className="admin-contact-email-form" onSubmit={(event) => void submit(event)}>
