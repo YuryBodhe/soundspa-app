@@ -86,6 +86,16 @@
 .admin-customer-location-row .text-dim, .admin-customer-organization-actions { font-size: 11px; }
 .admin-customer-organization-actions { justify-content: flex-end; flex-wrap: wrap; padding-top: 7px; border-top: 1px solid rgba(255,255,255,.045); }
 .admin-customer-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 14px; font-size: 12px; }
+.admin-organization-management { width: 100%; color: rgba(255,255,255,.76); font-size: 14px; }
+.admin-organization-management > summary, .admin-organization-lifecycle-history > summary { cursor: pointer; }
+.admin-organization-management-content { display: grid; justify-items: start; gap: 10px; padding-top: 12px; }
+.admin-organization-management-content > p { margin: 0; line-height: 1.5; }
+.admin-organization-management-content .admin-form { width: 100%; max-width: 520px; font-size: 14px; }
+.admin-organization-management-content .admin-form label { font-size: 14px; color: rgba(255,255,255,.8); }
+.admin-organization-management-content .admin-form input, .admin-organization-management-content .admin-form textarea { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(8,8,14,.92); color: #f5f5f7; font: inherit; }
+.admin-organization-management-content .admin-form textarea { min-height: 76px; resize: vertical; }
+.admin-organization-lifecycle-history { width: 100%; }
+.admin-organization-lifecycle-history ul { display: grid; gap: 8px; padding-left: 20px; font-size: 13px; line-height: 1.5; }
 .admin-location-page-header { align-items: flex-start; }
 .admin-location-page-header .admin-page-title { margin: 0; }
 .admin-location-page-header .text-dim { margin: 7px 0 0; font-size: 12px; }

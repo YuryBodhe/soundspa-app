@@ -181,7 +181,7 @@ async function main() {
       );
       check(leftovers.rows[0]?.count === "0", "Organization deletion leaves no orphaned grant history");
     } else {
-      check(deletionResult.reason?.code === "product_authorization_history" && deletionGrantResult.status === "fulfilled",
+      check(deletionResult.reason?.code === "protected_history" && deletionResult.reason?.blockers?.includes("product_authorizations") && deletionGrantResult.status === "fulfilled",
         "grant winning the Organization lock causes deletion to preserve authorization history");
       const retained = await v2Pool.query<{ organizations: string; grants: string }>(
         "SELECT (SELECT count(*)::text FROM organizations WHERE id = $1) AS organizations, (SELECT count(*)::text FROM commercial_product_organization_authorizations WHERE organization_id = $1 AND revoked_at IS NULL) AS grants",
@@ -238,7 +238,7 @@ async function main() {
     assertions += 3;
 
     await assert.rejects(organizationDeletion.deleteOrganization(organizationId, `visibility-admin-${suffix}`),
-      (error: unknown) => error instanceof organizationDeletion.OrganizationDeletionError && error.code === "product_authorization_history");
+      (error: unknown) => error instanceof organizationDeletion.OrganizationDeletionError && error.code === "protected_history" && error.blockers.includes("product_authorizations"));
     assertions += 1;
     check((await v2Db.select().from(schema.organizations).where((await import("drizzle-orm")).eq(schema.organizations.id, organizationId))).length === 1,
       "Organization remains intact when authorization history blocks deletion");

@@ -36,9 +36,21 @@ export default async function SoundSpaAdmin({ searchParams }: { searchParams: Pr
     name: organization.name,
     contactEmail: organization.contactEmail,
     archived: Boolean(organization.archivedAt),
+    deletionBlockers: [] as string[],
+    lifecycleHistory: [] as Array<{ action: string; operator: string; reason: string; occurredAt: string }>,
     locations: customerLocations.map((location) => ({ id: location.id, name: location.name, slug: location.slug, archived: Boolean(location.archivedAt) })),
     deviceCount,
   }));
+  const { listOrganizationDeletionBlockers, listOrganizationLifecycleHistory } = await import("../../../db/v2/services/organizationLifecycle");
+  const organizationIds = customerOrganizations.map(({ id }) => id);
+  const [deletionBlockers, lifecycleEvents] = await Promise.all([
+    listOrganizationDeletionBlockers(organizationIds),
+    listOrganizationLifecycleHistory(organizationIds),
+  ]);
+  for (const organization of customerOrganizations) {
+    organization.deletionBlockers = deletionBlockers.get(organization.id) ?? [];
+    organization.lifecycleHistory = lifecycleEvents.filter((event) => event.organizationId === organization.id).map(({ action, operator, reason, occurredAt }) => ({ action, operator, reason, occurredAt: occurredAt.toISOString() }));
+  }
 
   return <>
     <div className="admin-page-header"><h1 className="admin-page-title">SoundSpa Admin</h1><div className="admin-page-nav admin-main-nav"><Link href="/admin/ui/products" className="btn btn-sm">Products</Link><Link href="/admin/ui/offers" className="btn btn-sm">Offers &amp; Invites</Link><Link href="/admin/ui/spaquatoria-promos" className="btn btn-sm">Spaquatoria Promo Codes</Link><Link href="/admin/ui/registration-links" className="btn btn-sm">Registration Links</Link><Link href="/admin/ui/monitoring" className="btn btn-sm">Monitoring</Link><Link href="/admin/ui/analytics" className="btn btn-sm">Analytics</Link></div></div>

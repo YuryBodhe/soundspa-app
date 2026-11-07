@@ -3,9 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import CustomerProvisioningForm from "./customerProvisioningForm";
-import DeleteOrganizationPanel from "./deleteOrganizationPanel";
+import OrganizationManagementPanel from "./OrganizationManagementPanel";
 import OrganizationContactEmailForm from "./OrganizationContactEmailForm";
-import { filterOrganizations, paginateOrganizations } from "../../../lib/v2/organizationDirectory";
+import { filterOrganizations, filterOrganizationsByStatus, paginateOrganizations } from "../../../lib/v2/organizationDirectory";
 import { adminLocationPath } from "../../../lib/v2/adminLocationNavigation";
 
 export type OrganizationOverview = {
@@ -13,6 +13,8 @@ export type OrganizationOverview = {
   name: string;
   contactEmail: string | null;
   archived: boolean;
+  deletionBlockers: string[];
+  lifecycleHistory: Array<{ action: string; operator: string; reason: string; occurredAt: string }>;
   locations: Array<{ id: string; name: string; slug: string; archived: boolean }>;
   deviceCount: number;
 };
@@ -20,7 +22,8 @@ export type OrganizationOverview = {
 export default function CustomersDirectory({ organizations, timeZones }: { organizations: OrganizationOverview[]; timeZones: string[] }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const filteredOrganizations = useMemo(() => filterOrganizations(organizations, query), [organizations, query]);
+  const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
+  const filteredOrganizations = useMemo(() => filterOrganizations(filterOrganizationsByStatus(organizations, statusFilter), query), [organizations, query, statusFilter]);
   const pagination = paginateOrganizations(filteredOrganizations, page, 20);
   const totalLocations = organizations.reduce((total, organization) => total + organization.locations.length, 0);
 
@@ -28,6 +31,8 @@ export default function CustomersDirectory({ organizations, timeZones }: { organ
     <summary className="admin-collapsible-summary"><span>Customers</span><span className="admin-customers-summary-meta">{totalLocations} Locations · {organizations.length} Organizations</span><span className="admin-disclosure-indicator" aria-hidden="true">⌄</span></summary>
     <div className="admin-collapsible-content">
       <div className="admin-customers-toolbar"><CustomerProvisioningForm timeZones={timeZones} />
+        <label htmlFor="customer-organization-status">Organization status</label>
+        <select id="customer-organization-status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as typeof statusFilter); setPage(1); }}><option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option></select>
         <label className="admin-customer-search-label" htmlFor="customer-organization-search">Search Organizations</label>
         <input id="customer-organization-search" className="admin-customer-search" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Organization name or contact email" />
         <span className="text-dim" aria-live="polite">{filteredOrganizations.length} matching Organization(s)</span>
@@ -44,7 +49,7 @@ export default function CustomersDirectory({ organizations, timeZones }: { organ
             <span className={`badge ${location.archived ? "badge-neutral" : "badge-ok"}`}>{location.archived ? "ARCHIVED" : "ACTIVE"}</span>
             {!organization.archived && !location.archived ? <Link className="btn btn-sm" href={adminLocationPath(location.id)}>Open Location</Link> : <span />}
           </li>)}</ul> : <p className="text-dim">No Locations yet.</p>}
-          <div className="admin-customer-organization-actions"><DeleteOrganizationPanel organizationId={organization.id} organizationName={organization.name} locationCount={organization.locations.length} deviceCount={organization.deviceCount} /></div>
+          <div className="admin-customer-organization-actions"><OrganizationManagementPanel organizationId={organization.id} organizationName={organization.name} archived={organization.archived} deletionBlockers={organization.deletionBlockers} lifecycleHistory={organization.lifecycleHistory} /></div>
         </article>)}
         {!filteredOrganizations.length && <p className="text-dim">No matching Organizations.</p>}
       </div>

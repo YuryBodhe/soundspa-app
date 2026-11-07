@@ -2,6 +2,7 @@
 export * from "./enums";
 export * from "./commercial";
 export * from "./core/organizations";
+export * from "./core/organizationLifecycleEvents";
 export * from "./core/users";
 export * from "./core/customerAuth";
 export * from "./core/organizationMembers";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { filterOrganizations, paginateOrganizations } from "./organizationDirectory";
+import { filterOrganizations, filterOrganizationsByStatus, paginateOrganizations } from "./organizationDirectory";
 
 const organizations = Array.from({ length: 45 }, (_, index) => ({
   id: `org-${index}`,
@@ -26,6 +26,13 @@ test("organization pagination defaults to 20 and clamps after filtering", () => 
   assert.equal(paginateOrganizations([], 4).pageCount, 1);
 });
 
+test("Organization status filtering defaults to active and can include archived or all", () => {
+  const rows = [{ id: "active", archived: false }, { id: "archived", archived: true }];
+  assert.deepEqual(filterOrganizationsByStatus(rows, "active").map(({ id }) => id), ["active"]);
+  assert.deepEqual(filterOrganizationsByStatus(rows, "archived").map(({ id }) => id), ["archived"]);
+  assert.equal(filterOrganizationsByStatus(rows, "all").length, 2);
+});
+
 test("Customers list is collapsed by default and reports location count in its heading", async () => {
   const source = await readFile(new URL("../../app/admin/ui/CustomersDirectory.tsx", import.meta.url), "utf8");
   assert.match(source, /<details className="admin-card admin-collapsible admin-customers-card">/);
@@ -33,4 +40,7 @@ test("Customers list is collapsed by default and reports location count in its h
   assert.match(source, /\{totalLocations\} Locations/);
   assert.match(source, /OrganizationContactEmailForm/);
   assert.match(source, /page, setPage/);
+  assert.match(source, /Organization status/);
+  assert.match(source, /<option value="archived">Archived<\/option>/);
+  assert.match(source, /OrganizationManagementPanel/);
 });

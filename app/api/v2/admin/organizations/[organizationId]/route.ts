@@ -25,7 +25,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ organ
     revalidatePath("/admin/ui");
     return Response.json({ ok: true, organization: { id: organization.id, contactEmail: organization.contactEmail } }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const operation = error as { name?: unknown; code?: unknown; message?: unknown };
+    const operation = error as { name?: unknown; code?: unknown; message?: unknown; blockers?: unknown };
     if (operation?.name === "OrganizationContactEmailError") {
       const notFound = operation.code === "not_found";
       return Response.json({ ok: false, code: operation.code, message: operation.message }, { status: notFound ? 404 : 400, headers: { "Cache-Control": "no-store" } });
@@ -52,10 +52,10 @@ export async function DELETE(request: Request, context: { params: Promise<{ orga
     revalidatePath("/admin/ui");
     return Response.json({ ok: true, organization: { id: deleted.organizationId, name: deleted.organizationName }, removed: deleted.removed }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const operation = error as { name?: unknown; code?: unknown; message?: unknown };
-    if (operation?.name === "OrganizationDeletionError") {
+    const operation = error as { name?: unknown; code?: unknown; message?: unknown; blockers?: unknown };
+    if (operation?.name === "OrganizationLifecycleError") {
       const notFound = operation.code === "not_found";
-      return Response.json({ ok: false, code: operation.code, message: operation.message }, { status: notFound ? 404 : 409, headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ok: false, code: operation.code, message: operation.message, ...(operation.code === "protected_history" ? { blockers: operation.blockers } : {}) }, { status: notFound ? 404 : 409, headers: { "Cache-Control": "no-store" } });
     }
     console.error("[V2 organization administration] Organization deletion failed.");
     return Response.json({ ok: false, message: "Organization could not be deleted. Check its dependent records and retry." }, { status: 500, headers: { "Cache-Control": "no-store" } });

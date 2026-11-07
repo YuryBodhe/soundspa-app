@@ -1,5 +1,9 @@
 export type ContactOrganization = { name: string; contactEmail: string | null };
 
+export function filterOrganizationsByStatus<T extends { archived: boolean }>(organizations: T[], status: "active" | "archived" | "all"): T[] {
+  return status === "all" ? organizations : organizations.filter((organization) => organization.archived === (status === "archived"));
+}
+
 export function filterOrganizations<T extends ContactOrganization>(organizations: T[], query: string): T[] {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return organizations;
