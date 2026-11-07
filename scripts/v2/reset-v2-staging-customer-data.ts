@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { chmod, lstat, open, readFile, realpath, stat } from "node:fs/promises";
+import { dirname, resolve, sep } from "node:path";
 import { Pool, type PoolClient } from "pg";
 
 /** Explicitly approved Organizations. Never replace this with a broad predicate. */
@@ -26,6 +27,20 @@ export const RESET_LOCATIONS = [
 ] as const;
 
 export const RESET_CONFIRMATION = "RESET SOUNDSPA V2 STAGING: SIX APPROVED TEST ORGANIZATIONS";
+/** Fixed one-time exception scope. Never accept these identifiers from CLI input. */
+export const PROTECTED_PROMO_DISPOSAL = [
+  { redemptionId: "4a7c3693-8e56-4137-89b4-2c7055a66196", promoCodeId: "65347d34-d54f-45c7-bef8-afa7893cea36", benefitId: "88a549fc-98cb-4ca2-aeb6-69de5c47f435", organizationId: RESET_ORGANIZATIONS[0][0], locationId: RESET_LOCATIONS[5][0] },
+  { redemptionId: "75a404b5-ea47-4320-a140-301ce2444683", promoCodeId: "2768a88a-1ad5-4020-9d7b-1379d0d4a4a8", benefitId: "9c3b509e-e6e3-47d7-b149-4c07a462b284", organizationId: RESET_ORGANIZATIONS[0][0], locationId: RESET_LOCATIONS[7][0] },
+  { redemptionId: "a106cda7-ce55-41f3-bf08-7d6542e1bf71", promoCodeId: "88dee425-2f82-4db0-903e-540e69374544", benefitId: "e683eb04-e477-4f4c-b90b-ca6a83020da6", organizationId: RESET_ORGANIZATIONS[0][0], locationId: RESET_LOCATIONS[6][0] },
+] as const;
+export const PROTECTED_PROMO_PARTNER_ID = "04b596bb-e522-4a6c-aa35-033f7b1cf8a8";
+export const PROTECTED_PROMO_PRODUCT_ID = "6e55903c-1893-4999-a908-72945c7c6ca0";
+const EXPECTED_PROMO_DEFINITIONS = [
+  { id: "65347d34-d54f-45c7-bef8-afa7893cea36", createdAt: "2026-10-16T07:25:27.487Z", archivedAt: "2026-10-28T14:12:31.535Z" },
+  { id: "2768a88a-1ad5-4020-9d7b-1379d0d4a4a8", createdAt: "2026-10-16T07:43:22.830Z", archivedAt: "2026-10-28T14:11:49.627Z" },
+  { id: "88dee425-2f82-4db0-903e-540e69374544", createdAt: "2026-10-16T07:35:13.980Z", archivedAt: null },
+] as const;
+const DISPOSAL_REASON = "Approved V2 staging reset of disposable test data";
 const EXPECTED_FK_COUNT = 109;
 const EXPECTED_MIGRATION_HEADS = new Set(["1793203358425", "1794060650403"]); // 0032 or 0033
 const TEST_PORT = "55439";
@@ -37,7 +52,139 @@ export class StagingResetBlocked extends Error {
   }
 }
 
-type ResetOptions = { mode: "staging" | "test"; apply: boolean; operator: string };
+type PromoRedemptionArchive = {
+  redemptionId: string;
+  promoCodeId: string;
+  organizationId: string;
+  locationId: string;
+  partnerId: string;
+  productId: string;
+  requestedDurationDays: number;
+  grantedDurationMs: string;
+  redeemedAt: string;
+  partnerBenefitId: string;
+  benefitStartsAt: string;
+  benefitEndsAt: string | null;
+  benefitCreatedAt: string;
+};
+type PromoRevocationArchive = { promoCodeId: string; createdAt: string; durationDays: number; expiresAt: string | null; maxRedemptions: number; archivedAt: string | null; revokedAt: string; revocationEventId: string };
+export type ProtectedPromoManifest = {
+  format: 1;
+  environment: "soundspa-v2-staging" | "isolated-postgres-test";
+  database: "soundspa_v2";
+  reason: typeof DISPOSAL_REASON;
+  preparedAt: string;
+  redemptions: PromoRedemptionArchive[];
+  revocations: PromoRevocationArchive[];
+};
+
+const protectedIds = (field: "redemptionId" | "promoCodeId" | "benefitId") => PROTECTED_PROMO_DISPOSAL.map((row) => row[field]);
+const sameJson = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+
+/** Read only safe identifiers and entitlement facts; never select user IDs or token hashes. */
+async function protectedPromoSnapshot(client: PoolClient) {
+  const codeTriggerStates = await client.query<{ tgname: string; tgenabled: string }>(`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='commercial_spaquatoria_promo_codes'::regclass AND NOT tgisinternal ORDER BY tgname`);
+  if (!sameJson(codeTriggerStates.rows, [{ tgname: "commercial_spaquatoria_promo_codes_identity_immutable", tgenabled: "A" }])) throw new StagingResetBlocked("protected_promo_revocation_guard_drift");
+  const auditTriggerStates = await client.query<{ tgname: string; tgenabled: string }>(`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='commercial_spaquatoria_promo_code_events'::regclass AND NOT tgisinternal ORDER BY tgname`);
+  if (!sameJson(auditTriggerStates.rows, [
+    { tgname: "commercial_spaquatoria_promo_code_events_append_only", tgenabled: "O" },
+    { tgname: "commercial_spaquatoria_promo_code_events_no_truncate", tgenabled: "O" },
+  ])) throw new StagingResetBlocked("protected_promo_audit_guard_drift");
+  const expectedByRedemption = new Map<string, (typeof PROTECTED_PROMO_DISPOSAL)[number]>(PROTECTED_PROMO_DISPOSAL.map((row) => [row.redemptionId, row]));
+  const rows = await client.query<PromoRedemptionArchive & { benefitId: string; benefitStartsAt: string; benefitEndsAt: string | null; benefitCreatedAt: string }>(`
+    SELECT r.id AS "redemptionId",r.promo_code_id AS "promoCodeId",r.organization_id AS "organizationId",r.location_id AS "locationId",
+      r.partner_id AS "partnerId",r.product_id AS "productId",r.requested_duration_days AS "requestedDurationDays",
+      r.granted_duration_ms::text AS "grantedDurationMs",r.redeemed_at::text AS "redeemedAt",
+      b.id AS "partnerBenefitId",b.starts_at::text AS "benefitStartsAt",b.ends_at::text AS "benefitEndsAt",b.created_at::text AS "benefitCreatedAt"
+    FROM commercial_spaquatoria_promo_redemptions r
+    LEFT JOIN commercial_partner_benefits b ON b.promo_redemption_id=r.id
+    WHERE r.id=ANY($1::uuid[])
+    ORDER BY r.id,b.id`, [protectedIds("redemptionId")]);
+  if (rows.rows.length !== PROTECTED_PROMO_DISPOSAL.length || rows.rows.some((row) => !row.partnerBenefitId)) {
+    throw new StagingResetBlocked("protected_promo_manifest_scope_mismatch");
+  }
+  const redemptions = rows.rows.map((row) => {
+    const expected = expectedByRedemption.get(row.redemptionId);
+    if (!expected || row.promoCodeId !== expected.promoCodeId || row.organizationId !== expected.organizationId || row.locationId !== expected.locationId || row.partnerBenefitId !== expected.benefitId || row.partnerId !== PROTECTED_PROMO_PARTNER_ID || row.productId !== PROTECTED_PROMO_PRODUCT_ID) {
+      throw new StagingResetBlocked("protected_promo_manifest_scope_mismatch");
+    }
+    return row;
+  });
+
+  const codes = await client.query<{ promoCodeId: string; partnerId: string; productId: string; durationDays: number; createdAt: string; expiresAt: string | null; maxRedemptions: number | null; revokedAt: string | null; revokedByOperator: string | null; revokeReason: string | null; archivedAt: string | null; eventId: string | null; eventOperator: string | null; eventReason: string | null; eventRevokedAt: string | null }>(`
+    SELECT p.id AS "promoCodeId",p.partner_id AS "partnerId",p.product_id AS "productId",p.duration_days AS "durationDays",p.created_at::text AS "createdAt",
+      p.expires_at::text AS "expiresAt",p.max_redemptions AS "maxRedemptions",p.revoked_at::text AS "revokedAt",p.revoked_by_operator AS "revokedByOperator",p.revoke_reason AS "revokeReason",
+      p.archived_at::text AS "archivedAt",e.id AS "eventId",e.operator AS "eventOperator",e.reason AS "eventReason",e.after_state->>'revokedAt' AS "eventRevokedAt"
+    FROM commercial_spaquatoria_promo_codes p
+    LEFT JOIN commercial_spaquatoria_promo_code_events e ON e.promo_code_id=p.id AND e.action='revoked'
+    WHERE p.id=ANY($1::uuid[])
+    ORDER BY p.id FOR UPDATE OF p`, [protectedIds("promoCodeId")]);
+  const expectedDefinitions = new Map<string, (typeof EXPECTED_PROMO_DEFINITIONS)[number]>(EXPECTED_PROMO_DEFINITIONS.map((row) => [row.id, row]));
+  if (codes.rows.length !== PROTECTED_PROMO_DISPOSAL.length || codes.rows.some((row) => {
+    const expected = expectedDefinitions.get(row.promoCodeId);
+    return !expected || row.partnerId !== PROTECTED_PROMO_PARTNER_ID || row.productId !== PROTECTED_PROMO_PRODUCT_ID || row.durationDays !== 5 || Date.parse(row.createdAt) !== Date.parse(expected.createdAt) || row.expiresAt !== null || row.maxRedemptions !== 1 || (row.archivedAt === null ? expected.archivedAt !== null : Date.parse(row.archivedAt) !== Date.parse(expected.archivedAt ?? ""));
+  })) throw new StagingResetBlocked("protected_promo_definition_drift");
+  if (codes.rows.some((row) => !row.revokedAt || !row.revokedByOperator?.trim() || !row.revokeReason || row.revokeReason.trim().length < 12 || row.revokeReason.trim().length > 500 || !row.eventId || row.eventOperator !== row.revokedByOperator || row.eventReason !== row.revokeReason || !row.eventRevokedAt || Date.parse(row.eventRevokedAt) !== Date.parse(row.revokedAt!))) throw new StagingResetBlocked("protected_promo_revocation_not_audited");
+  const revocations = codes.rows.map(({ promoCodeId, createdAt, durationDays, expiresAt, maxRedemptions, revokedAt, archivedAt, eventId }) => ({ promoCodeId, createdAt, durationDays, expiresAt, maxRedemptions: maxRedemptions!, archivedAt, revokedAt: revokedAt!, revocationEventId: eventId! }));
+  return { redemptions, revocations };
+}
+
+export async function createProtectedPromoManifest(client: PoolClient, environment: ProtectedPromoManifest["environment"]): Promise<ProtectedPromoManifest> {
+  const snapshot = await protectedPromoSnapshot(client);
+  return { format: 1, environment, database: "soundspa_v2", reason: DISPOSAL_REASON, preparedAt: new Date().toISOString(), ...snapshot };
+}
+
+function sha256(value: string | Buffer) { return createHash("sha256").update(value).digest("hex"); }
+
+/** Exclusive create, file fsync, directory fsync, then checksum reread before any destructive transaction. */
+export async function writeProtectedPromoManifest(path: string, manifest: ProtectedPromoManifest, mode: "staging" | "test"): Promise<string> {
+  const absolute = resolve(path);
+  const parent = await realpath(dirname(absolute));
+  if (mode === "staging" && !(parent === "/var/backups/soundspa-v2" || parent.startsWith(`/var/backups/soundspa-v2${sep}`))) throw new StagingResetBlocked("manifest_must_be_outside_database_volume_in_v2_backup_root");
+  const directory = await stat(parent);
+  if ((directory.mode & 0o077) !== 0) throw new StagingResetBlocked("manifest_directory_permissions_too_open");
+  if (mode === "staging" && directory.uid !== 0) throw new StagingResetBlocked("manifest_directory_must_be_root_owned");
+  const contents = `${JSON.stringify(manifest, null, 2)}\n`;
+  let handle;
+  try {
+    handle = await open(absolute, "wx", 0o600);
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+  } catch {
+    await handle?.close().catch(() => undefined);
+    throw new StagingResetBlocked("manifest_write_failed");
+  }
+  await handle.close();
+  await chmod(absolute, 0o600);
+  const syncedFile = await open(absolute, "r+");
+  try { await syncedFile.sync(); } finally { await syncedFile.close(); }
+  const dirHandle = await open(parent, "r");
+  try { await dirHandle.sync(); } finally { await dirHandle.close(); }
+  const saved = await readFile(absolute);
+  const metadata = await stat(absolute);
+  if ((metadata.mode & 0o077) !== 0 || (mode === "staging" && metadata.uid !== 0) || !saved.equals(Buffer.from(contents))) throw new StagingResetBlocked("manifest_durability_verification_failed");
+  return sha256(saved);
+}
+
+export async function readVerifiedProtectedPromoManifest(path: string, expectedSha256: string, mode: "staging" | "test"): Promise<ProtectedPromoManifest> {
+  const absolute = resolve(path);
+  const parent = await realpath(dirname(absolute));
+  if (mode === "staging" && !(parent === "/var/backups/soundspa-v2" || parent.startsWith(`/var/backups/soundspa-v2${sep}`))) throw new StagingResetBlocked("manifest_must_be_outside_database_volume_in_v2_backup_root");
+  const parentStat = await stat(parent);
+  if ((parentStat.mode & 0o077) !== 0 || (mode === "staging" && parentStat.uid !== 0)) throw new StagingResetBlocked("manifest_directory_permissions_invalid");
+  const metadata = await lstat(absolute);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o077) !== 0 || (mode === "staging" && metadata.uid !== 0)) throw new StagingResetBlocked("manifest_file_permissions_invalid");
+  const contents = await readFile(absolute);
+  if (!/^[0-9a-f]{64}$/.test(expectedSha256) || sha256(contents) !== expectedSha256) throw new StagingResetBlocked("manifest_checksum_mismatch");
+  let manifest: ProtectedPromoManifest;
+  try { manifest = JSON.parse(contents.toString("utf8")) as ProtectedPromoManifest; } catch { throw new StagingResetBlocked("manifest_invalid"); }
+  const keys = ["database", "environment", "format", "preparedAt", "reason", "redemptions", "revocations"].sort();
+  if (!sameJson(Object.keys(manifest).sort(), keys) || manifest.format !== 1 || manifest.database !== "soundspa_v2" || manifest.environment !== (mode === "staging" ? "soundspa-v2-staging" : "isolated-postgres-test") || manifest.reason !== DISPOSAL_REASON || !Number.isFinite(Date.parse(manifest.preparedAt))) throw new StagingResetBlocked("manifest_invalid");
+  if (manifest.redemptions.length !== 3 || manifest.revocations.length !== 3 || manifest.redemptions.some((row) => !sameJson(Object.keys(row).sort(), ["benefitCreatedAt", "benefitEndsAt", "benefitStartsAt", "locationId", "organizationId", "partnerBenefitId", "partnerId", "productId", "promoCodeId", "redeemedAt", "redemptionId", "requestedDurationDays", "grantedDurationMs"].sort())) || manifest.revocations.some((row) => !sameJson(Object.keys(row).sort(), ["archivedAt", "createdAt", "durationDays", "expiresAt", "maxRedemptions", "promoCodeId", "revocationEventId", "revokedAt"].sort()))) throw new StagingResetBlocked("manifest_invalid");
+  return manifest;
+}
+
+type ResetOptions = { mode: "staging" | "test"; apply: boolean; operator: string; manifest?: ProtectedPromoManifest; testFailureAfterTriggerDisable?: boolean };
 type Fingerprint = { count: number; sha256: string };
 type ResetReceipt = {
   result: "DRY_RUN_ROLLED_BACK" | "COMMITTED";
@@ -66,7 +213,7 @@ const PRESERVED_QUERIES: Record<string, string> = {
   registration_link_events: "SELECT to_jsonb(t)::text AS row FROM commercial_registration_link_events t ORDER BY id",
   promo_definitions: "SELECT id,token_hash,partner_id,product_id,duration_days,created_by_operator,creation_reason,created_at,expires_at,max_redemptions,archived_at,archived_by_operator,revoked_at,revoked_by_operator,revoke_reason FROM commercial_spaquatoria_promo_codes ORDER BY id",
   promo_code_events: "SELECT to_jsonb(t)::text AS row FROM commercial_spaquatoria_promo_code_events t ORDER BY id",
-  promo_redemption_history: "SELECT to_jsonb(t)::text AS row FROM commercial_spaquatoria_promo_redemptions t ORDER BY id",
+  unaffected_promo_redemption_history: `SELECT to_jsonb(t)::text AS row FROM commercial_spaquatoria_promo_redemptions t WHERE id <> ALL(ARRAY[${PROTECTED_PROMO_DISPOSAL.map(({ redemptionId }) => `'${redemptionId}'::uuid`).join(",")}]::uuid[]) ORDER BY id`,
   registration_redemption_history: "SELECT to_jsonb(t)::text AS row FROM commercial_registration_link_redemptions t ORDER BY id",
   registration_grant_history: "SELECT to_jsonb(t)::text AS row FROM commercial_registration_link_grants t ORDER BY id",
   partner_invite_definitions: "SELECT id,offer_id,token_hash,expires_at,max_claims,created_at FROM commercial_partner_invites ORDER BY id",
@@ -90,6 +237,7 @@ const CUSTOMER_ZERO_CHECKS: Array<[string, string]> = [
   ["payment_events", "SELECT count(*) FROM commercial_payment_events WHERE payment_id IN (SELECT id FROM reset_target_payments)"],
   ["payment_events", "SELECT count(*) FROM commercial_payment_events WHERE payment_id IN (SELECT id FROM reset_target_payments)"],
   ["partner_benefits", "SELECT count(*) FROM commercial_partner_benefits WHERE location_id IN (SELECT id FROM reset_target_locations)"],
+  ["disposed_promo_redemptions", `SELECT count(*) FROM commercial_spaquatoria_promo_redemptions WHERE id = ANY(ARRAY[${PROTECTED_PROMO_DISPOSAL.map(({ redemptionId }) => `'${redemptionId}'::uuid`).join(",")}]::uuid[])`],
   ["partner_invite_claims", "SELECT count(*) FROM commercial_partner_invite_claims WHERE location_id IN (SELECT id FROM reset_target_locations)"],
   ["billing_resets", "SELECT count(*) FROM commercial_billing_resets WHERE organization_id IN (SELECT id FROM reset_target_orgs) OR location_id IN (SELECT id FROM reset_target_locations)"],
   ["payer_references", "SELECT count(*) FROM commercial_organization_payer_references WHERE organization_id IN (SELECT id FROM reset_target_orgs)"],
@@ -174,6 +322,8 @@ async function makeScope(client: PoolClient) {
   const expectedLocations = [...RESET_LOCATIONS].map(([id, organization_id, name]) => ({ id, organization_id, name })).sort((a, b) => a.id.localeCompare(b.id));
   if (JSON.stringify(locationRows) !== JSON.stringify(expectedLocations)) throw new StagingResetBlocked("location_allowlist_mismatch");
   await client.query("INSERT INTO reset_target_locations SELECT id,organization_id FROM locations WHERE id = ANY($1::uuid[]) ORDER BY id", [RESET_LOCATIONS.map(([id]) => id)]);
+  const scopedBenefits = await client.query<{ id: string }>("SELECT id FROM commercial_partner_benefits WHERE location_id IN (SELECT id FROM reset_target_locations) ORDER BY id");
+  if (!sameJson(scopedBenefits.rows.map((row) => row.id), [...protectedIds("benefitId")].sort())) throw new StagingResetBlocked("partner_benefit_scope_mismatch", { partner_benefits: scopedBenefits.rows.length });
 
   const membershipRows = await client.query<{ organization_id: string; user_id: string; role: string; membership_count: string }>(`SELECT m.organization_id,m.user_id,m.role::text AS role,count(*) OVER(PARTITION BY m.organization_id)::text AS membership_count FROM organization_members m ORDER BY m.organization_id,m.user_id`);
   if (membershipRows.rows.length !== 6 || membershipRows.rows.some((row) => row.membership_count !== "1" || row.role !== "owner" || !expected.some((org) => org.id === row.organization_id))) throw new StagingResetBlocked("membership_scope_mismatch");
@@ -221,7 +371,12 @@ async function makeScope(client: PoolClient) {
     const result = await client.query<{ count: string }>(query);
     protectedCounts[name] = result.rows[0]?.count ?? "0";
   }
-  const blocked = Object.fromEntries(Object.entries(protectedCounts).filter(([, count]) => count !== "0").map(([name, count]) => [name, Number(count)]));
+  const inScopePromoRows = await client.query<{ id: string }>(`SELECT id FROM commercial_spaquatoria_promo_redemptions WHERE organization_id IN (SELECT id FROM reset_target_orgs) OR location_id IN (SELECT id FROM reset_target_locations) ORDER BY id`);
+  const expectedPromoIds = [...protectedIds("redemptionId")].sort();
+  if (!sameJson(inScopePromoRows.rows.map((row) => row.id), expectedPromoIds)) throw new StagingResetBlocked("protected_promo_scope_mismatch", { spaquatoria_redemptions: inScopePromoRows.rows.length });
+  // Expected records can be disposed only after the existing operator service has irrevocably revoked each code and emitted its audit event.
+  await protectedPromoSnapshot(client);
+  const blocked = Object.fromEntries(Object.entries(protectedCounts).filter(([name, count]) => name !== "spaquatoria_redemptions" && count !== "0").map(([name, count]) => [name, Number(count)]));
   if (Object.keys(blocked).length) throw new StagingResetBlocked("immutable_or_protected_history_present", blocked);
   return { protectedCounts, core: row };
 }
@@ -272,7 +427,7 @@ async function assertFingerprintsEqual(client: PoolClient, before: Record<string
   return after;
 }
 
-async function deleteScopedData(client: PoolClient) {
+async function deleteScopedData(client: PoolClient, testFailureAfterTriggerDisable = false) {
   const deleted: Record<string, number> = {};
   const run = async (label: string, statement: string) => {
     const result = await client.query(statement);
@@ -291,6 +446,9 @@ async function deleteScopedData(client: PoolClient) {
   await run("billing_order_lines", "DELETE FROM commercial_billing_order_lines WHERE id IN (SELECT id FROM reset_target_lines)");
   await run("billing_orders", "DELETE FROM commercial_billing_orders WHERE id IN (SELECT id FROM reset_target_orders)");
 
+  // The only append-only exception is the three fixed staging test rows. The
+  // archive manifest and revocation proof were verified before this transaction.
+  await disposeProtectedPromoHistory(client, deleted, testFailureAfterTriggerDisable);
   await run("partner_benefits", "DELETE FROM commercial_partner_benefits WHERE location_id IN (SELECT id FROM reset_target_locations)");
   await run("trials", "DELETE FROM location_core_trials WHERE location_id IN (SELECT id FROM reset_target_locations)");
   await run("subscriptions", "DELETE FROM location_subscriptions WHERE id IN (SELECT id FROM reset_target_subscriptions)");
@@ -322,6 +480,41 @@ async function deleteScopedData(client: PoolClient) {
   return { deleted, revokedPartnerInvites: inviteRows.rows.filter((row) => row.outside === "0").length };
 }
 
+async function disposeProtectedPromoHistory(client: PoolClient, deleted: Record<string, number>, testFailureAfterTriggerDisable = false) {
+  await client.query("LOCK TABLE commercial_spaquatoria_promo_redemptions IN ACCESS EXCLUSIVE MODE");
+  const triggerStates = await client.query<{ tgname: string; tgenabled: string }>(`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='commercial_spaquatoria_promo_redemptions'::regclass AND NOT tgisinternal ORDER BY tgname`);
+  const expectedTriggers = [
+    { tgname: "commercial_spaquatoria_promo_redemptions_append_only", tgenabled: "O" },
+    { tgname: "commercial_spaquatoria_promo_redemptions_no_truncate", tgenabled: "O" },
+  ];
+  if (!sameJson(triggerStates.rows, expectedTriggers)) throw new StagingResetBlocked("protected_promo_trigger_drift");
+  const fkStates = await client.query<{ name: string; validated: boolean; totalTriggers: number; enabledTriggers: number }>(`SELECT c.conname AS name,c.convalidated AS validated,count(t.oid)::int AS "totalTriggers",count(t.oid) FILTER (WHERE t.tgenabled='O')::int AS "enabledTriggers"
+    FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint=c.oid
+    WHERE c.contype='f' AND (c.conrelid='commercial_spaquatoria_promo_redemptions'::regclass OR c.confrelid='commercial_spaquatoria_promo_redemptions'::regclass)
+    GROUP BY c.oid,c.conname,c.convalidated ORDER BY c.conname`);
+  if (fkStates.rows.length !== 6 || fkStates.rows.some((row) => !row.validated || row.totalTriggers !== 4 || row.enabledTriggers !== 4)) throw new StagingResetBlocked("protected_promo_fk_drift");
+
+  const benefitResult = await client.query(`DELETE FROM commercial_partner_benefits WHERE id=ANY($1::uuid[]) AND promo_redemption_id=ANY($2::uuid[])`, [protectedIds("benefitId"), protectedIds("redemptionId")]);
+  if (benefitResult.rowCount !== PROTECTED_PROMO_DISPOSAL.length) throw new StagingResetBlocked("protected_promo_benefit_delete_count_mismatch");
+  deleted.protected_promo_benefits = benefitResult.rowCount;
+
+  // Transactional DDL plus the table lock bounds the exception to this transaction.
+  // FK constraints and the no-TRUNCATE trigger remain enabled throughout.
+  await client.query("ALTER TABLE commercial_spaquatoria_promo_redemptions DISABLE TRIGGER commercial_spaquatoria_promo_redemptions_append_only");
+  if (testFailureAfterTriggerDisable) throw new StagingResetBlocked("injected_test_failure_after_trigger_disable");
+  const redemptionResult = await client.query("DELETE FROM commercial_spaquatoria_promo_redemptions WHERE id=ANY($1::uuid[])", [protectedIds("redemptionId")]);
+  if (redemptionResult.rowCount !== PROTECTED_PROMO_DISPOSAL.length) throw new StagingResetBlocked("protected_promo_redemption_delete_count_mismatch");
+  deleted.protected_promo_redemptions = redemptionResult.rowCount;
+  await client.query("ALTER TABLE commercial_spaquatoria_promo_redemptions ENABLE TRIGGER commercial_spaquatoria_promo_redemptions_append_only");
+  const after = await client.query<{ tgname: string; tgenabled: string }>(`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='commercial_spaquatoria_promo_redemptions'::regclass AND NOT tgisinternal ORDER BY tgname`);
+  if (!sameJson(after.rows, expectedTriggers)) throw new StagingResetBlocked("protected_promo_trigger_restore_failed");
+  const remainingFks = await client.query<{ name: string; validated: boolean; totalTriggers: number; enabledTriggers: number }>(`SELECT c.conname AS name,c.convalidated AS validated,count(t.oid)::int AS "totalTriggers",count(t.oid) FILTER (WHERE t.tgenabled='O')::int AS "enabledTriggers"
+    FROM pg_constraint c JOIN pg_trigger t ON t.tgconstraint=c.oid
+    WHERE c.contype='f' AND (c.conrelid='commercial_spaquatoria_promo_redemptions'::regclass OR c.confrelid='commercial_spaquatoria_promo_redemptions'::regclass)
+    GROUP BY c.oid,c.conname,c.convalidated ORDER BY c.conname`);
+  if (remainingFks.rows.length !== 6 || remainingFks.rows.some((row) => !row.validated || row.totalTriggers !== 4 || row.enabledTriggers !== 4)) throw new StagingResetBlocked("protected_promo_fk_restore_failed");
+}
+
 async function assertNoScopedRows(client: PoolClient) {
   const remaining: Record<string, number> = {};
   for (const [name, query] of CUSTOMER_ZERO_CHECKS) {
@@ -335,15 +528,19 @@ async function assertNoScopedRows(client: PoolClient) {
 
 export async function runResetTransaction(client: PoolClient, options: ResetOptions, connectionUrl: string): Promise<ResetReceipt> {
   if (!options.operator.trim() || options.operator.trim().length > 200) throw new StagingResetBlocked("operator_identity_required");
+  if (!options.manifest || options.manifest.environment !== (options.mode === "staging" ? "soundspa-v2-staging" : "isolated-postgres-test")) throw new StagingResetBlocked("protected_promo_manifest_required");
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     await client.query("SET LOCAL lock_timeout='10s'");
     await client.query("SET LOCAL statement_timeout='5min'");
     await client.query("SELECT pg_advisory_xact_lock(hashtext('soundspa-v2-six-org-staging-reset'))");
+    await client.query("LOCK TABLE commercial_spaquatoria_promo_redemptions IN ACCESS EXCLUSIVE MODE");
     await assertDisposableTarget(client, options.mode, connectionUrl);
     await makeScope(client);
+    const currentPromoSnapshot = await protectedPromoSnapshot(client);
+    if (!sameJson(currentPromoSnapshot, { redemptions: options.manifest.redemptions, revocations: options.manifest.revocations })) throw new StagingResetBlocked("protected_promo_manifest_stale_or_mismatched");
     const preservedBefore = await fingerprint(client);
-    const { deleted, revokedPartnerInvites } = await deleteScopedData(client);
+    const { deleted, revokedPartnerInvites } = await deleteScopedData(client, options.testFailureAfterTriggerDisable);
     await assertNoScopedRows(client);
     const preservedAfter = await assertFingerprintsEqual(client, preservedBefore);
     const operationCount = preservedAfter.device_operation_tombstones?.count ?? 0;
@@ -365,8 +562,9 @@ async function inspectReadOnly(client: PoolClient, connectionUrl: string) {
 
 function parseArgs(argv: string[]) {
   if (argv.length === 0 || (argv.length === 1 && argv[0] === "--inspect")) return { mode: "inspect" as const };
-  if (argv.length === 1 && argv[0] === "--dry-run") return { mode: "dry-run" as const };
-  if (argv.length === 3 && argv[0] === "--apply" && argv[1] === "--confirm" && argv[2] === RESET_CONFIRMATION) return { mode: "apply" as const };
+  if (argv.length === 2 && argv[0] === "--prepare-manifest") return { mode: "prepare-manifest" as const, manifestPath: argv[1] };
+  if (argv.length === 5 && argv[0] === "--dry-run" && argv[1] === "--manifest" && argv[3] === "--sha256") return { mode: "dry-run" as const, manifestPath: argv[2], manifestSha256: argv[4] };
+  if (argv.length === 7 && argv[0] === "--apply" && argv[1] === "--manifest" && argv[3] === "--sha256" && argv[5] === "--confirm" && argv[6] === RESET_CONFIRMATION) return { mode: "apply" as const, manifestPath: argv[2], manifestSha256: argv[4] };
   throw new StagingResetBlocked("invalid_arguments");
 }
 
@@ -375,7 +573,8 @@ async function main() {
   const connectionUrl = process.env.V2_DATABASE_URL ?? "";
   if (!connectionUrl) throw new StagingResetBlocked("V2_DATABASE_URL_required");
   if (args.mode === "dry-run" && process.env.V2_STAGING_RESET_TEST !== "1") throw new StagingResetBlocked("dry_run_must_use_isolated_test_mode");
-  if (args.mode === "apply" && process.env.V2_STAGING_RESET_OPERATOR?.trim() === undefined) throw new StagingResetBlocked("V2_STAGING_RESET_OPERATOR_required");
+  if (args.mode === "apply" && !process.env.V2_STAGING_RESET_OPERATOR?.trim()) throw new StagingResetBlocked("V2_STAGING_RESET_OPERATOR_required");
+  if (args.mode === "prepare-manifest" && process.env.V2_STAGING_RESET_TEST === "1") throw new StagingResetBlocked("manifest_preparation_is_staging_only");
   const pool = new Pool({ connectionString: connectionUrl, max: 1, connectionTimeoutMillis: 5000 });
   const client = await pool.connect();
   try {
@@ -384,7 +583,28 @@ async function main() {
       console.info(JSON.stringify({ result: "READ_ONLY_INVENTORY", organizations }));
       return;
     }
-    const receipt = await runResetTransaction(client, { mode: args.mode === "dry-run" ? "test" : "staging", apply: args.mode === "apply", operator: process.env.V2_STAGING_RESET_OPERATOR ?? "" }, connectionUrl);
+    if (args.mode === "prepare-manifest") {
+      await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+      try {
+        await client.query("SET LOCAL lock_timeout='10s'");
+        await client.query("SET LOCAL statement_timeout='5min'");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('soundspa-v2-six-org-staging-reset'))");
+        await client.query("LOCK TABLE commercial_spaquatoria_promo_redemptions IN SHARE MODE");
+        await assertDisposableTarget(client, "staging", connectionUrl);
+        await makeScope(client);
+        const manifest = await createProtectedPromoManifest(client, "soundspa-v2-staging");
+        await client.query("ROLLBACK");
+        const checksum = await writeProtectedPromoManifest(args.manifestPath, manifest, "staging");
+        console.info(JSON.stringify({ result: "MANIFEST_DURABLE", path: resolve(args.manifestPath), sha256: checksum, protectedRedemptions: manifest.redemptions.length }));
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      }
+      return;
+    }
+    const runMode = args.mode === "dry-run" ? "test" : "staging";
+    const manifest = await readVerifiedProtectedPromoManifest(args.manifestPath, args.manifestSha256, runMode);
+    const receipt = await runResetTransaction(client, { mode: runMode, apply: args.mode === "apply", operator: process.env.V2_STAGING_RESET_OPERATOR ?? "", manifest }, connectionUrl);
     console.info(JSON.stringify(receipt));
   } finally {
     client.release();
