@@ -4,11 +4,12 @@ import { operatorAuthStatus } from "@/lib/v2/adminOperator";
 import { v2Db } from "../client";
 import {
   commercialBillingOrderLines, commercialBillingOrders, commercialPaymentEvents,
-  commercialPayments, commercialProducts, locationSubscriptions, locations, organizations,
+  commercialPayments, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations,
 } from "../schema";
 import { MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
 import { settleTrustedBillingOrderPayment } from "./paymentLifecycle";
 import { getOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
+import { buildManualTrialOverview } from "./trialOverviewModel";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -123,6 +124,22 @@ export async function listManualSubscriptionOverview(authorization: unknown, db:
     .orderBy(asc(organizations.name), asc(locations.name), asc(commercialProducts.name));
   return rows.map((row) => ({ ...row, startsAt: row.startsAt.toISOString(), paidThroughAt: row.paidThroughAt?.toISOString() ?? null,
     status: row.startsAt > now ? "upcoming" : row.status === "canceled" ? "canceling" : "active", canceledAt: row.canceledAt?.toISOString() ?? null }));
+}
+
+export async function listManualTrialOverview(authorization: unknown, db: BillingReadDb = v2Db, now = new Date()) {
+  requireOperator(authorization);
+  const rows = await db.select({ id: locationCoreTrials.id, organizationName: organizations.name,
+    locationName: locations.name, productName: commercialProducts.name, trialStatus: locationCoreTrials.status,
+    startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt,
+    invalidatedByResetId: locationCoreTrials.invalidatedByResetId,
+    organizationArchivedAt: organizations.archivedAt, locationArchivedAt: locations.archivedAt,
+  }).from(locationCoreTrials)
+    .innerJoin(locations, eq(locations.id, locationCoreTrials.locationId))
+    .innerJoin(organizations, eq(organizations.id, locations.organizationId))
+    .innerJoin(commercialProducts, eq(commercialProducts.id, locationCoreTrials.productId))
+    .where(and(isNull(locationCoreTrials.invalidatedByResetId), isNull(organizations.archivedAt), isNull(locations.archivedAt)))
+    .orderBy(asc(organizations.name), asc(locations.name), asc(commercialProducts.name), asc(locationCoreTrials.startsAt));
+  return buildManualTrialOverview(rows, now);
 }
 
 export async function confirmManualBankTransferPayment(input: {
