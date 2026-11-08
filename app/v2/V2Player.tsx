@@ -19,6 +19,7 @@ import { canStartPlayerAudio, DevicePlayerOwnership, type PlayerOwnershipState }
 import { playerStatusMessageKey } from "./playerStatusMessage";
 import { ambientChannelCardAction, mainPlayerAction, musicChannelCardAction, playerActionTranslationKey } from "./playerActionTooltip";
 import { ambientVolumePercent, ambientVolumeTooltipText, playbackModeTooltipKey } from "./playerControlTooltip";
+import { playerSubscriptionLines, type PlayerSubscriptionLine } from "./playerSubscription";
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -137,6 +138,20 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
 
 export default function V2Player({ catalog, deviceId, locationId, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; deviceId?: string; locationId?: string; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t, locale } = useI18n();
+  const [subscriptionLines, setSubscriptionLines] = useState<PlayerSubscriptionLine[] | null>(null);
+  useEffect(() => {
+    if (!deviceId || !locationId) { setSubscriptionLines(null); return; }
+    let current = true;
+    setSubscriptionLines(null);
+    fetch("/api/v2/customer/billing", { credentials: "same-origin", cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("customer billing unavailable");
+        return await response.json() as { locations?: unknown };
+      })
+      .then((billing) => { if (current) setSubscriptionLines(playerSubscriptionLines(billing, locationId)); })
+      .catch(() => { if (current) setSubscriptionLines(null); });
+    return () => { current = false; };
+  }, [deviceId, locationId]);
   const dialogTitleId = useId();
   const dialogChannelNameId = useId();
   const dialogDescriptionId = useId();
@@ -414,6 +429,17 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
 
   const currentTrackName = activeChannel?.tracks[playback.currentTrackIndex]?.originalFilename?.replace(/\.mp3$/i, "") ?? null;
   const activeChannelTitle = activeChannel ? resolveChannelTitle(activeChannel.title, activeChannel.localizedTitles, locale) : null;
+  const formatSubscriptionDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
+  const subscriptionLineText = (line: PlayerSubscriptionLine) => {
+    if (line.kind === "trial") return t("playerTrialUntil").replace("{{date}}", formatSubscriptionDate(line.date!));
+    const statusLabel = line.kind === "active" ? t("playerSubscriptionActive")
+      : line.kind === "canceled" ? t("playerSubscriptionCanceled")
+        : line.kind === "upcoming" ? t("playerSubscriptionUpcoming") : t("playerSubscriptionExpired");
+    if (line.kind === "upcoming" && line.startsAt && line.date) {
+      return `${statusLabel} · ${t("billingPaidStarts").replace("{{date}}", formatSubscriptionDate(line.startsAt))} · ${t("billingPaidThrough").replace("{{date}}", formatSubscriptionDate(line.date))}`;
+    }
+    return line.date ? `${statusLabel} · ${t("billingPaidThrough").replace("{{date}}", formatSubscriptionDate(line.date))}` : statusLabel;
+  };
   const playbackLabel = !activeChannel?.tracks.length
       ? t("plannedChannel")
       : playback.status === "loading"
@@ -543,7 +569,11 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
         </>}
       </dialog>
 
-      <footer className={s.footer}><div><div className={s.footerLabel}>{t("prototypeAccess")}</div><div className={s.footerText}>{t("noAccount")}</div><MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} /></div></footer>
+      <footer className={s.footer}><div>
+        {!deviceId && <><div className={s.footerLabel}>{t("prototypeAccess")}</div><div className={s.footerText}>{t("noAccount")}</div></>}
+        {deviceId && subscriptionLines?.map((line, index) => <div key={`${line.productId}-${line.kind}-${index}`}><div className={s.footerLabel}>{line.productName}</div><div className={s.footerText}>{subscriptionLineText(line)}</div></div>)}
+        <MusicDiagnosticPanel capture={() => engineRef.current?.captureDiagnostics()} />
+      </div></footer>
     </div>
   );
 }

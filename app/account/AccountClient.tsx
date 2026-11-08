@@ -577,7 +577,6 @@ function Content() {
           </div>}
           {!organizationHasActivatedDevice && <section className="customer-account-first-device" aria-labelledby={`first-device-title-${organizationId}`}>
             <h2 id={`first-device-title-${organizationId}`}>{t("deviceFirstSetupTitle")}</h2>
-            <p>{t("deviceFirstSetupDescription")}</p>
             {shouldSelectDeviceSetupLocation(group.locations.length) ? <label>{t("deviceLocationLabel")}<select value={selectedFirstDeviceLocationId} onChange={(event) => setFirstDeviceLocationId(event.target.value)}>
               {group.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
             </select></label> : <p className="customer-account-first-device-location"><span>{t("deviceLocationLabel")}</span><strong>{group.locations[0]?.name}</strong></p>}

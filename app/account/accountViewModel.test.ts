@@ -170,6 +170,16 @@ test("Account keeps billing actions and histories while collapsed salon rows sta
   assert.doesNotMatch(account, /billingLocation\.partnerBenefits\.map/);
 });
 
+test("first-device setup stays compact while preserving its heading, fields, and actions", async () => {
+  const account = await readFile(new URL("./AccountClient.tsx", import.meta.url), "utf8");
+  assert.match(account, /deviceFirstSetupTitle/);
+  assert.match(account, /deviceLocationLabel/);
+  assert.match(account, /deviceNameLabel/);
+  assert.match(account, /deviceListenOnThisDevice/);
+  assert.match(account, /deviceConnectOther/);
+  assert.doesNotMatch(account, /deviceFirstSetupDescription/);
+});
+
 test("compact Account labels and organization billing action are localized in every supported language", async () => {
   const dictionaries = await Promise.all(["en", "ru", "vi", "th"].map((locale) => readFile(new URL(`../i18n/dictionaries/${locale}.ts`, import.meta.url), "utf8")));
   for (const dictionary of dictionaries) {
