@@ -246,6 +246,13 @@
       "when": 1794131239809,
       "tag": "0034_organization_scoped_basic_trials",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794145936847,
+      "tag": "0035_promotional_access_foundation",
+      "breakpoints": true
     }
   ]
 }

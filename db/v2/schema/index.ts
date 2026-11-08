@@ -1,6 +1,7 @@
 // Schema-only exports: importing this module must never create a DB client.
 export * from "./enums";
 export * from "./commercial";
+export * from "./promotionalAccess";
 export * from "./core/organizations";
 export * from "./core/organizationLifecycleEvents";
 export * from "./core/users";

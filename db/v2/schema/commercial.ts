@@ -363,6 +363,7 @@ export const commercialPartnerInviteClaims = pgTable("commercial_partner_invite_
   claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("commercial_partner_invite_claims_invite_location_unique").on(table.inviteId, table.locationId),
+  uniqueIndex("commercial_partner_invite_claims_id_location_unique").on(table.id, table.locationId),
   index("commercial_partner_invite_claims_location_idx").on(table.locationId),
   foreignKey({ name: "commercial_partner_invite_claims_invite_fk", columns: [table.inviteId], foreignColumns: [commercialPartnerInvites.id] }).onDelete("restrict"),
   foreignKey({ name: "commercial_partner_invite_claims_location_fk", columns: [table.locationId], foreignColumns: [locations.id] }).onDelete("restrict"),
