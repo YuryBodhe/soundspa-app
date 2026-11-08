@@ -4,6 +4,7 @@ import { CustomerDeviceAuthorizationError, customerDeviceAuthorizationFailure } 
 import { currentBrowserDeviceSecret, currentBrowserOperationHash, deriveCurrentBrowserDeviceCredential } from "@/lib/v2/currentBrowserDeviceCredential";
 import { v2Db } from "../client";
 import { devices, deviceActivationTokens, deviceCurrentBrowserOperations, locations, organizationMembers, organizations, users } from "../schema";
+import { assignBasicDeviceProductOnActivationInTransaction, DeviceProductAssignmentError } from "./deviceProductAssignments";
 import { recordLifecycleEvent } from "./monitoringObservability";
 
 const ACTIVATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -33,10 +34,22 @@ export async function getDeviceActivationPreview(token: string) {
 }
 
 export class DeviceProvisioningError extends Error {
-  constructor(readonly code: "validation" | "location_unavailable" | "activation_invalid" | "operation_expired" | "operation_conflict" | "configuration_unavailable") {
-    super(code === "validation" ? "Enter a valid Device name and Location." : code === "location_unavailable" ? "This Location is unavailable for Device provisioning." : "This activation link is invalid, expired, already used, or unavailable.");
+  constructor(readonly code: "validation" | "location_unavailable" | "activation_invalid" | "operation_expired" | "operation_conflict" | "configuration_unavailable" | "basic_device_limit_reached") {
+    super(code === "validation" ? "Enter a valid Device name and Location."
+      : code === "location_unavailable" ? "This Location is unavailable for Device provisioning."
+        : code === "basic_device_limit_reached" ? "This Location has reached its active Basic Trial Device limit."
+          : "This activation link is invalid, expired, already used, or unavailable.");
     this.name = "DeviceProvisioningError";
   }
+}
+
+function throwMappedDeviceProductError(error: unknown): never {
+  if (error instanceof DeviceProductAssignmentError) {
+    throw new DeviceProvisioningError(error.code === "basic_device_limit_reached"
+      ? "basic_device_limit_reached"
+      : error.code === "location_unavailable" ? "location_unavailable" : "activation_invalid");
+  }
+  throw error;
 }
 
 export async function createDeviceWithActivation(input: { locationId?: unknown; name?: unknown; authorizedUserId?: string }) {
@@ -118,7 +131,8 @@ export async function createAndActivateCustomerDevice(input: {
   const operationHash = currentBrowserOperationHash(operationId);
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + CURRENT_BROWSER_OPERATION_TTL_MS);
-  const result = await v2Db.transaction(async (tx) => {
+  let result: { device: { id: string; label: string | null; status: "active" | "revoked" }; credential: string };
+  try { result = await v2Db.transaction(async (tx) => {
     const [location] = await tx.select({
       id: locations.id, name: locations.name, organizationId: organizations.id, organizationName: organizations.name,
     }).from(locations)
@@ -175,6 +189,7 @@ export async function createAndActivateCustomerDevice(input: {
         eventType: "device_activated", organizationId: location.organizationId, organizationName: location.organizationName,
         locationId: location.id, locationName: location.name, deviceId: created.id, deviceLabel: created.label,
       });
+      await assignBasicDeviceProductOnActivationInTransaction(tx, { locationId, deviceId: created.id });
       return { device: created, credential: candidateCredential };
     }
 
@@ -198,8 +213,9 @@ export async function createAndActivateCustomerDevice(input: {
       secret, operationId, authenticatedUserId: input.authenticatedUserId, locationId, deviceId: prior.id,
     });
     if (tokenHash(priorCredential) !== prior.credentialHash) throw new DeviceProvisioningError("configuration_unavailable");
+    await assignBasicDeviceProductOnActivationInTransaction(tx, { locationId, deviceId: prior.id });
     return { device: prior, credential: priorCredential };
-  });
+  }); } catch (error) { throwMappedDeviceProductError(error); }
 
   return result;
 }
@@ -211,7 +227,18 @@ export async function activateDevice(token: string) {
   const credential = randomBytes(32).toString("base64url");
   const credentialHash = tokenHash(credential);
 
-  await v2Db.transaction(async (tx) => {
+  try { await v2Db.transaction(async (tx) => {
+    // Read the target without locking it so the shared helper can take locks in
+    // the consistent Organization -> Location -> Device order.
+    const [target] = await tx.select({ deviceId: devices.id, locationId: devices.locationId })
+      .from(deviceActivationTokens).innerJoin(devices, eq(devices.id, deviceActivationTokens.deviceId))
+      .where(and(eq(deviceActivationTokens.tokenHash, hash), isNull(deviceActivationTokens.usedAt), gt(deviceActivationTokens.expiresAt, now),
+        eq(devices.status, "active"), isNull(devices.revokedAt), isNull(devices.credentialHash)))
+      .limit(1);
+    if (!target) throw new DeviceProvisioningError("activation_invalid");
+
+    await assignBasicDeviceProductOnActivationInTransaction(tx, { locationId: target.locationId, deviceId: target.deviceId });
+
     const [eligible] = await tx.select({
       tokenId: deviceActivationTokens.id,
       deviceId: devices.id,
@@ -227,10 +254,11 @@ export async function activateDevice(token: string) {
       .innerJoin(organizations, eq(organizations.id, locations.organizationId))
       .where(and(
         eq(deviceActivationTokens.tokenHash, hash), isNull(deviceActivationTokens.usedAt), gt(deviceActivationTokens.expiresAt, now),
+        eq(devices.id, target.deviceId), eq(locations.id, target.locationId),
         eq(devices.status, "active"), isNull(devices.revokedAt), isNull(devices.credentialHash),
         isNull(locations.archivedAt), isNull(organizations.archivedAt),
       ))
-      .for("update")
+      .for("update", { of: [deviceActivationTokens, devices] })
       .limit(1);
     if (!eligible) throw new DeviceProvisioningError("activation_invalid");
 
@@ -253,6 +281,6 @@ export async function activateDevice(token: string) {
       deviceId: eligible.deviceId,
       deviceLabel: eligible.deviceLabel,
     });
-  });
+  }); } catch (error) { throwMappedDeviceProductError(error); }
   return credential;
 }

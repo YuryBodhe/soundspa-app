@@ -401,7 +401,8 @@ function Content() {
           : body.error === "unverified" ? "deviceEmailUnverified"
             : body.error === "location_unavailable" ? "deviceLocationUnavailable"
               : body.error === "invalid" ? "deviceNameRequired"
-                : body.error === "operation_expired" ? "deviceActivationRetryExpired" : "deviceProvisioningFailed";
+                : body.error === "operation_expired" ? "deviceActivationRetryExpired"
+                  : body.error === "basic_device_limit_reached" ? "deviceBasicLimitReached" : "deviceProvisioningFailed";
         setDeviceError(t(errorKey));
         return;
       }

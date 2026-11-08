@@ -32,5 +32,8 @@ export const th: Dictionary = { registrationLinkSignupNotice: "คุณกำ�
   deviceActivationSubmit: "เปิดใช้อุปกรณ์",
   deviceActivationUnavailableTitle: "ไม่สามารถเปิดใช้งานได้",
   deviceActivationUnavailableDescription: "ลิงก์ไม่ถูกต้อง หมดอายุ ใช้ไปแล้ว หรือไม่พร้อมใช้งาน โปรดขอลิงก์ใหม่จากเจ้าของบัญชี",
+  deviceActivationLimitReachedTitle: "ถึงขีดจำกัดอุปกรณ์แล้ว",
+  deviceActivationLimitReachedDescription: "ร้านนี้ถึงขีดจำกัดห้าอุปกรณ์สำหรับช่วงทดลองใช้ SoundSpa Basic แล้ว อุปกรณ์ยังไม่ได้เปิดใช้งาน โปรดติดต่อเจ้าของบัญชี",
+  deviceBasicLimitReached: "ร้านนี้ถึงขีดจำกัดห้าอุปกรณ์สำหรับช่วงทดลองใช้ SoundSpa Basic แล้ว อุปกรณ์ยังไม่ได้เปิดใช้งาน โปรดติดต่อเจ้าของบัญชี",
   deviceActivationTemporaryError: "ไม่สามารถเปิดใช้อุปกรณ์ได้ชั่วคราว โปรดลองอีกครั้งภายหลัง",
 };

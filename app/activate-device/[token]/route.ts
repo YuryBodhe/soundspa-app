@@ -29,10 +29,12 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 }
 
-export function renderDeviceActivationPage(locale: Locale, preview?: { organizationName: string; locationName: string; deviceName: string | null }, status = 200) {
+export function renderDeviceActivationPage(locale: Locale, preview?: { organizationName: string; locationName: string; deviceName: string | null }, status = 200, quotaReached = false) {
   const t = dictionaries[locale];
   const content = preview
     ? `<p class="eyebrow">${t.deviceActivationEyebrow}</p><h1>${t.deviceActivationConfirmTitle}</h1><dl><dt>${t.deviceActivationOrganization}</dt><dd>${escapeHtml(preview.organizationName)}</dd><dt>${t.deviceActivationLocation}</dt><dd>${escapeHtml(preview.locationName)}</dd><dt>${t.deviceActivationDevice}</dt><dd>${escapeHtml(preview.deviceName || t.deviceActivationUnnamed)}</dd></dl><form method="post"><button type="submit">${t.deviceActivationSubmit}</button></form>`
+    : quotaReached
+      ? `<p class="eyebrow">${t.deviceActivationEyebrow}</p><h1>${t.deviceActivationLimitReachedTitle}</h1><p>${t.deviceActivationLimitReachedDescription}</p>`
     : `<p class="eyebrow">${t.deviceActivationEyebrow}</p><h1>${t.deviceActivationUnavailableTitle}</h1><p>${t.deviceActivationUnavailableDescription}</p>`;
 
   return new Response(`<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SoundSpa · ${t.deviceActivationEyebrow}</title><script src="/activation-language.js" defer></script><style>
@@ -74,7 +76,10 @@ export async function POST(request: Request, context: { params: Promise<{ token:
     response.headers.set("Referrer-Policy", "no-referrer");
     return response;
   } catch (error) {
-    if ((error as { name?: unknown })?.name === "DeviceProvisioningError") return renderDeviceActivationPage(locale, undefined, 410);
+    if ((error as { name?: unknown })?.name === "DeviceProvisioningError") {
+      if ((error as { code?: unknown }).code === "basic_device_limit_reached") return renderDeviceActivationPage(locale, undefined, 409, true);
+      return renderDeviceActivationPage(locale, undefined, 410);
+    }
     console.error("[V2 device activation] Activation failed.");
     return new Response(dictionaries[locale].deviceActivationTemporaryError, {
       status: 503,

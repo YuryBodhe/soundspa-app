@@ -1,15 +1,15 @@
 /**
  * Product assignment quotas are separate from the underlying entitlement. A
- * paid Basic subscription removes the Basic Trial device cap for Basic only.
- * Existing non-Gift products and historical benefit sources keep their current
- * behavior until a product-specific limit is explicitly defined.
+ * paid Basic or a separate Basic benefit/promotion removes the Basic Trial
+ * device cap for Basic only. A grant with no configured quota must not inherit
+ * a newly invented limit from a concurrent Trial entitlement.
  */
 export type DeviceProductAccessBasis = "basic_trial" | "basic_paid" | "spaquatoria_gift" | "other";
 
 export function deviceProductAssignmentLimit(productCode: string, accessBases: DeviceProductAccessBasis | readonly DeviceProductAccessBasis[]): number | null {
   const bases = Array.isArray(accessBases) ? accessBases : [accessBases];
   if (productCode === "soundspa") {
-    if (bases.includes("basic_paid")) return null;
+    if (bases.includes("basic_paid") || bases.includes("other")) return null;
     if (bases.includes("basic_trial")) return 5;
     return null;
   }

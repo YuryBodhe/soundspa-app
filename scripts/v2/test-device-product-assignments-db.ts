@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 class RollbackFixture extends Error {}
 const TEST_URL = process.env.V2_DEVICE_PRODUCT_ASSIGNMENTS_TEST_DATABASE_URL;
@@ -12,7 +12,7 @@ assert(!new Set(["postgres", "root"]).has(decodeURIComponent(parsed.username)), 
 process.env.V2_DATABASE_URL = TEST_URL;
 
 async function main() {
-  const [{ v2Db, v2Pool }, schema, { backfillActivatedBasicDeviceAssignmentsInTransaction }, policy] = await Promise.all([
+  const [{ v2Db, v2Pool }, schema, assignments, policy] = await Promise.all([
     import("../../db/v2/client"),
     import("../../db/v2/schema"),
     import("../../db/v2/services/deviceProductAssignments"),
@@ -128,10 +128,13 @@ async function main() {
       const expiredDevice = (await createDevices(expired.location.id, 1))[0]!;
       const archived = await createLocation("Archived", now);
       const archivedDevice = (await createDevices(archived.location.id, 1))[0]!;
+      const archivedOrganization = await createLocation("Archived organization");
+      await tx.update(schema.organizations).set({ archivedAt: now }).where(eq(schema.organizations.id, archivedOrganization.organization.id));
+      const archivedOrganizationDevice = (await createDevices(archivedOrganization.location.id, 1))[0]!;
 
-      const firstCount = await backfillActivatedBasicDeviceAssignmentsInTransaction(tx);
+      const firstCount = await assignments.backfillActivatedBasicDeviceAssignmentsInTransaction(tx);
       assert.equal(firstCount, 12, "5 trial + 6 paid + 1 current Basic promotional assignments");
-      assert.equal(await backfillActivatedBasicDeviceAssignmentsInTransaction(tx), 0, "repeat backfill is idempotent");
+      assert.equal(await assignments.backfillActivatedBasicDeviceAssignmentsInTransaction(tx), 0, "repeat backfill is idempotent");
 
       const fixtureDeviceIds = [...trialDevices, ...paidDevices, promoDevice].map((device) => device.id);
       const activeBasic = await tx.select().from(schema.deviceProductAssignments).where(and(
@@ -147,6 +150,108 @@ async function main() {
       assert.equal((await tx.select().from(schema.deviceProductAssignments).where(eq(schema.deviceProductAssignments.productId, spaquatoria.id))).length, 0,
         "Spaquatoria Partner Benefit is not automatically assigned");
 
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: trial.location.id, deviceId: trialDevices[0]!.id,
+      }), "existing", "credential reset/re-activation preserves the Device's existing Basic assignment");
+      assert.equal((await tx.select().from(schema.deviceProductAssignments).where(and(
+        eq(schema.deviceProductAssignments.deviceId, trialDevices[0]!.id), eq(schema.deviceProductAssignments.productId, basic.id),
+      ))).length, 1, "reactivation does not double-count or duplicate the same Device");
+
+      const trialPendingCandidate = (await createDevices(trial.location.id, 1, false))[0]!;
+      assert.equal((await tx.select().from(schema.deviceProductAssignments).where(eq(schema.deviceProductAssignments.deviceId, trialPendingCandidate.id))).length, 0,
+        "a pending activation link has no assignment and consumes no quota");
+
+      // Inactive, expired and revoked independent grants must not bypass the
+      // active Trial-only five-device cap.
+      const inactivePartner = (await tx.insert(schema.commercialPartners).values({
+        code: `inactive-device-test-${suffix}`, name: `Inactive device test ${suffix}`, isActive: false,
+      }).returning())[0]!;
+      await tx.insert(schema.commercialPartnerBenefits).values([
+        { partnerId: partner.id, productId: basic.id, locationId: trial.location.id, startsAt: new Date(past.getTime() - 60_000), endsAt: past },
+        { partnerId: inactivePartner.id, productId: basic.id, locationId: trial.location.id, startsAt: past, endsAt: future },
+      ]);
+      await tx.insert(schema.locationProductPromotionalAccess).values([
+        { locationId: trial.location.id, productId: basic.id, source: "operator", durationUnit: "days", durationValue: 30,
+          grantedAt: now, startsAt: past, endsAt: future, status: "revoked", grantedByOperator: "test-operator",
+          reasonCode: "testing", reason: "Revoked disposable grant", operatorRequestId: randomUUID(),
+          revokedAt: now, revokedByOperator: "test-operator", revokeReason: "Revoked for integration assertion" },
+        { locationId: trial.location.id, productId: basic.id, source: "operator", durationUnit: "days", durationValue: 30,
+          grantedAt: past, startsAt: new Date(past.getTime() - 60_000), endsAt: past, status: "granted",
+          grantedByOperator: "test-operator", reasonCode: "testing", reason: "Expired disposable grant", operatorRequestId: randomUUID() },
+      ]);
+      await assert.rejects(assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: trial.location.id, deviceId: trialPendingCandidate.id,
+      }), (error: unknown) => error instanceof assignments.DeviceProductAssignmentError && error.code === "basic_device_limit_reached");
+
+      // A concurrent independent Basic partner grant has no invented device cap.
+      await tx.insert(schema.commercialPartnerBenefits).values({
+        partnerId: partner.id, productId: basic.id, locationId: trial.location.id, startsAt: past, endsAt: future,
+      });
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: trial.location.id, deviceId: trialPendingCandidate.id,
+      }), "assigned", "an independent Basic Partner Benefit is not subjected to a Trial-only quota");
+
+      // Close the rollout gap for Devices activated by the old app after 0036
+      // but before runtime enforcement: they count and are assigned atomically.
+      const rolloutGap = await createLocation("Rollout gap");
+      const [rolloutTrial] = await tx.insert(schema.organizationCoreTrials).values({
+        organizationId: rolloutGap.organization.id, productId: basic.id, status: "active", startsAt: past, endsAt: future,
+        origin: "first_location_creation", createdAt: past, updatedAt: past,
+      }).returning();
+      await tx.insert(schema.organizationCoreTrialLocations).values({
+        organizationTrialId: rolloutTrial!.id, organizationId: rolloutGap.organization.id, locationId: rolloutGap.location.id,
+        slotNumber: 1, source: "first_location_creation", allocatedAt: past,
+      });
+      const oldRuntimeDevices = await createDevices(rolloutGap.location.id, 4);
+      const rolloutCandidate = (await createDevices(rolloutGap.location.id, 1, false))[0]!;
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: rolloutGap.location.id, deviceId: rolloutCandidate.id,
+      }), "assigned");
+      const rolloutAssignments = await tx.select().from(schema.deviceProductAssignments).where(and(
+        inArray(schema.deviceProductAssignments.deviceId, [...oldRuntimeDevices.map((device) => device.id), rolloutCandidate.id]),
+        eq(schema.deviceProductAssignments.productId, basic.id), isNull(schema.deviceProductAssignments.revokedAt),
+      ));
+      assert.equal(rolloutAssignments.length, 5, "four previously activated Devices plus the new one are represented exactly once");
+      assert.equal(rolloutAssignments.filter((row) => row.source === "legacy_basic_backfill").length, 4);
+
+      const paidCandidate = (await createDevices(paid.location.id, 1, false))[0]!;
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: paid.location.id, deviceId: paidCandidate.id,
+      }), "assigned", "paid Basic remains unlimited beyond five Device assignments");
+
+      const promoCandidate = (await createDevices(promotional.location.id, 1, false))[0]!;
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: promotional.location.id, deviceId: promoCandidate.id,
+      }), "assigned", "a Basic Promotional Access entitlement receives Basic assignment without a new cap");
+
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: expired.location.id, deviceId: expiredDevice.id,
+      }), "no_entitlement", "an expired Trial does not receive a Basic assignment");
+      await assert.rejects(assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: archived.location.id, deviceId: archivedDevice.id,
+      }), (error: unknown) => error instanceof assignments.DeviceProductAssignmentError && error.code === "location_unavailable");
+      await assert.rejects(assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: archivedOrganization.location.id, deviceId: archivedOrganizationDevice.id,
+      }), (error: unknown) => error instanceof assignments.DeviceProductAssignmentError && error.code === "location_unavailable");
+
+      const spaOnly = await createLocation("Spaquatoria only");
+      await tx.insert(schema.commercialPartnerBenefits).values({
+        partnerId: partner.id, productId: spaquatoria.id, locationId: spaOnly.location.id, startsAt: past, endsAt: future,
+      });
+      const spaOnlyDevice = (await createDevices(spaOnly.location.id, 1, false))[0]!;
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: spaOnly.location.id, deviceId: spaOnlyDevice.id,
+      }), "no_entitlement", "Spaquatoria-only access does not create a Basic assignment");
+
+      const revokedAssignmentDevice = (await createDevices(paid.location.id, 1, false))[0]!;
+      await tx.insert(schema.deviceProductAssignments).values({
+        deviceId: revokedAssignmentDevice.id, productId: basic.id, source: "operator",
+        revokedAt: now, revokedBy: "test-operator", revokeReason: "Test revocation",
+      });
+      assert.equal(await assignments.assignBasicDeviceProductOnActivationInTransaction(tx, {
+        locationId: paid.location.id, deviceId: revokedAssignmentDevice.id,
+      }), "historically_revoked", "credential activation does not silently restore a revoked assignment");
+
       // A sixth trial Device fails closed, while six Paid Basic Devices backfill successfully above.
       const overQuota = await createLocation("Over quota");
       const [overTrial] = await tx.insert(schema.organizationCoreTrials).values({
@@ -158,7 +263,7 @@ async function main() {
         slotNumber: 1, source: "first_location_creation", allocatedAt: past,
       });
       await createDevices(overQuota.location.id, 6);
-      await assert.rejects(backfillActivatedBasicDeviceAssignmentsInTransaction(tx), /more than five activated Devices/);
+      await assert.rejects(assignments.backfillActivatedBasicDeviceAssignmentsInTransaction(tx), /more than five activated Devices/);
 
       // One Device may be assigned to both Products; active uniqueness is product-scoped.
       await tx.insert(schema.deviceProductAssignments).values({ deviceId: trialDevices[0]!.id, productId: spaquatoria.id, source: "operator" });
@@ -170,6 +275,7 @@ async function main() {
       assert.equal(policy.canAssignActivatedDevice(5, 4), true);
       assert.equal(policy.canAssignActivatedDevice(5, 5), false);
       assert.equal(policy.deviceProductAssignmentLimit("soundspa", ["basic_trial", "basic_paid"]), null);
+      assert.equal(policy.deviceProductAssignmentLimit("soundspa", ["basic_trial", "other"]), null);
       assert(Array.from({ length: 6 }, (_, i) => policy.canAssignActivatedDevice(null, i)).every(Boolean), "paid Basic policy is unlimited");
       assert.equal(policy.deviceProductAssignmentLimit("spaquatoria", "spaquatoria_gift"), 1);
       assert.equal(policy.canAssignActivatedDevice(1, 1), false, "Spaquatoria quota is independent");
@@ -177,7 +283,7 @@ async function main() {
       throw new RollbackFixture();
     }).catch((error: unknown) => { if (!(error instanceof RollbackFixture)) throw error; });
 
-    console.info("V2 Device–Product PostgreSQL 16 integration PASS: additive schema objects, Basic Trial five-device cap, paid Basic unlimited, Basic promotional backfill, Spaquatoria non-backfill, independent Product assignments, pending/revoked/expired/archived exclusion, over-quota fail-closed, and idempotency. All fixtures rolled back.");
+    console.info("V2 Device–Product PostgreSQL 16 integration PASS: additive schema objects, transactional assignment locking, Basic Trial five-device cap, paid/independent Basic grants without invented caps, existing assignment preservation, Spaquatoria non-assignment, pending/expired/archived/revoked handling, over-quota failure, idempotent backfill, and product independence. All fixtures rolled back.");
   } finally {
     await v2Pool.end();
   }

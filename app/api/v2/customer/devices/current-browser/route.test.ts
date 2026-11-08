@@ -96,6 +96,18 @@ test("expired idempotency operations fail closed without issuing a Device cookie
   assert.equal(response.headers.get("set-cookie"), null);
 });
 
+test("Basic Trial quota failure is a retryable conflict and never returns a Device cookie", async () => {
+  const post = createPostHandler({
+    sameOrigin: () => true,
+    getSession: async () => session,
+    createDevice: async () => { throw Object.assign(new Error("limit"), { name: "DeviceProvisioningError", code: "basic_device_limit_reached" }); },
+  });
+  const response = await post(request({ token: "valid", origin: "https://soundspa.test" }));
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "basic_device_limit_reached" });
+  assert.equal(response.headers.get("set-cookie"), null);
+});
+
 test("missing idempotency secret surfaces only an unavailable response", async () => {
   const post = createPostHandler({
     sameOrigin: () => true,

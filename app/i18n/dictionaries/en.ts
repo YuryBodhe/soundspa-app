@@ -45,5 +45,8 @@ export const en = { registrationLinkSignupNotice: "You are signing up through a 
   deviceActivationSubmit: "Activate device",
   deviceActivationUnavailableTitle: "Activation unavailable",
   deviceActivationUnavailableDescription: "This link is invalid, expired, already used, or unavailable. Ask the account owner for a new link.",
+  deviceActivationLimitReachedTitle: "Device limit reached",
+  deviceActivationLimitReachedDescription: "This salon has reached the five-device SoundSpa Basic Trial limit. The device was not activated; contact the account owner.",
+  deviceBasicLimitReached: "This salon has reached the five-device SoundSpa Basic Trial limit. The device was not activated; contact the account owner.",
   deviceActivationTemporaryError: "Device activation is temporarily unavailable. Please try again later.",
 } as const;

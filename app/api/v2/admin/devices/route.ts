@@ -21,14 +21,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { createDeviceWithActivation, DeviceProvisioningError } = await import("../../../../../db/v2/services/deviceProvisioning");
+    const { createDeviceWithActivation } = await import("../../../../../db/v2/services/deviceProvisioning");
     const created = await createDeviceWithActivation(body as { locationId?: unknown; name?: unknown });
     const activationUrl = new URL(`/activate-device/${created.activationToken}`, publicUrl.origin).toString();
     return Response.json({ ok: true, device: created.device, activationUrl, expiresAt: created.expiresAt.toISOString() }, { status: 201, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
   } catch (error) {
     const provisioningError = error as { name?: unknown; code?: unknown; message?: unknown };
     if (provisioningError?.name === "DeviceProvisioningError") {
-      const status = provisioningError.code === "validation" ? 400 : provisioningError.code === "location_unavailable" ? 404 : 400;
+      const status = provisioningError.code === "validation" ? 400
+        : provisioningError.code === "location_unavailable" ? 404
+          : provisioningError.code === "basic_device_limit_reached" ? 409 : 400;
       return Response.json({ ok: false, code: provisioningError.code, message: provisioningError.message }, { status, headers: { "Cache-Control": "no-store" } });
     }
     console.error("[V2 device provisioning] Device creation failed.");

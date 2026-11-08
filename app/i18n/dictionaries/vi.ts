@@ -32,5 +32,8 @@ export const vi: Dictionary = { registrationLinkSignupNotice: "Bạn đang đăn
   deviceActivationSubmit: "Kích hoạt thiết bị",
   deviceActivationUnavailableTitle: "Không thể kích hoạt",
   deviceActivationUnavailableDescription: "Liên kết không hợp lệ, đã hết hạn, đã được sử dụng hoặc không khả dụng. Hãy yêu cầu chủ tài khoản tạo liên kết mới.",
+  deviceActivationLimitReachedTitle: "Đã đạt giới hạn thiết bị",
+  deviceActivationLimitReachedDescription: "Salon này đã đạt giới hạn năm thiết bị của gói dùng thử SoundSpa Basic. Thiết bị chưa được kích hoạt; hãy liên hệ chủ tài khoản.",
+  deviceBasicLimitReached: "Salon này đã đạt giới hạn năm thiết bị của gói dùng thử SoundSpa Basic. Thiết bị chưa được kích hoạt; hãy liên hệ chủ tài khoản.",
   deviceActivationTemporaryError: "Tạm thời không thể kích hoạt thiết bị. Vui lòng thử lại sau.",
 };

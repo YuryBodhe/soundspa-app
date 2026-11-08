@@ -32,6 +32,13 @@ test("activation page offers all supported languages and reuses the saved locale
   assert.match(html, /script-src 'self'/);
 });
 
+test("quota failure has a localized retryable message without exposing activation data", async () => {
+  const html = await renderDeviceActivationPage("ru", undefined, 409, true).text();
+  assert.match(html, /Достигнут лимит устройств/);
+  assert.match(html, /Устройство не активировано/);
+  assert.doesNotMatch(html, /token|credential/i);
+});
+
 test("activation locale follows browser Accept-Language and a validated explicit hint", () => {
   assert.equal(resolveDeviceActivationLocale(new Request("https://soundspa.test/activate-device/token", { headers: { "accept-language": "vi-VN,vi;q=0.9,en;q=0.8" } })), "vi");
   assert.equal(resolveDeviceActivationLocale(new Request("https://soundspa.test/activate-device/token?lang=th", { headers: { "accept-language": "ru" } })), "th");

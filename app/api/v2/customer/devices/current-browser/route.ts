@@ -68,6 +68,7 @@ export function createPostHandler(dependencies: Dependencies) {
       if (operation?.name === "DeviceProvisioningError") {
         if (operation.code === "operation_expired") return failure("operation_expired", 410);
         if (operation.code === "operation_conflict") return failure("operation_unavailable", 409);
+        if (operation.code === "basic_device_limit_reached") return failure("basic_device_limit_reached", 409);
         if (operation.code === "configuration_unavailable") return failure("unavailable", 503);
         return failure(operation.code === "validation" ? "invalid" : "location_unavailable", operation.code === "validation" ? 400 : 404);
       }

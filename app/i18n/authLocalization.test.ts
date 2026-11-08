@@ -8,7 +8,7 @@ import { th } from "./dictionaries/th";
 const dictionaries = { en, ru, vi, th };
 const requiredKeys = [
   "language", "selectLanguage", "authLoginTitle", "authLoginDescription", "authEmail", "authRequestLogin", "authSending", "authInvalidLink", "authInvalidEmail",
-  "deviceActivationEyebrow", "deviceActivationConfirmTitle", "deviceActivationOrganization", "deviceActivationLocation", "deviceActivationDevice", "deviceActivationUnnamed", "deviceActivationSubmit", "deviceActivationUnavailableTitle", "deviceActivationUnavailableDescription", "deviceActivationTemporaryError",
+  "deviceActivationEyebrow", "deviceActivationConfirmTitle", "deviceActivationOrganization", "deviceActivationLocation", "deviceActivationDevice", "deviceActivationUnnamed", "deviceActivationSubmit", "deviceActivationUnavailableTitle", "deviceActivationUnavailableDescription", "deviceActivationLimitReachedTitle", "deviceActivationLimitReachedDescription", "deviceBasicLimitReached", "deviceActivationTemporaryError",
 ] as const;
 
 test("login and device activation copy is present in all supported locales", () => {

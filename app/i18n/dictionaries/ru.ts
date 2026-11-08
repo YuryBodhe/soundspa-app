@@ -32,5 +32,8 @@ export const ru: Dictionary = { registrationLinkSignupNotice: "Вы регист
   deviceActivationSubmit: "Активировать устройство",
   deviceActivationUnavailableTitle: "Активация недоступна",
   deviceActivationUnavailableDescription: "Ссылка недействительна, истекла, уже использована или недоступна. Попросите владельца аккаунта создать новую ссылку.",
+  deviceActivationLimitReachedTitle: "Достигнут лимит устройств",
+  deviceActivationLimitReachedDescription: "В этом салоне достигнут лимит в пять устройств для пробного SoundSpa Basic. Устройство не активировано; обратитесь к владельцу аккаунта.",
+  deviceBasicLimitReached: "В этом салоне достигнут лимит в пять устройств для пробного SoundSpa Basic. Устройство не активировано; обратитесь к владельцу аккаунта.",
   deviceActivationTemporaryError: "Активация устройства временно недоступна. Попробуйте позже.",
 };
