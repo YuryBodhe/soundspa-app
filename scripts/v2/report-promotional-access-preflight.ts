@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { Pool } from "pg";
+import { classifyLegacyTrial } from "./promotional-access-preflight-classifier";
 
 const connectionString = process.env.V2_DATABASE_URL;
 if (process.env.V2_PROMOTIONAL_ACCESS_PREFLIGHT_ALLOW_READ_ONLY !== "1" ||
@@ -30,19 +31,66 @@ async function main() {
       throw new Error("Refusing Promotional Access preflight: expected the source schema through migration 0034.");
     }
 
-    const trials = await client.query<{ product: string; status: string; classification: string; count: string }>(`SELECT p.code AS product,t.status::text AS status,
-      CASE WHEN t.invalidated_by_reset_id IS NOT NULL THEN 'invalidated'
-           WHEN t.registration_link_grant_id IS NOT NULL THEN 'registration_link_source'
-           WHEN led.legacy_trial_id IS NOT NULL AND led.legacy_origin='onboarding_inferred' THEN 'canonical_onboarding_inferred'
-           WHEN led.legacy_trial_id IS NOT NULL AND led.legacy_origin='unknown' THEN 'canonical_origin_unknown_review'
-           WHEN led.legacy_trial_id IS NOT NULL AND led.legacy_origin='registration_link' THEN 'canonical_registration_link_review'
-           WHEN led.legacy_trial_id IS NOT NULL AND led.legacy_origin='partner_invite_possible' THEN 'canonical_partner_invite_possible_review'
-           WHEN led.legacy_trial_id IS NOT NULL THEN 'canonical_other_origin_review'
-           ELSE 'unlinked_legacy_review' END AS classification,
-      count(*)::text AS count
+    const trialEvidence = await client.query<{
+      product: string; status: string; registrationLinkGrantLinked: boolean; registrationLinkGrantsAtLocation: string; canonicalTrialLinkConfirmed: boolean;
+      canonicalOriginHint: string | null; exactPartnerInviteMatches: string; partnerInviteClaimsAtLocation: string; invalidated: boolean;
+    }>(`SELECT p.code AS product,t.status::text AS status,
+      (t.registration_link_grant_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM commercial_registration_link_grants rg WHERE rg.id=t.registration_link_grant_id
+      )) AS "registrationLinkGrantLinked",
+      (SELECT count(*)::text FROM commercial_registration_link_grants rg
+       WHERE rg.location_id=t.location_id AND rg.product_id=t.product_id) AS "registrationLinkGrantsAtLocation",
+      (SELECT count(*) FROM organization_core_trial_locations led
+       JOIN organization_core_trials ot ON ot.id=led.organization_trial_id AND ot.organization_id=led.organization_id
+       JOIN locations l ON l.id=led.location_id AND l.organization_id=led.organization_id
+       WHERE led.legacy_trial_id=t.id AND led.location_id=t.location_id
+         AND ot.product_id=t.product_id AND ot.status=t.status
+         AND ot.starts_at=t.starts_at AND ot.ends_at=t.ends_at) = 1 AS "canonicalTrialLinkConfirmed",
+      (SELECT led.legacy_origin FROM organization_core_trial_locations led WHERE led.legacy_trial_id=t.id LIMIT 1) AS "canonicalOriginHint",
+      (SELECT count(*)::text FROM commercial_partner_invite_claims c
+       JOIN commercial_partner_invites i ON i.id=c.invite_id
+       JOIN commercial_offer_grants g ON g.offer_id=i.offer_id AND g.grant_type='trial'
+       JOIN commercial_products cp ON cp.id=g.product_id AND cp.code='soundspa'
+       WHERE c.location_id=t.location_id AND t.registration_link_grant_id IS NULL
+         AND c.claimed_at=t.starts_at AND t.ends_at=c.claimed_at+(g.duration_days * interval '1 day')) AS "exactPartnerInviteMatches",
+      (SELECT count(*)::text FROM commercial_partner_invite_claims c
+       JOIN commercial_partner_invites i ON i.id=c.invite_id
+       JOIN commercial_offer_grants g ON g.offer_id=i.offer_id AND g.grant_type='trial'
+       JOIN commercial_products cp ON cp.id=g.product_id AND cp.code='soundspa'
+       WHERE c.location_id=t.location_id) AS "partnerInviteClaimsAtLocation",
+      (t.invalidated_by_reset_id IS NOT NULL) AS invalidated
       FROM location_core_trials t JOIN commercial_products p ON p.id=t.product_id
-      LEFT JOIN organization_core_trial_locations led ON led.legacy_trial_id=t.id
-      GROUP BY p.code,t.status,classification ORDER BY p.code,t.status,classification`);
+      ORDER BY p.code,t.status,t.created_at`);
+
+    const classifiedTrials = trialEvidence.rows.map((row) => {
+      const evidenceClassification = classifyLegacyTrial({
+        registrationLinkGrantLinked: row.registrationLinkGrantLinked,
+        registrationLinkGrantsAtLocation: Number(row.registrationLinkGrantsAtLocation),
+        canonicalTrialLinkConfirmed: row.canonicalTrialLinkConfirmed,
+        canonicalOriginHint: row.canonicalOriginHint,
+        exactPartnerInviteMatches: Number(row.exactPartnerInviteMatches),
+        partnerInviteClaimsAtLocation: Number(row.partnerInviteClaimsAtLocation),
+      });
+      return {
+        product: row.product,
+        status: row.status,
+        ...evidenceClassification,
+        classification: row.invalidated ? "invalidated" : evidenceClassification.classification,
+        blocksPromotionalBackfill: !row.invalidated && evidenceClassification.blocksPromotionalBackfill,
+      };
+    });
+    const trials = Array.from(classifiedTrials.reduce((groups, row) => {
+      const key = JSON.stringify({
+        product: row.product,
+        status: row.status,
+        canonical_trial_link_confirmed: row.canonical_trial_link_confirmed,
+        creation_source_confirmed: row.creation_source_confirmed,
+        creation_source_inferred: row.creation_source_inferred,
+        classification: row.classification,
+      });
+      groups.set(key, (groups.get(key) ?? 0) + 1);
+      return groups;
+    }, new Map<string, number>()).entries()).map(([key, count]) => ({ ...JSON.parse(key), count }));
 
     const registration = await client.query<{ product: string; accessType: string; total: string; linked: string; exactDates: string }>(`SELECT p.code AS product,g.access_type AS "accessType",count(*)::text AS total,
       count(t.id)::text AS linked,count(*) FILTER (WHERE t.starts_at=g.starts_at AND t.ends_at=g.ends_at)::text AS "exactDates"
@@ -60,22 +108,8 @@ async function main() {
       LEFT JOIN organization_core_trial_locations led ON led.location_id=l.id
       GROUP BY p.code,g.grant_type,g.duration_days ORDER BY p.code,g.grant_type,g.duration_days`);
 
-    const candidates = await client.query<{ classification: string; count: string }>(`WITH basic_trials AS (
-        SELECT t.id,t.location_id,t.starts_at,t.ends_at,t.registration_link_grant_id,
-          (SELECT count(*) FROM commercial_partner_invite_claims c
-           JOIN commercial_partner_invites i ON i.id=c.invite_id
-           JOIN commercial_offer_grants g ON g.offer_id=i.offer_id AND g.grant_type='trial'
-           JOIN commercial_products p ON p.id=g.product_id AND p.code='soundspa'
-           WHERE c.location_id=t.location_id AND t.registration_link_grant_id IS NULL
-             AND c.claimed_at=t.starts_at AND t.ends_at=c.claimed_at+(g.duration_days * interval '1 day')) AS exact_partner_matches
-        FROM location_core_trials t JOIN commercial_products p ON p.id=t.product_id AND p.code='soundspa'
-        WHERE t.invalidated_by_reset_id IS NULL
-      )
-      SELECT CASE WHEN registration_link_grant_id IS NOT NULL THEN 'registration_link_provenance'
-                  WHEN exact_partner_matches=1 THEN 'partner_invite_exact_candidate'
-                  WHEN exact_partner_matches=0 THEN 'no_exact_partner_candidate_review'
-                  ELSE 'multiple_partner_candidates_review' END AS classification,count(*)::text AS count
-      FROM basic_trials GROUP BY classification ORDER BY classification`);
+    const candidates = trials.filter(({ product }) => product === "soundspa").map(({ classification, count }) => ({ classification, count }));
+    const blockingTrialRows = classifiedTrials.filter((row) => row.product === "soundspa" && row.blocksPromotionalBackfill).length;
 
     const overlap = await client.query<{ kind: string; count: string }>(`WITH tr AS (
         SELECT t.location_id,t.product_id,t.starts_at,t.ends_at FROM location_core_trials t
@@ -101,11 +135,12 @@ async function main() {
       database: identity.database,
       postgresMajor: identity.version.slice(0, 2),
       migrationEntries: identity.migrations,
-      trialRows: trials.rows,
+      trialRows: trials,
       canonicalOrganizationTrials: canonical.rows,
       registrationLinkGrants: registration.rows,
       partnerInviteGrantConfigurationAndClaims: partner.rows,
-      partnerTrialAttributionCandidates: candidates.rows,
+      partnerTrialAttributionCandidates: candidates,
+      blockingAmbiguousBasicTrials: blockingTrialRows,
       periodOverlaps: overlap.rows,
       note: "Legacy-origin flags are classification hints only; ambiguous rows require manual review. No customer names, emails, tokens, or secrets are queried or printed.",
       targetHostClass: isIP(address) ? "loopback" : "V2 compose service name",
