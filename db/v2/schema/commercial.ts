@@ -227,6 +227,49 @@ export const locationCoreTrials = pgTable("location_core_trials", {
   check("location_core_trials_window", sql`${table.endsAt} > ${table.startsAt}`),
 ]);
 
+/** One immutable Basic trial window per Organization; legacy windows are backfilled verbatim. */
+export const organizationCoreTrials = pgTable("organization_core_trials", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  productId: uuid("product_id").notNull().references(() => commercialProducts.id, { onDelete: "restrict" }),
+  status: commercialTrialStatus("status").notNull(),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+  origin: text("origin").$type<"legacy_backfill" | "first_location_creation">().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  // A trial is lifetime-unique for an Organization, not reusable after expiry.
+  uniqueIndex("organization_core_trials_organization_unique").on(table.organizationId),
+  uniqueIndex("organization_core_trials_id_organization_unique").on(table.id, table.organizationId),
+  check("organization_core_trials_window", sql`${table.endsAt} > ${table.startsAt}`),
+  check("organization_core_trials_origin_valid", sql`${table.origin} IN ('legacy_backfill', 'first_location_creation')`),
+]);
+
+/** Durable cumulative Location slots. Rows are append-only and slot numbers are never reusable. */
+export const organizationCoreTrialLocations = pgTable("organization_core_trial_locations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationTrialId: uuid("organization_trial_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  locationId: uuid("location_id").notNull(),
+  slotNumber: integer("slot_number").notNull(),
+  source: text("source").$type<"legacy_trial" | "active_window_backfill" | "first_location_creation" | "additional_location_creation">().notNull(),
+  legacyTrialId: uuid("legacy_trial_id").unique().references(() => locationCoreTrials.id, { onDelete: "restrict" }),
+  legacyOrigin: text("legacy_origin").$type<"registration_link" | "partner_invite_possible" | "onboarding_inferred" | "unknown">(),
+  allocatedAt: timestamp("allocated_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("organization_core_trial_locations_trial_location_unique").on(table.organizationTrialId, table.locationId),
+  uniqueIndex("organization_core_trial_locations_trial_slot_unique").on(table.organizationTrialId, table.slotNumber),
+  uniqueIndex("organization_core_trial_locations_location_unique").on(table.locationId),
+  foreignKey({ name: "organization_core_trial_locations_trial_org_fk", columns: [table.organizationTrialId, table.organizationId], foreignColumns: [organizationCoreTrials.id, organizationCoreTrials.organizationId] }).onDelete("restrict"),
+  foreignKey({ name: "organization_core_trial_locations_location_org_fk", columns: [table.locationId, table.organizationId], foreignColumns: [locations.id, locations.organizationId] }).onDelete("restrict"),
+  check("organization_core_trial_locations_slot_range", sql`${table.slotNumber} BETWEEN 1 AND 5`),
+  check("organization_core_trial_locations_source_valid", sql`${table.source} IN ('legacy_trial', 'active_window_backfill', 'first_location_creation', 'additional_location_creation')`),
+  check("organization_core_trial_locations_legacy_provenance_shape", sql`(${table.source} = 'legacy_trial' AND ${table.legacyTrialId} IS NOT NULL AND ${table.legacyOrigin} IS NOT NULL) OR (${table.source} <> 'legacy_trial' AND ${table.legacyTrialId} IS NULL AND ${table.legacyOrigin} IS NULL)`),
+  index("organization_core_trial_locations_org_slot_idx").on(table.organizationId, table.slotNumber),
+]);
+
 export const locationSubscriptions = pgTable("location_subscriptions", {
   id: uuid("id").defaultRandom().primaryKey(),
   locationId: uuid("location_id").notNull(),
