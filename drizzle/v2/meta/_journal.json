@@ -253,6 +253,13 @@
       "when": 1794145936847,
       "tag": "0035_promotional_access_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794157086456,
+      "tag": "0036_device_product_assignments_foundation",
+      "breakpoints": true
     }
   ]
 }
