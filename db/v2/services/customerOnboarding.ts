@@ -2,18 +2,15 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, gt, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { v2Db } from "../client";
 import {
-  commercialProducts,
   commercialPartnerInviteClaims,
   commercialPartnerInvites,
   customerSignupIntents,
-  locationCoreTrials,
   locations,
   organizationMembers,
   organizations,
   users,
 } from "../schema";
-import { startSoundSpaTrial } from "../queries/coreTrials";
-import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
+import { getSoundSpaTrial, startSoundSpaTrial } from "../queries/coreTrials";
 import { createCustomerWithFirstLocationInTransaction, validateCustomerProvisioningInput } from "./customerProvisioning";
 import { createLocationSlug } from "@/lib/v2/customerOnboarding";
 import { claimPartnerInviteByHash, PartnerInviteClaimError } from "./partnerInviteClaims";
@@ -44,9 +41,7 @@ async function loadExistingOnboarding(tx: V2Transaction, userId: string): Promis
   const [location] = await tx.select().from(locations)
     .where(eq(locations.organizationId, membership.organization.id)).orderBy(asc(locations.createdAt)).limit(1);
   if (!location) throw new Error("Customer membership exists without a Location.");
-  const [trialRow] = await tx.select({ trial: locationCoreTrials })
-    .from(locationCoreTrials).innerJoin(commercialProducts, eq(commercialProducts.id, locationCoreTrials.productId))
-    .where(and(eq(locationCoreTrials.locationId, location.id), isNull(locationCoreTrials.invalidatedByResetId), eq(commercialProducts.code, SOUNDSPA_PRODUCT_CODE))).limit(1);
+  const trialRow = await getSoundSpaTrial(location.id, tx);
   return {
     email: membership.user.email,
     emailVerifiedAt: membership.user.emailVerifiedAt!,
@@ -132,6 +127,8 @@ export async function completePartnerCustomerOnboarding(input: {
 }, dependencies: {
   runInTransaction?: TransactionRunner;
   createOwnerMembership?: (tx: V2Transaction, organizationId: string, userId: string) => Promise<unknown>;
+  /** @deprecated Ignored; canonical Basic trial creation is part of provisioning. */
+  createTrial?: typeof startSoundSpaTrial;
   claimByHash?: typeof claimPartnerInviteByHash;
 } = {}) {
   const names = validateCustomerProvisioningInput({
@@ -185,10 +182,10 @@ export async function completePartnerCustomerOnboarding(input: {
       }
       if (!intent.inviteTokenHash || !intent.verifiedAt) throw new PartnerOnboardingError("invite_unavailable");
 
-      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+      const { organization, location, trial } = await createCustomerWithFirstLocationInTransaction(tx, {
         ...names,
         contactEmail: user.email,
-      });
+      }, { provisionBasicTrial: true });
       await createOwnerMembership(tx, organization.id, user.id);
       const claimed = await claimByHash({ tokenHash: intent.inviteTokenHash, locationId: location.id }, (operation) => operation(tx));
       if (claimed.status !== "claimed") throw new PartnerOnboardingError("invite_unavailable");
@@ -202,7 +199,7 @@ export async function completePartnerCustomerOnboarding(input: {
           emailVerifiedAt: user.emailVerifiedAt,
           organization,
           location,
-          trial: null,
+          trial,
         },
       };
     });
@@ -221,8 +218,9 @@ export async function completeOrdinaryCustomerOnboarding(input: {
   timezone: unknown;
 }, dependencies: {
   runInTransaction?: TransactionRunner;
-  createTrial?: typeof startSoundSpaTrial;
   createOwnerMembership?: (tx: V2Transaction, organizationId: string, userId: string) => Promise<unknown>;
+  /** @deprecated Ignored; canonical Basic trial creation is part of provisioning. */
+  createTrial?: typeof startSoundSpaTrial;
 } = {}) {
   const names = validateCustomerProvisioningInput({
     organizationName: input.organizationName,
@@ -232,7 +230,6 @@ export async function completeOrdinaryCustomerOnboarding(input: {
   });
 
   const runInTransaction = dependencies.runInTransaction ?? ((operation) => v2Db.transaction(operation));
-  const createTrial = dependencies.createTrial ?? startSoundSpaTrial;
   const createOwnerMembership = dependencies.createOwnerMembership ?? ((tx, organizationId, userId) =>
     tx.insert(organizationMembers).values({ organizationId, userId, role: "owner" }));
   return runInTransaction(async (tx) => {
@@ -262,12 +259,11 @@ export async function completeOrdinaryCustomerOnboarding(input: {
     const existing = await loadExistingOnboarding(tx, user.id);
     if (existing) return { status: "already_complete" as const, account: existing };
 
-    const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+    const { organization, location, trial } = await createCustomerWithFirstLocationInTransaction(tx, {
       ...names,
       contactEmail: user.email,
-    });
+    }, { provisionBasicTrial: true });
     await createOwnerMembership(tx, organization.id, user.id);
-    const trial = await createTrial(location.id, tx);
     return {
       status: "completed" as const,
       account: {
@@ -275,7 +271,7 @@ export async function completeOrdinaryCustomerOnboarding(input: {
         emailVerifiedAt: user.emailVerifiedAt,
         organization,
         location,
-        trial: { status: trial.status, startsAt: trial.startsAt, endsAt: trial.endsAt },
+        trial,
       },
     };
   });

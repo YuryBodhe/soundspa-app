@@ -8,7 +8,6 @@ import {
   commercialPaymentProviders,
   commercialPaymentRoutes,
   commercialProducts,
-  locationCoreTrials,
   locationSubscriptions,
   locationBillingPermissions,
   locations,
@@ -17,6 +16,7 @@ import {
   users,
 } from "../schema";
 import { resolveEnabledPaymentRoutesForLocationProduct } from "./paymentFoundation";
+import { getEffectiveProductTrial } from "./organizationBasicTrial";
 import { getOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
 
 export class CustomerBillingError extends Error {
@@ -100,8 +100,7 @@ export async function listCustomerBilling(userId: string, now = new Date(), db: 
         or(isNull(commercialPartnerBenefits.endsAt), gt(commercialPartnerBenefits.endsAt, now)),
       )).orderBy(asc(commercialPartnerBenefits.startsAt), asc(commercialPartnerBenefits.id));
     for (const product of products) {
-      const [trial] = await db.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, location.id), eq(locationCoreTrials.productId, product.id), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
+      const trial = await getEffectiveProductTrial(location.id, product.id, db);
       const subscriptions = await db.select({
         id: locationSubscriptions.id,
         status: locationSubscriptions.status,

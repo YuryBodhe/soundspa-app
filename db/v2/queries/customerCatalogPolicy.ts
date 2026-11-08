@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { v2Db } from "../client";
 import {
   commercialPartnerBenefits,
@@ -8,9 +8,13 @@ import {
   commercialRegistrationLinkGrants,
   commercialRegistrationLinkRedemptions,
   locationCoreTrials,
+  locationProductPromotionalAccess,
   locationSubscriptions,
   locations,
+  organizationCoreTrialLocations,
+  organizationCoreTrials,
 } from "../schema";
+import { SOUNDSPA_PRODUCT_CODE } from "./commercialProducts";
 
 type PolicyDb = Pick<typeof v2Db, "select">;
 
@@ -48,7 +52,13 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
   const composition = await db.select({ productId: commercialProductChannels.productId, channelId: commercialProductChannels.channelId })
     .from(commercialProductChannels).where(inArray(commercialProductChannels.productId, productIds));
   const trials = await db.select({ productId: locationCoreTrials.productId }).from(locationCoreTrials)
-    .where(and(eq(locationCoreTrials.locationId, locationId), inArray(locationCoreTrials.productId, productIds)));
+    .innerJoin(commercialProducts, eq(commercialProducts.id, locationCoreTrials.productId))
+    .where(and(eq(locationCoreTrials.locationId, locationId), ne(commercialProducts.code, SOUNDSPA_PRODUCT_CODE), inArray(locationCoreTrials.productId, productIds)));
+  const organizationTrials = await db.select({ productId: organizationCoreTrials.productId }).from(organizationCoreTrialLocations)
+    .innerJoin(organizationCoreTrials, and(eq(organizationCoreTrials.id, organizationCoreTrialLocations.organizationTrialId), eq(organizationCoreTrials.organizationId, location.organizationId)))
+    .where(and(eq(organizationCoreTrialLocations.locationId, locationId), inArray(organizationCoreTrialLocations.organizationId, [location.organizationId])));
+  const promotions = await db.select({ productId: locationProductPromotionalAccess.productId }).from(locationProductPromotionalAccess)
+    .where(and(eq(locationProductPromotionalAccess.locationId, locationId), inArray(locationProductPromotionalAccess.productId, productIds)));
   const subscriptions = await db.select({ productId: locationSubscriptions.productId }).from(locationSubscriptions)
     .where(and(eq(locationSubscriptions.locationId, locationId), inArray(locationSubscriptions.productId, productIds)));
   const benefits = await db.select({ productId: commercialPartnerBenefits.productId }).from(commercialPartnerBenefits)
@@ -68,7 +78,7 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
   }
 
   const assignedProductIds = new Set<string>();
-  for (const row of [...trials, ...subscriptions, ...benefits, ...linkGrants, ...linkRedemptions, ...organizationAuthorizations]) {
+  for (const row of [...trials, ...organizationTrials, ...promotions, ...subscriptions, ...benefits, ...linkGrants, ...linkRedemptions, ...organizationAuthorizations]) {
     if (row.productId) assignedProductIds.add(row.productId);
   }
 

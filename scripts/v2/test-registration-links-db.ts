@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isIP } from "node:net";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const databaseUrl = process.env.V2_DATABASE_URL;
 if (process.env.V2_REGISTRATION_LINK_TEST_ALLOW_DATABASE !== "1" || !databaseUrl) throw new Error("Refusing Registration Link integration test: explicit opt-in and a disposable local V2 database are required.");
@@ -21,13 +21,14 @@ const [{ v2Db, v2Pool }, schema, links, auth, { completeOrdinaryCustomerOnboardi
 ]);
 const identity = (await v2Pool.query<{ database: string; role: string; address: string | null; version: string; migrations: number; latest: string }>(`SELECT current_database() AS database,current_user AS role,inet_server_addr()::text AS address,current_setting('server_version_num') AS version,(SELECT count(*)::int FROM drizzle_v2.__drizzle_migrations) AS migrations,(SELECT max(created_at)::text FROM drizzle_v2.__drizzle_migrations) AS latest`)).rows[0];
 const address = identity?.address?.split("/")[0] ?? "";
-if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 28 || identity.latest !== "1793179822892") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0027.");
+if (!identity || identity.database !== "soundspa_v2" || identity.role !== role || !identity.version.startsWith("16") || isIP(address) === 0 || !new Set(["127.0.0.1", "::1"]).has(address) || identity.migrations !== 36 || identity.latest !== "1794145936847") throw new Error("Refusing Registration Link integration test: expected isolated PostgreSQL 16 at migration 0035.");
 const clean = await v2Pool.query<{ total: string }>(`SELECT
  (SELECT count(*) FROM organizations)+(SELECT count(*) FROM users)+(SELECT count(*) FROM locations)+
  (SELECT count(*) FROM commercial_products)+(SELECT count(*) FROM commercial_product_organization_authorizations)+
  (SELECT count(*) FROM commercial_registration_links)+(SELECT count(*) FROM commercial_registration_link_redemptions)+(SELECT count(*) FROM commercial_registration_link_grants)+
  (SELECT count(*) FROM commercial_billing_orders)+(SELECT count(*) FROM commercial_payments)+
- (SELECT count(*) FROM location_core_trials)+(SELECT count(*) FROM location_subscriptions)+
+ (SELECT count(*) FROM location_core_trials)+(SELECT count(*) FROM organization_core_trials)+(SELECT count(*) FROM organization_core_trial_locations)+
+ (SELECT count(*) FROM commercial_promotional_access.location_product_promotional_access)+(SELECT count(*) FROM location_subscriptions)+
  (SELECT count(*) FROM commercial_partner_benefits)+(SELECT count(*) FROM location_channel_entitlements) AS total`);
 if (clean.rows[0]?.total !== "0") throw new Error("Refusing Registration Link integration test: database must contain no application fixtures.");
 
@@ -107,23 +108,26 @@ try {
   if (winnerResult.status !== "fulfilled" || winnerResult.value.status !== "completed") throw new Error("A concurrent Registration Link redemption did not produce the expected completed onboarding.");
   const onboarding = winnerResult.value;
   await assertUnavailableAtEndpoint(token, "exhausted");
-  check(onboarding.account.trial?.startsAt.getTime() === now.getTime(), "onboarding creates the Organization and first Location with the shared trial start");
+  check(Boolean(onboarding.account.trial) && onboarding.account.trial!.endsAt.getTime() - onboarding.account.trial!.startsAt.getTime() === 28 * 24 * 60 * 60 * 1000, "onboarding returns the server-timestamped shared 28-day Organization trial");
   const organizationId = onboarding.account.organization!.id;
   const locationId = onboarding.account.location!.id;
   const [legacyOrganization] = await v2Db.select().from(schema.organizations).where(eq(schema.organizations.id, organizationId));
   check(legacyOrganization.contactEmail === winningUser.email, "legacy Divnitsa Registration Link stores the verified owner email as Organization contact");
   const trials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, locationId));
-  check(trials.length === 2, "the first Location receives exactly the Basic and Divnitsa trials");
-  check(trials.every((trial) => trial.startsAt.getTime() === now.getTime() && trial.endsAt.getTime() === now.getTime() + trialMs), "both trials share exact 30 elapsed-day UTC boundaries");
-  check(trials.some((trial) => trial.productId === basic.id) && trials.some((trial) => trial.productId === divnitsa.id), "the simultaneous trial set contains only the policy Products");
+  const canonicalRows = await v2Db.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, organizationId));
+  const firstSlots = await v2Db.select().from(schema.organizationCoreTrialLocations).where(eq(schema.organizationCoreTrialLocations.locationId, locationId));
+  check(trials.length === 1 && trials[0]?.productId === divnitsa.id, "the legacy Registration Link grants only its non-Basic Divnitsa trial");
+  check(trials[0]?.startsAt.getTime() === now.getTime() && trials[0]?.endsAt.getTime() === now.getTime() + trialMs, "Divnitsa preserves its original 30-day Registration Link semantics");
+  check(canonicalRows.length === 1 && canonicalRows[0]?.endsAt.getTime() - canonicalRows[0]?.startsAt.getTime() === 28 * 24 * 60 * 60 * 1000 && firstSlots.length === 1, "the first Location receives one canonical Basic Organization trial and slot");
   const [membership] = await v2Db.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, winningUser.userId));
   check(membership?.organizationId === organizationId && membership.role === "owner", "verified registrant is Owner of the new Organization");
   const [grant] = await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, organizationId));
   check(grant?.grantSource === "registration_link" && grant.grantedByOperator === null && grant.registrationRedemptionId !== null && grant.productId === divnitsa.id, "persistent private-product authorization uses truthful redemption provenance");
   const [redemption] = await v2Db.select().from(schema.commercialRegistrationLinkRedemptions).where(eq(schema.commercialRegistrationLinkRedemptions.id, grant!.registrationRedemptionId!));
   check(redemption?.verifiedUserId === winningUser.userId && redemption.organizationId === organizationId && redemption.firstLocationId === locationId, "redemption records link, verified user, Organization, and first Location");
-  const [ownerless] = await v2Db.insert(schema.locations).values({ organizationId, name: "Second Location", slug: `registration-${suffix.slice(0, 12)}-second`, timezone: "Europe/Moscow" }).returning();
-  check((await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, ownerless.id))).length === 0, "additional Locations receive no automatic trials");
+  const { createCustomerLocation } = await import("../../db/v2/services/customerLocations");
+  const ownerless = await createCustomerLocation({ authenticatedUserId: winningUser.userId, organizationId, name: "Second Location", timezone: "Europe/Moscow" });
+  check((await v2Db.select().from(schema.organizationCoreTrialLocations).where(eq(schema.organizationCoreTrialLocations.locationId, ownerless.id))).length === 1, "an additional Location created in the active window receives one remaining canonical slot");
   check((await v2Db.select().from(schema.commercialBillingOrders)).length === 0 && (await v2Db.select().from(schema.commercialPayments)).length === 0 && (await v2Db.select().from(schema.locationSubscriptions)).length === 0 && (await v2Db.select().from(schema.locationChannelEntitlements)).length === 0, "redemption creates no orders, payments, paid subscriptions, or playback entitlements");
   await v2Db.update(schema.organizations).set({ contactEmail: `operator-edited-${suffix}@example.invalid` }).where(eq(schema.organizations.id, organizationId));
   const repeated = await complete(winningUser, "Ignored repeated Organization");
@@ -157,7 +161,12 @@ try {
   check(universalBasicOrganization.contactEmail === universalBasicSignup.email, "universal Registration Link stores the verified owner email as Organization contact");
   const basicOnlyLocation = universalBasicResult.account.location!.id;
   const basicOnlyTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, basicOnlyLocation));
-  check(basicOnlyTrials.length === 1 && basicOnlyTrials[0].productId === basic.id && basicOnlyTrials[0].endsAt.toISOString() === "2024-02-29T12:34:56.789Z", "Basic-only uses one UTC calendar month at a month-end boundary");
+  const [basicPromo] = await v2Db.select().from(schema.locationProductPromotionalAccess).where(and(
+    eq(schema.locationProductPromotionalAccess.locationId, basicOnlyLocation), eq(schema.locationProductPromotionalAccess.productId, basic.id),
+  ));
+  const [basicOnlyCanonical] = await v2Db.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, universalBasicResult.account.organization!.id));
+  check(basicOnlyTrials.length === 0 && Boolean(basicOnlyCanonical) && Boolean(basicPromo), "Basic-only link keeps the standard trial canonical and records its extra duration as Promotional Access");
+  check(basicPromo?.startsAt.getTime() === basicOnlyCanonical?.endsAt.getTime() && basicPromo.endsAt > basicPromo.startsAt, "Basic link promotion begins after the shared trial and has an explicit non-overlapping period");
   check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, universalBasicResult.account.organization!.id))).length === 0, "Basic-only does not grant private-product purchase authorization");
   await v2Db.update(schema.organizations).set({ contactEmail: `operator-universal-${suffix}@example.invalid` }).where(eq(schema.organizations.id, universalBasicResult.account.organization!.id));
   const universalBasicReplay = await links.completeRegistrationLinkCustomerOnboarding({ authenticatedUserId: universalBasicSignup.userId, signupIntentId: universalBasicSignup.intentId, organizationName: "Ignored replay", locationName: "Ignored", timezone: "UTC" }, calendarNow);
@@ -172,8 +181,9 @@ try {
   const mixedLocation = mixedResult.account.location!.id;
   const mixedTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, mixedLocation));
   const mixedBenefits = await v2Db.select().from(schema.commercialPartnerBenefits).where(eq(schema.commercialPartnerBenefits.locationId, mixedLocation));
-  check(mixedTrials.length === 1 && mixedTrials[0].productId === basic.id && mixedTrials[0].registrationLinkGrantId !== null, "mixed registration creates only the selected Basic trial with provenance");
-  check(mixedBenefits.length === 1 && mixedBenefits[0].partnerId === spaPartner.id && mixedBenefits[0].productId === spaquatoria.id && mixedBenefits[0].endsAt?.toISOString() === "2024-04-30T12:34:56.789Z" && mixedBenefits[0].registrationLinkGrantId !== null, "Spaquatoria receives a separate three-calendar-month Partner Benefit");
+  const mixedPromos = await v2Db.select().from(schema.locationProductPromotionalAccess).where(and(eq(schema.locationProductPromotionalAccess.locationId, mixedLocation), eq(schema.locationProductPromotionalAccess.productId, basic.id)));
+  check(mixedTrials.length === 0 && mixedPromos.length === 1 && mixedPromos[0]?.registrationLinkGrantId !== null, "mixed registration records Basic as a separate promotional grant, not a second standard trial");
+  check(mixedBenefits.length === 1 && mixedBenefits[0].partnerId === spaPartner.id && mixedBenefits[0].productId === spaquatoria.id && mixedBenefits[0].endsAt?.toISOString() === "2024-04-30T12:34:56.789Z" && mixedBenefits[0].registrationLinkGrantId !== null, "Spaquatoria retains its separate three-calendar-month Partner Benefit");
   await assert.rejects(v2Db.insert(schema.commercialPartnerBenefits).values({
     partnerId: otherPartner.id, productId: spaquatoria.id, locationId: mixedLocation,
     startsAt: new Date("2024-01-31T12:34:56.789Z"), endsAt: new Date("2024-04-30T12:34:56.789Z"),
@@ -193,8 +203,10 @@ try {
   const { result: basicDivResult } = await finishUniversal(universalBasicDiv.token, "basic-divnitsa");
   const basicDivLocation = basicDivResult.account.location!.id;
   const basicDivTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, basicDivLocation));
-  check(basicDivResult.grants?.length === 2 && basicDivTrials.length === 2 && basicDivTrials.every((trial) => trial.registrationLinkGrantId !== null), "Basic plus Divnitsa creates exactly two sourced trial rows");
-  check(basicDivTrials.find((trial) => trial.productId === basic.id)?.endsAt.toISOString() === "2024-02-29T12:34:56.789Z" && basicDivTrials.find((trial) => trial.productId === divnitsa.id)?.endsAt.toISOString() === "2024-03-31T12:34:56.789Z", "Basic and Divnitsa retain independent UTC calendar-month durations");
+  const basicDivPromos = await v2Db.select().from(schema.locationProductPromotionalAccess).where(and(eq(schema.locationProductPromotionalAccess.locationId, basicDivLocation), eq(schema.locationProductPromotionalAccess.productId, basic.id)));
+  const [basicDivCanonical] = await v2Db.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, basicDivResult.account.organization!.id));
+  check(basicDivResult.grants?.length === 2 && basicDivTrials.length === 1 && basicDivTrials[0]?.productId === divnitsa.id && basicDivTrials[0]?.registrationLinkGrantId !== null && basicDivPromos.length === 1, "Basic plus Divnitsa creates canonical Basic, Basic promotion, and only the non-Basic legacy trial row");
+  check(basicDivTrials[0]!.endsAt.toISOString() === "2024-03-31T12:34:56.789Z" && basicDivPromos[0]!.startsAt.getTime() === basicDivCanonical!.endsAt.getTime(), "Divnitsa keeps its selected calendar duration while Basic promotion follows canonical trial");
   const [universalDivAuth] = await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, basicDivResult.account.organization!.id));
   check(universalDivAuth?.productId === divnitsa.id && universalDivAuth.grantSource === "registration_link" && universalDivAuth.grantedByOperator === null, "only selected Divnitsa receives persistent private-product authorization");
   check((await v2Db.select().from(schema.commercialPartnerBenefits).where(eq(schema.commercialPartnerBenefits.locationId, basicDivLocation))).length === 0, "Basic plus Divnitsa creates no Spaquatoria benefit");
@@ -202,14 +214,16 @@ try {
   const universalSpaOnly = await makeUniversal([{ productId: spaquatoria.id, durationMonths: 1 }], "Spaquatoria only");
   const { result: spaOnlyResult } = await finishUniversal(universalSpaOnly.token, "spaquatoria-only");
   const spaOnlyLocation = spaOnlyResult.account.location!.id;
-  check(spaOnlyResult.grants?.length === 1 && (await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, spaOnlyLocation))).length === 0, "Spaquatoria-only registration receives no automatic Basic or Divnitsa trial");
+  const [spaOnlyCanonical] = await v2Db.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, spaOnlyResult.account.organization!.id));
+  check(spaOnlyResult.grants?.length === 1 && Boolean(spaOnlyCanonical) && (await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, spaOnlyLocation))).length === 0, "Spaquatoria-only signup still starts one standard canonical Basic trial, without a Divnitsa grant");
   check((await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, spaOnlyResult.account.organization!.id))).length === 0, "Spaquatoria-only registration creates no private-product authorization");
 
   const universalDivOnly = await makeUniversal([{ productId: divnitsa.id, durationMonths: 1 }], "Divnitsa only");
   const { result: divOnlyResult } = await finishUniversal(universalDivOnly.token, "divnitsa-only");
   const divOnlyLocation = divOnlyResult.account.location!.id;
   const divOnlyTrials = await v2Db.select().from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, divOnlyLocation));
-  check(divOnlyResult.grants?.length === 1 && divOnlyTrials.length === 1 && divOnlyTrials[0].productId === divnitsa.id, "Divnitsa-only registration does not add an unselected Basic trial");
+  const [divOnlyCanonical] = await v2Db.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, divOnlyResult.account.organization!.id));
+  check(divOnlyResult.grants?.length === 1 && Boolean(divOnlyCanonical) && divOnlyTrials.length === 1 && divOnlyTrials[0].productId === divnitsa.id, "Divnitsa-only registration keeps its non-Basic grant and receives the standard canonical Basic onboarding trial");
   const [divOnlyAuth] = await v2Db.select().from(schema.commercialProductOrganizationAuthorizations).where(eq(schema.commercialProductOrganizationAuthorizations.organizationId, divOnlyResult.account.organization!.id));
   check(divOnlyAuth?.productId === divnitsa.id && divOnlyAuth.grantSource === "registration_link", "Divnitsa-only registration gets its required persistent purchase authorization");
 
@@ -252,8 +266,8 @@ try {
   check((await v2Db.select().from(schema.organizations).where(eq(schema.organizations.name, rollbackOrganizationName))).length === 0, "grant insertion failure rolls back Organization and Location creation");
   check((await v2Db.select().from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, rollbackUser.userId))).length === 0, "grant insertion failure rolls back Owner membership");
   check((await v2Db.select().from(schema.commercialRegistrationLinkRedemptions).where(eq(schema.commercialRegistrationLinkRedemptions.signupIntentId, rollbackUser.intentId))).length === 0, "grant insertion failure rolls back redemption history");
-  const rolledBackTrials = await v2Pool.query<{ count: string }>("SELECT count(*)::text AS count FROM location_core_trials t JOIN locations l ON l.id=t.location_id JOIN organizations o ON o.id=l.organization_id WHERE o.name=$1", [rollbackOrganizationName]);
-  check(rolledBackTrials.rows[0]?.count === "0", "grant insertion failure rolls back both policy trial rows");
+  const rolledBackTrials = await v2Pool.query<{ count: string }>("SELECT (SELECT count(*) FROM location_core_trials t JOIN locations l ON l.id=t.location_id JOIN organizations o ON o.id=l.organization_id WHERE o.name=$1) + (SELECT count(*) FROM organization_core_trials t JOIN organizations o ON o.id=t.organization_id WHERE o.name=$1) + (SELECT count(*) FROM organization_core_trial_locations s JOIN locations l ON l.id=s.location_id JOIN organizations o ON o.id=l.organization_id WHERE o.name=$1) AS count", [rollbackOrganizationName]);
+  check(rolledBackTrials.rows[0]?.count === "0", "grant insertion failure rolls back canonical Organization trial, slot, and legacy Product grant");
 
   const { newOpaqueToken } = await import("../../lib/v2/customerAuthCore");
   const expiredToken = newOpaqueToken();

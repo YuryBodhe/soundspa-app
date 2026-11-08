@@ -12,7 +12,7 @@ import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
 import { createLocationSlug } from "@/lib/v2/customerOnboarding";
 import { SIGNUP_INTENT_TTL_MS, newOpaqueToken, sha256 } from "@/lib/v2/customerAuthCore";
 import { createCustomerWithFirstLocationInTransaction, validateCustomerProvisioningInput } from "./customerProvisioning";
-import { startSoundSpaTrial } from "../queries/coreTrials";
+import { createRegistrationLinkPromotionalAccess } from "./promotionalAccess";
 import { getRegistrationLinkLifecycleStatus } from "./registrationLinkModel";
 import { buildRegistrationLinkUrl } from "@/lib/v2/registrationLinkUrl";
 import { addBillingCalendarMonths, billingAnchorForDate } from "./billingCalendar";
@@ -270,10 +270,10 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
             .where(eq(commercialPartners.id, spaquatoria.partnerId!)).for("share").limit(1);
           if (!partner?.isActive || partner.code !== SPAQUATORIA_PARTNER_CODE) throw new RegistrationLinkError("link_unavailable");
         }
-        const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+        const { organization, location, trial } = await createCustomerWithFirstLocationInTransaction(tx, {
           ...names,
           contactEmail: user.email,
-        });
+        }, { provisionBasicTrial: true });
         await tx.insert(organizationMembers).values({ organizationId: organization.id, userId: user.id, role: "owner" });
         const divnitsa = policy.products.find((item) => item.productCode === DIVNITSA_PRODUCT_CODE);
         const [redemption] = await tx.insert(commercialRegistrationLinkRedemptions).values({
@@ -282,19 +282,32 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
         }).returning({ id: commercialRegistrationLinkRedemptions.id });
         const granted = [] as { productId: string; productCode: string; accessType: "trial" | "partner_benefit"; startsAt: Date; endsAt: Date }[];
         for (const item of policy.products) {
-          const startsAt = new Date(now);
+          const startsAt = item.productCode === SOUNDSPA_PRODUCT_CODE && item.accessType === "trial" && trial
+            ? new Date(trial.endsAt)
+            : new Date(now);
           const endsAt = addBillingCalendarMonths(startsAt, item.durationMonths, billingAnchorForDate(startsAt));
           const [grant] = await tx.insert(commercialRegistrationLinkGrants).values({
             redemptionId: redemption.id, organizationId: organization.id, locationId: location.id,
             productId: item.productId, partnerId: item.partnerId ?? null, accessType: item.accessType,
             durationMonths: item.durationMonths, startsAt, endsAt,
           }).returning({ id: commercialRegistrationLinkGrants.id });
+          let effectiveStartsAt = startsAt;
+          let effectiveEndsAt = endsAt;
           if (item.accessType === "trial") {
-            await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: item.productId, status: "active", startsAt, endsAt, registrationLinkGrantId: grant.id });
+            if (item.productCode === SOUNDSPA_PRODUCT_CODE) {
+              const promotional = await createRegistrationLinkPromotionalAccess(
+                { locationId: location.id, productId: item.productId, registrationLinkGrantId: grant.id },
+                { runInTransaction: (operation) => operation(tx) },
+              );
+              effectiveStartsAt = promotional.grant.startsAt;
+              effectiveEndsAt = promotional.grant.endsAt;
+            } else {
+              await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: item.productId, status: "active", startsAt, endsAt, registrationLinkGrantId: grant.id });
+            }
           } else {
             await tx.insert(commercialPartnerBenefits).values({ partnerId: item.partnerId!, productId: item.productId, locationId: location.id, startsAt, endsAt, registrationLinkGrantId: grant.id });
           }
-          granted.push({ productId: item.productId, productCode: item.productCode, accessType: item.accessType, startsAt, endsAt });
+          granted.push({ productId: item.productId, productCode: item.productCode, accessType: item.accessType, startsAt: effectiveStartsAt, endsAt: effectiveEndsAt });
         }
         if (divnitsa) await tx.insert(commercialProductOrganizationAuthorizations).values({
           organizationId: organization.id, productId: divnitsa.productId, grantSource: "registration_link",
@@ -302,8 +315,7 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
         });
         const completedAt = new Date(Math.max(now.getTime(), intent.verifiedAt.getTime() + 1));
         await tx.update(customerSignupIntents).set({ completedAt, updatedAt: completedAt }).where(eq(customerSignupIntents.id, intent.id));
-        const basicGrant = granted.find((grant) => grant.productCode === SOUNDSPA_PRODUCT_CODE);
-        return { status: "completed" as const, account: { email: user.email, emailVerifiedAt: user.emailVerifiedAt, organization, location, trial: basicGrant ? { status: "active", startsAt: basicGrant.startsAt, endsAt: basicGrant.endsAt } : null }, grants: granted };
+        return { status: "completed" as const, account: { email: user.email, emailVerifiedAt: user.emailVerifiedAt, organization, location, trial }, grants: granted };
       }
       if (policy.policyKey !== "divnitsa" || policy.policyVersion !== POLICY_VERSION || policy.basicTrialDays !== POLICY_DAYS || policy.divnitsaTrialDays !== POLICY_DAYS) throw new RegistrationLinkError("link_unavailable");
       const productRows = await tx.select({ id: commercialProducts.id, code: commercialProducts.code, isActive: commercialProducts.isActive, visibility: commercialProducts.visibility }).from(commercialProducts)
@@ -312,14 +324,13 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
       const divnitsa = productRows.find((product) => product.id === policy.divnitsaProductId && product.code === DIVNITSA_PRODUCT_CODE);
       if (!basic?.isActive || !divnitsa?.isActive || divnitsa.visibility !== "private") throw new RegistrationLinkError("link_unavailable");
 
-      const { organization, location } = await createCustomerWithFirstLocationInTransaction(tx, {
+      const { organization, location, trial } = await createCustomerWithFirstLocationInTransaction(tx, {
         ...names,
         contactEmail: user.email,
-      });
+      }, { provisionBasicTrial: true });
       await tx.insert(organizationMembers).values({ organizationId: organization.id, userId: user.id, role: "owner" });
       const startsAt = now;
       const endsAt = soundSpaBasicTrialEndsAt(startsAt, POLICY_DAYS);
-      await startSoundSpaTrial(location.id, tx, POLICY_DAYS, startsAt);
       await tx.insert(locationCoreTrials).values({ locationId: location.id, productId: divnitsa.id, status: "active", startsAt, endsAt });
       const [redemption] = await tx.insert(commercialRegistrationLinkRedemptions).values({
         registrationLinkId: link.id, signupIntentId: intent.id, verifiedUserId: user.id,
@@ -331,7 +342,7 @@ export async function completeRegistrationLinkCustomerOnboarding(input: {
       });
       const completedAt = new Date(Math.max(now.getTime(), intent.verifiedAt.getTime() + 1));
       await tx.update(customerSignupIntents).set({ completedAt, updatedAt: completedAt }).where(eq(customerSignupIntents.id, intent.id));
-      return { status: "completed" as const, account: { email: user.email, emailVerifiedAt: user.emailVerifiedAt, organization, location, trial: { status: "active", startsAt, endsAt } }, divnitsaTrial: { startsAt, endsAt } };
+      return { status: "completed" as const, account: { email: user.email, emailVerifiedAt: user.emailVerifiedAt, organization, location, trial }, divnitsaTrial: { startsAt, endsAt } };
     });
   } catch (error) {
     if (error instanceof RegistrationLinkError) throw error;

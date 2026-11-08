@@ -28,7 +28,7 @@ export class BillingResetError extends Error {
   constructor(readonly code:
     | "not_authorized" | "not_staging" | "invalid_request" | "location_not_found" | "product_not_found"
     | "trial_product_invalid" | "unsafe_payment_state" | "active_aggregate_checkout_out_of_scope"
-    | "active_legacy_access_out_of_scope" | "plan_changed" | "database_identity_mismatch") {
+    | "active_legacy_access_out_of_scope" | "plan_changed" | "database_identity_mismatch" | "canonical_trial_reset_unsupported") {
     super(code);
     this.name = "BillingResetError";
   }
@@ -78,6 +78,11 @@ async function readPlan(tx: Pick<ResetTx, "select">, input: ReturnType<typeof va
   }
   const trialProduct = products.find((product) => product.id === input.trialProductId);
   if (!trialProduct || trialProduct.code !== SOUNDSPA_PRODUCT_CODE) throw new BillingResetError("trial_product_invalid");
+  // This legacy reset operation is designed to invalidate and recreate a
+  // Location-scoped Basic trial. It is incompatible with the immutable
+  // Organization trial; keep it fail-closed until an Organization-aware reset
+  // workflow is designed and audited.
+  if (trialProduct.code === SOUNDSPA_PRODUCT_CODE) throw new BillingResetError("canonical_trial_reset_unsupported");
 
   const subscriptions = await tx.select({ id: locationSubscriptions.id, productId: locationSubscriptions.productId, status: locationSubscriptions.status,
       startsAt: locationSubscriptions.startsAt, endsAt: locationSubscriptions.currentPeriodEndsAt,
@@ -99,6 +104,8 @@ async function readPlan(tx: Pick<ResetTx, "select">, input: ReturnType<typeof va
         inArray(commercialPayments.productId, input.productIds), isNull(commercialPayments.billingOrderId))).orderBy(asc(commercialPayments.id));
   const [legacyProjection] = await tx.select({ trialEndsAt: locationServiceAccess.trialEndsAt, paidThrough: locationServiceAccess.paidThrough })
     .from(locationServiceAccess).where(eq(locationServiceAccess.locationId, input.locationId)).limit(1);
+  const legacyTrialEndsAt = legacyProjection?.trialEndsAt ?? null;
+  const legacyPaidThrough = legacyProjection?.paidThrough ?? null;
 
   const orderIds = [...new Set(matchingLines.map((line) => line.orderId))].sort();
   const orders = [] as BillingResetPlan["orders"];
@@ -123,10 +130,9 @@ async function readPlan(tx: Pick<ResetTx, "select">, input: ReturnType<typeof va
     trials: trials.map((row) => ({ ...row, startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() })),
     orders, standalonePayments: standalonePayments.map((row) => ({ ...row, productId: row.productId! })),
     legacyLocationAccess: legacyProjection ? {
-      trialEndsAt: legacyProjection.trialEndsAt?.toISOString() ?? null,
-      paidThrough: legacyProjection.paidThrough?.toISOString() ?? null,
-      activeAtPreview: Boolean((legacyProjection.trialEndsAt && legacyProjection.trialEndsAt > now) ||
-        (legacyProjection.paidThrough && legacyProjection.paidThrough > now)),
+      trialEndsAt: legacyTrialEndsAt?.toISOString() ?? null,
+      paidThrough: legacyPaidThrough?.toISOString() ?? null,
+      activeAtPreview: Boolean((legacyTrialEndsAt ?? new Date(0)) > now || (legacyPaidThrough ?? new Date(0)) > now),
     } : null,
   };
 }

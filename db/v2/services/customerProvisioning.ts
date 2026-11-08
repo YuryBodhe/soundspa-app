@@ -2,6 +2,7 @@ import { v2Db } from "../client";
 import { locations, organizations } from "../schema";
 import { recordLifecycleEvent } from "./monitoringObservability";
 import { normalizeContactEmail } from "../../../lib/v2/contactEmail";
+import { provisionFirstOrganizationBasicTrial } from "./organizationBasicTrial";
 
 export type CustomerProvisioningInput = {
   organizationName: string;
@@ -61,7 +62,7 @@ function isLocationSlugConflict(error: unknown): boolean {
   return false;
 }
 
-export async function createCustomerWithFirstLocationInTransaction(tx: V2Transaction, value: unknown) {
+export async function createCustomerWithFirstLocationInTransaction(tx: V2Transaction, value: unknown, options: { provisionBasicTrial?: boolean } = {}) {
   const input = validateCustomerProvisioningInput(value);
   try {
     const [organization] = await tx.insert(organizations).values({ name: input.organizationName, contactEmail: input.contactEmail }).returning({
@@ -79,6 +80,9 @@ export async function createCustomerWithFirstLocationInTransaction(tx: V2Transac
       slug: locations.slug,
       timezone: locations.timezone,
     });
+    const trial = options.provisionBasicTrial
+      ? await provisionFirstOrganizationBasicTrial(tx, organization.id, location.id)
+      : null;
     await recordLifecycleEvent(tx, {
       eventType: "organization_created",
       organizationId: organization.id,
@@ -91,7 +95,7 @@ export async function createCustomerWithFirstLocationInTransaction(tx: V2Transac
       locationId: location.id,
       locationName: location.name,
     });
-    return { organization, location };
+    return { organization, location, trial: trial ? { status: trial.trial.status, startsAt: trial.trial.startsAt, endsAt: trial.trial.endsAt } : null };
   } catch (error) {
     if (isLocationSlugConflict(error)) {
       throw new CustomerProvisioningError("slug_conflict", "That Location slug is already in use. Choose a different slug.");

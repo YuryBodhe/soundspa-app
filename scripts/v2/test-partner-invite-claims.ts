@@ -18,7 +18,10 @@ import {
   commercialProducts,
   locationChannelGrants,
   locationCoreTrials,
+  locationProductPromotionalAccess,
   locationSubscriptions,
+  organizationCoreTrialLocations,
+  organizationCoreTrials,
   locations,
   organizations,
 } from "../../db/v2/schema";
@@ -143,6 +146,46 @@ async function main() {
       assert(effective.get(permanentChannel)?.accessSources.includes("partner_benefit"));
       assert(effective.get(timedChannel)?.accessSources.includes("partner_benefit"));
       assert(effective.get(trialChannel)?.accessSources.includes("trial"));
+
+      // A Basic Partner Invite is a separate promotional right, not another
+      // Location-scoped Basic trial. The canonical Organization window wins.
+      const [basicProduct] = await tx.select().from(commercialProducts).where(eq(commercialProducts.code, "soundspa")).limit(1);
+      const basic = basicProduct ?? (await tx.insert(commercialProducts).values({
+        code: "soundspa", name: "SoundSpa Basic", kind: "core", visibility: "public", catalogVisibility: "public",
+      }).returning())[0]!;
+      const basicChannel = await addChannel(basic.id, "basic-promotion");
+      const basicTrialEndsAt = new Date(now.getTime() + 28 * DAY_MS);
+      const [basicTrial] = await tx.insert(organizationCoreTrials).values({
+        organizationId: organization.id, productId: basic.id, status: "active", startsAt: now,
+        endsAt: basicTrialEndsAt, origin: "first_location_creation",
+      }).returning();
+      await tx.insert(organizationCoreTrialLocations).values({
+        organizationTrialId: basicTrial.id, organizationId: organization.id, locationId: locationA.id,
+        slotNumber: 1, source: "first_location_creation", allocatedAt: now,
+      });
+      const basicOffer = await makeOffer("basic-promo");
+      await addGrant(basicOffer.id, basic.id, "trial", 30);
+      const basicInvite = await makeInvite(basicOffer.id);
+      const basicClaim = await claimPartnerInvite({ token: basicInvite.token, locationId: locationA.id }, runner);
+      assert.equal(basicClaim.status, "claimed");
+      if (basicClaim.status !== "claimed") throw new Error("Expected Basic promotional invite result");
+      assert.deepEqual(basicClaim.trials, [], "Basic invite never creates a second legacy trial");
+      assert.equal(basicClaim.promotionalAccess.length, 1);
+      assert.equal(basicClaim.promotionalAccess[0]!.startsAt.getTime(), basicTrialEndsAt.getTime(), "Basic invite is deferred until the original canonical window ends");
+      assert.equal((await tx.select().from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationA.id), eq(locationCoreTrials.productId, basic.id)))).length, 0);
+      assert.equal((await tx.select().from(organizationCoreTrials).where(eq(organizationCoreTrials.organizationId, organization.id))).length, 1);
+      const [basicPromotion] = await tx.select().from(locationProductPromotionalAccess).where(and(
+        eq(locationProductPromotionalAccess.locationId, locationA.id), eq(locationProductPromotionalAccess.productId, basic.id),
+      ));
+      assert.equal(basicPromotion?.source, "partner_invite");
+      assert.equal(basicPromotion?.startsAt.getTime(), basicTrialEndsAt.getTime());
+      const atTrialEnd = new Map((await resolveEffectiveChannelAccess(locationA.id, basicTrialEndsAt, tx)).map((item) => [item.id, item]));
+      assert(atTrialEnd.get(basicChannel)?.accessSources.includes("promotional_access"), "Basic invite becomes effective after the canonical trial without duplicating it");
+      const basicRetry = await claimPartnerInvite({ token: basicInvite.token, locationId: locationA.id }, runner);
+      assert.equal(basicRetry.status, "already_claimed");
+      assert.equal((await tx.select().from(locationProductPromotionalAccess).where(and(
+        eq(locationProductPromotionalAccess.locationId, locationA.id), eq(locationProductPromotionalAccess.productId, basic.id),
+      ))).length, 1, "replayed Basic invite does not duplicate Promotional Access");
 
       // Same-location retry is checked before max_claims, so it remains
       // idempotent after consuming a one-claim invite's only slot.

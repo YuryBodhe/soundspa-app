@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { operatorAuthStatus } from "@/lib/v2/adminOperator";
 import { v2Db } from "../client";
 import {
   commercialBillingOrderLines, commercialBillingOrders, commercialPaymentEvents,
   commercialPayments, commercialProducts, locationCoreTrials, locationSubscriptions, locations, organizations,
+  organizationCoreTrialLocations, organizationCoreTrials,
 } from "../schema";
 import { MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
 import { settleTrustedBillingOrderPayment } from "./paymentLifecycle";
@@ -128,7 +129,7 @@ export async function listManualSubscriptionOverview(authorization: unknown, db:
 
 export async function listManualTrialOverview(authorization: unknown, db: BillingReadDb = v2Db, now = new Date()) {
   requireOperator(authorization);
-  const rows = await db.select({ id: locationCoreTrials.id, organizationName: organizations.name,
+  const legacyRows = await db.select({ id: locationCoreTrials.id, organizationName: organizations.name,
     locationName: locations.name, productName: commercialProducts.name, trialStatus: locationCoreTrials.status,
     startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt,
     invalidatedByResetId: locationCoreTrials.invalidatedByResetId,
@@ -137,8 +138,20 @@ export async function listManualTrialOverview(authorization: unknown, db: Billin
     .innerJoin(locations, eq(locations.id, locationCoreTrials.locationId))
     .innerJoin(organizations, eq(organizations.id, locations.organizationId))
     .innerJoin(commercialProducts, eq(commercialProducts.id, locationCoreTrials.productId))
-    .where(and(isNull(locationCoreTrials.invalidatedByResetId), isNull(organizations.archivedAt), isNull(locations.archivedAt)))
+    .where(and(isNull(locationCoreTrials.invalidatedByResetId), ne(commercialProducts.code, "soundspa"), isNull(organizations.archivedAt), isNull(locations.archivedAt)))
     .orderBy(asc(organizations.name), asc(locations.name), asc(commercialProducts.name), asc(locationCoreTrials.startsAt));
+  const canonicalRows = await db.select({ id: organizationCoreTrialLocations.id, organizationName: organizations.name,
+    locationName: locations.name, productName: commercialProducts.name, trialStatus: organizationCoreTrials.status,
+    startsAt: organizationCoreTrials.startsAt, endsAt: organizationCoreTrials.endsAt,
+    invalidatedByResetId: sql<null>`NULL`, organizationArchivedAt: organizations.archivedAt, locationArchivedAt: locations.archivedAt,
+  }).from(organizationCoreTrialLocations)
+    .innerJoin(organizationCoreTrials, and(eq(organizationCoreTrials.id, organizationCoreTrialLocations.organizationTrialId), eq(organizationCoreTrials.organizationId, organizationCoreTrialLocations.organizationId)))
+    .innerJoin(locations, eq(locations.id, organizationCoreTrialLocations.locationId))
+    .innerJoin(organizations, eq(organizations.id, organizationCoreTrialLocations.organizationId))
+    .innerJoin(commercialProducts, eq(commercialProducts.id, organizationCoreTrials.productId))
+    .where(and(isNull(organizations.archivedAt), isNull(locations.archivedAt)))
+    .orderBy(asc(organizations.name), asc(locations.name), asc(commercialProducts.name), asc(organizationCoreTrials.startsAt));
+  const rows = [...legacyRows, ...canonicalRows];
   return buildManualTrialOverview(rows, now);
 }
 

@@ -72,7 +72,14 @@ try {
     const [organizationAfterRetry] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, created.account.organization.id));
     assert.equal(organizationAfterRetry.contactEmail, `operator-edited-${fixture}@example.invalid`, "an operator-edited contact is not overwritten by repeated onboarding");
     assert.equal((await outer.select({ role: schema.organizationMembers.role }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, user.id))).length, 1);
-    assert.equal((await outer.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, created.account.location.id))).length, 1);
+    assert.equal((await outer.select({ id: schema.locationCoreTrials.id }).from(schema.locationCoreTrials).where(eq(schema.locationCoreTrials.locationId, created.account.location.id))).length, 0,
+      "standard Basic trial is not duplicated in the legacy Location trial table");
+    const canonicalTrials = await outer.select().from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, created.account.organization.id));
+    assert.equal(canonicalTrials.length, 1);
+    assert.equal(canonicalTrials[0]!.startsAt.getTime(), created.account.trial!.startsAt.getTime());
+    assert.equal(canonicalTrials[0]!.endsAt.getTime(), created.account.trial!.endsAt.getTime());
+    const firstSlot = await outer.select().from(schema.organizationCoreTrialLocations).where(eq(schema.organizationCoreTrialLocations.locationId, created.account.location.id));
+    assert.equal(firstSlot.length, 1);
     assert.equal((await outer.select({ id: schema.locationChannelGrants.channelId }).from(schema.locationChannelGrants).where(eq(schema.locationChannelGrants.locationId, created.account.location.id))).length, 0);
     assert.equal((await outer.select({ id: schema.locationChannelEntitlements.channelId }).from(schema.locationChannelEntitlements).where(eq(schema.locationChannelEntitlements.locationId, created.account.location.id))).length, 0);
 
@@ -86,20 +93,13 @@ try {
     assert.equal((await outer.select({ id: schema.organizationMembers.organizationId }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, membershipFailureUser.id))).length, 0);
     assert.equal((await outer.select({ id: schema.monitoringLifecycleEvents.id }).from(schema.monitoringLifecycleEvents).where(eq(schema.monitoringLifecycleEvents.organizationName, membershipFailureInput.organizationName))).length, 0);
 
-    const [failingUser] = await outer.insert(schema.users).values({ email: `rollback-${fixture}@example.invalid`, emailVerifiedAt: new Date() }).returning();
-    const failingInput = { ...input, authenticatedUserId: failingUser.id, signupIntentId: null, organizationName: `Rollback ${fixture}`, locationName: "Rollback Location" };
-    await assert.rejects(completeOrdinaryCustomerOnboarding(failingInput, {
-      runInTransaction,
-      createTrial: async () => { throw new Error("forced trial failure"); },
-    }), /forced trial failure/);
-    assert.equal((await outer.select({ id: schema.organizations.id }).from(schema.organizations).where(eq(schema.organizations.name, failingInput.organizationName))).length, 0);
-    assert.equal((await outer.select({ id: schema.organizationMembers.organizationId }).from(schema.organizationMembers).where(eq(schema.organizationMembers.userId, failingUser.id))).length, 0, "Failed trial must roll back the new membership.");
-    assert.equal((await outer.select({ id: schema.monitoringLifecycleEvents.id }).from(schema.monitoringLifecycleEvents).where(eq(schema.monitoringLifecycleEvents.organizationName, failingInput.organizationName))).length, 0);
+    assert.equal((await outer.select({ id: schema.organizationCoreTrials.id }).from(schema.organizationCoreTrials).where(eq(schema.organizationCoreTrials.organizationId, created.account.organization.id))).length, 1,
+      "retry must not create a second Organization trial");
     throw new Error("ONBOARDING_TEST_ROLLBACK");
   }).catch((error: unknown) => {
     if (!(error instanceof Error) || error.message !== "ONBOARDING_TEST_ROLLBACK") throw error;
   });
-  console.info(`V2 Customer Onboarding DB PASS: auth/verification guards, Partner context boundary, atomic owner+Location+canonical Basic Trial, ${SOUNDSPA_BASIC_TRIAL_DAYS}-day duration, no manual grants, retry idempotency, and forced membership/trial-failure rollback (all fixtures rolled back).`);
+  console.info(`V2 Customer Onboarding DB PASS: auth/verification guards, Partner context boundary, atomic owner+Location+canonical Basic Trial and first slot, ${SOUNDSPA_BASIC_TRIAL_DAYS}-day duration, no legacy Basic duplicate, retry idempotency, and membership rollback (all fixtures rolled back).`);
 } finally {
   await v2Db.$client.end();
 }

@@ -10,8 +10,8 @@ import {
   commercialPayments,
   commercialPaymentRoutes,
   commercialProducts,
-  locationCoreTrials,
   locationSubscriptions,
+  locationProductPromotionalAccess,
   locations,
   organizations,
   users,
@@ -19,6 +19,8 @@ import {
 import { LocationBillingAuthorizationError, requireLocationBillingAuthority } from "./locationBillingPermissions";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
 import { requireOrganizationProductPurchaseEligibility } from "./productPurchaseAuthorization";
+import { getEffectiveProductTrial } from "./organizationBasicTrial";
+import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
 import { allocateFixedOrganizationTotal, explicitDateCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE, ManualBillingModelError, validateManualBankTransferInput } from "./manualBillingModel";
 import {
   billingOrderSnapshotReference,
@@ -155,8 +157,7 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
     ))
     .orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id))
     .for(lockForOrder ? "update" : "share");
-  const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-    .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, locationId), eq(locationCoreTrials.productId, productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
+  const trial = await getEffectiveProductTrial(locationId, productId, tx);
   try {
     const period = planNextSubscriptionPeriod({
       now,
@@ -167,6 +168,15 @@ async function planLinePeriod(tx: BillingOrderTx, locationId: string, productId:
       })),
       trial,
     });
+    const [product] = await tx.select({ code: commercialProducts.code }).from(commercialProducts).where(eq(commercialProducts.id, productId)).limit(1);
+    if (product?.code === SOUNDSPA_PRODUCT_CODE) {
+      const [promotion] = await tx.select({ id: locationProductPromotionalAccess.id }).from(locationProductPromotionalAccess)
+        .where(and(eq(locationProductPromotionalAccess.locationId, locationId), eq(locationProductPromotionalAccess.productId, productId),
+          eq(locationProductPromotionalAccess.status, "granted"),
+          sql`${locationProductPromotionalAccess.startsAt} < ${period.endsAt} AND ${locationProductPromotionalAccess.endsAt} > ${period.startsAt}`))
+        .limit(1).for(lockForOrder ? "update" : "share");
+      if (promotion) throw new BillingOrderError("coverage_conflict");
+    }
     const existingPaidThroughAt = subscriptions
       .filter((row) => (row.status === "active" || row.status === "canceled") && row.currentPeriodEndsAt !== null && row.currentPeriodEndsAt > now)
       .reduce<Date | null>((latest, row) => !latest || row.currentPeriodEndsAt! > latest ? row.currentPeriodEndsAt : latest, null);
@@ -554,12 +564,14 @@ export async function createManualBankTransferBillingOrder(input: {
         sql`(${locationSubscriptions.currentPeriodEndsAt} IS NULL OR (${locationSubscriptions.startsAt} < ${coverage.endsAt} AND ${locationSubscriptions.currentPeriodEndsAt} > ${coverage.startsAt}))`,
       )).for("update").limit(1);
       if (overlappingSubscription) throw new BillingOrderError("coverage_conflict");
-      const [overlappingTrial] = await tx.select({ id: locationCoreTrials.id }).from(locationCoreTrials).where(and(
-        eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId),
-        isNull(locationCoreTrials.invalidatedByResetId),
-        sql`${locationCoreTrials.startsAt} < ${coverage.endsAt} AND ${locationCoreTrials.endsAt} > ${coverage.startsAt}`,
-      )).limit(1);
-      if (overlappingTrial) throw new BillingOrderError("coverage_conflict");
+      const trial = await getEffectiveProductTrial(line.locationId, line.productId, tx);
+      if (trial && trial.status === "active" && trial.startsAt < coverage.endsAt && trial.endsAt > coverage.startsAt) throw new BillingOrderError("coverage_conflict");
+      const [overlappingPromotion] = await tx.select({ id: locationProductPromotionalAccess.id }).from(locationProductPromotionalAccess).where(and(
+        eq(locationProductPromotionalAccess.locationId, line.locationId), eq(locationProductPromotionalAccess.productId, line.productId),
+        eq(locationProductPromotionalAccess.status, "granted"),
+        sql`${locationProductPromotionalAccess.startsAt} < ${coverage.endsAt} AND ${locationProductPromotionalAccess.endsAt} > ${coverage.startsAt}`,
+      )).for("update").limit(1);
+      if (overlappingPromotion) throw new BillingOrderError("coverage_conflict");
       const [overlappingOrderLine] = await tx.select({ id: commercialBillingOrderLines.id }).from(commercialBillingOrderLines)
         .innerJoin(commercialBillingOrders, eq(commercialBillingOrders.id, commercialBillingOrderLines.orderId))
         .where(and(eq(commercialBillingOrders.organizationId, request.organizationId),

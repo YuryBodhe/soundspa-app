@@ -10,7 +10,6 @@ import {
   commercialPaymentRoutes,
   commercialPayments,
   commercialProducts,
-  locationCoreTrials,
   locationSubscriptions,
   locations,
 } from "../schema";
@@ -20,6 +19,7 @@ import { paymentCanRestoreCanceledSubscription, preserveLatestPaidThrough, valid
 import { planNextSubscriptionPeriod, type PlannedSubscriptionPeriod } from "./billingCalendar";
 import { explicitCalendarCoverage, explicitDateCoverage, MANUAL_BANK_TRANSFER_PROVIDER_CODE } from "./manualBillingModel";
 import { billingOrderSnapshotReference } from "./billingOrderModel";
+import { getEffectiveProductTrial } from "./organizationBasicTrial";
 
 type LifecycleDb = Pick<typeof v2Db, "select" | "insert" | "update" | "transaction">;
 
@@ -347,8 +347,7 @@ export async function settleTrustedBillingOrderPayment(
         isNull(locationSubscriptions.invalidatedByResetId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
-      const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
+      const trial = await getEffectiveProductTrial(line.locationId, line.productId, tx);
       let period: PlannedSubscriptionPeriod;
       let subscription: typeof subscriptions[number] | null;
       if (order.providerCode === MANUAL_BANK_TRANSFER_PROVIDER_CODE) {

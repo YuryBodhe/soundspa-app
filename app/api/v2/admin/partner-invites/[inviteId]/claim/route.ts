@@ -32,6 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ inv
         PRODUCT_INACTIVE: "A Product granted by this Offer is inactive.",
         MAX_CLAIMS_EXHAUSTED: "This Invite has reached its claim limit.",
         INVALID_OFFER_CONFIGURATION: "The Offer configuration cannot be claimed.",
+        PROMOTIONAL_ACCESS_CONFLICT: "Basic promotional access conflicts with paid or already scheduled access. Review the coverage before claiming this Invite.",
       };
       const status = error.code === "INVITE_UNAVAILABLE" || error.code === "LOCATION_UNAVAILABLE" ? 404 : 409;
       return Response.json({ ok: false, code: error.code, message: messages[error.code] }, { status, headers: noStore });

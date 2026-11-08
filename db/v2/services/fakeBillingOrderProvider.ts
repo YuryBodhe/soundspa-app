@@ -24,13 +24,13 @@ import {
   commercialPayments,
   commercialPaymentEvents,
   commercialProducts,
-  locationCoreTrials,
   locationSubscriptions,
   locations,
   organizations,
   users,
 } from "../schema";
 import { planNextSubscriptionPeriod } from "./billingCalendar";
+import { getEffectiveProductTrial } from "./organizationBasicTrial";
 import { billingOrderSnapshotReference } from "./billingOrderModel";
 import { PaymentFoundationError } from "./paymentFoundation";
 import { type AggregateBillingOrderSettlementInput, settleTrustedBillingOrderPayment } from "./paymentLifecycle";
@@ -282,8 +282,7 @@ export async function createFakeProviderBillingOrderCheckout(input: {
         isNull(locationSubscriptions.invalidatedByResetId),
         inArray(locationSubscriptions.status, ["active", "canceled"]),
       )).orderBy(desc(locationSubscriptions.currentPeriodEndsAt), desc(locationSubscriptions.startsAt), desc(locationSubscriptions.createdAt), desc(locationSubscriptions.id)).for("update");
-      const [trial] = await tx.select({ status: locationCoreTrials.status, startsAt: locationCoreTrials.startsAt, endsAt: locationCoreTrials.endsAt })
-        .from(locationCoreTrials).where(and(eq(locationCoreTrials.locationId, line.locationId), eq(locationCoreTrials.productId, line.productId), isNull(locationCoreTrials.invalidatedByResetId))).limit(1);
+      const trial = await getEffectiveProductTrial(line.locationId, line.productId, tx);
       if (line.durationMonths === null) throw new FakeBillingOrderError("checkout_unavailable");
       const period = planNextSubscriptionPeriod({
         now, durationMonths: line.durationMonths,

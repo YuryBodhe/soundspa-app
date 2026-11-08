@@ -7,7 +7,7 @@ type ClaimHistory = { locationId: string; organizationName: string; locationName
 type Invite = { id: string; createdAt: string; expiresAt: string | null; maxClaims: number | null; claimCount: number; status: "ACTIVE" | "EXPIRED" | "EXHAUSTED" | "REVOKED"; claims: ClaimHistory[] };
 type ClaimLocation = { id: string; organizationName: string; locationName: string; locationSlug: string };
 type Grant = { productId: string; productName: string; productActive: boolean };
-type ClaimResult = { status: "claimed" | "already_claimed"; benefits: { productId: string; endsAt: string | null }[]; trials: { productId: string; result: "created" | "skipped_active" | "skipped_already_used" | "skipped_paid_access" }[] };
+type ClaimResult = { status: "claimed" | "already_claimed"; benefits: { productId: string; endsAt: string | null }[]; trials: { productId: string; result: "created" | "skipped_active" | "skipped_already_used" | "skipped_paid_access" }[]; promotionalAccess: { productId: string; startsAt: string; endsAt: string }[] };
 
 function formatTimestamp(value: string) {
   return `${value.replace("T", " ").replace(/(?:\.\d{3})?Z$/, " UTC")}`;
@@ -125,7 +125,11 @@ export default function InviteManagement({ offerId, offerActive, partnerActive, 
       const outcome = trial.result.replaceAll("_", " ");
       return `${grant?.productName ?? "Trial"} (${outcome})`;
     });
-    const parts = [benefitText.length ? `Benefits: ${benefitText.join(", ")}` : "No Partner Benefits applied", trialText.length ? `Trials: ${trialText.join(", ")}` : "No Trials applied"];
+    const promotionText = result.promotionalAccess.map((promotion) => {
+      const grant = grants.find((item) => item.productId === promotion.productId);
+      return `${grant?.productName ?? "Basic Promotional Access"} (${formatTimestamp(promotion.startsAt)} – ${formatTimestamp(promotion.endsAt)})`;
+    });
+    const parts = [benefitText.length ? `Benefits: ${benefitText.join(", ")}` : "No Partner Benefits applied", trialText.length ? `Other Product Trials: ${trialText.join(", ")}` : "No Other Product Trials applied", promotionText.length ? `Promotional Access: ${promotionText.join(", ")}` : "No Basic Promotional Access applied"];
     return `Claim completed. ${parts.join("; ")}.`;
   }
 

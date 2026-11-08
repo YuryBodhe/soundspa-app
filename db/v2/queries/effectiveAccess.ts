@@ -4,7 +4,7 @@ import { channels, channelTracks, locations, organizations, locationServiceAcces
 import { evaluateCatalogAccess } from "../accessPolicy";
 import { resolveCommercialProductChannelAccess } from "./commercialAccess";
 
-export type EffectiveAccessSource = "trial" | "subscription" | "partner_benefit" | "included" | "preview" | "custom" | "admin";
+export type EffectiveAccessSource = "trial" | "subscription" | "partner_benefit" | "promotional_access" | "included" | "preview" | "custom" | "admin";
 export type EffectiveChannelAccess = {
   id: string; slug: string; displayName: string; kind: "music" | "ambient";
   description: string | null; imageKey: string | null; playable: boolean; suspended: boolean;
@@ -13,7 +13,7 @@ export type EffectiveChannelAccess = {
   accessExpiries: { preview?: Date; custom?: Date; admin?: Date };
   tracks: { id: string; storageKey: string; originalFilename: string; sizeBytes: bigint; sortOrder: number }[];
 };
-const sourceOrder: EffectiveAccessSource[] = ["trial", "subscription", "partner_benefit", "included", "preview", "custom", "admin"];
+const sourceOrder: EffectiveAccessSource[] = ["trial", "subscription", "partner_benefit", "promotional_access", "included", "preview", "custom", "admin"];
 
 export async function resolveEffectiveChannelAccess(locationId: string, serverNow: Date, db: Pick<typeof v2Db, "select"> = v2Db): Promise<EffectiveChannelAccess[]> {
   if (!Number.isFinite(serverNow.getTime())) throw new Error("Invalid server time");

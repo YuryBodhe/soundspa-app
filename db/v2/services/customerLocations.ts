@@ -5,6 +5,7 @@ import { customerLocationAuthorizationFailure, customerLocationLimit, CustomerLo
 import { v2Db } from "../client";
 import { locations, organizationMembers, organizations, users } from "../schema";
 import { recordLifecycleEvent } from "./monitoringObservability";
+import { allocateAdditionalOrganizationBasicTrialLocation } from "./organizationBasicTrial";
 
 type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
 type CreatedLocation = { id: string; name: string; slug: string; timezone: string };
@@ -13,6 +14,7 @@ type CustomerLocationDependencies = {
   limit?: number;
   slugFactory?: (name: string) => string;
   recordEvent?: typeof recordLifecycleEvent;
+  allocateTrialSlot?: typeof allocateAdditionalOrganizationBasicTrialLocation;
 };
 
 function isLocationSlugConflict(error: unknown): boolean {
@@ -30,7 +32,8 @@ async function createInTransaction(tx: V2Transaction, input: {
   organizationId: string;
   name: string;
   timezone: string;
-}, limit: number, slugFactory: (name: string) => string, recordEvent: typeof recordLifecycleEvent): Promise<CreatedLocation> {
+}, limit: number, slugFactory: (name: string) => string, recordEvent: typeof recordLifecycleEvent,
+allocateTrialSlot: typeof allocateAdditionalOrganizationBasicTrialLocation): Promise<CreatedLocation> {
   // Serialize creations for this Organization so duplicate-name and cap checks cannot race.
   const [organization] = await tx.select({ id: organizations.id, name: organizations.name, archivedAt: organizations.archivedAt })
     .from(organizations).where(eq(organizations.id, input.organizationId)).limit(1).for("update");
@@ -74,6 +77,8 @@ async function createInTransaction(tx: V2Transaction, input: {
     timezone: input.timezone,
   }).returning({ id: locations.id, name: locations.name, slug: locations.slug, timezone: locations.timezone });
 
+  await allocateTrialSlot(tx, input.organizationId, location.id);
+
   await recordEvent(tx, {
     eventType: "location_created",
     organizationId: input.organizationId,
@@ -96,6 +101,7 @@ export async function createCustomerLocation(input: {
   const transaction = dependencies.transaction ?? ((callback) => v2Db.transaction(callback));
   const slugFactory = dependencies.slugFactory ?? ((locationName: string) => createLocationSlug(locationName, randomUUID()));
   const recordEvent = dependencies.recordEvent ?? recordLifecycleEvent;
+  const allocateTrialSlot = dependencies.allocateTrialSlot ?? allocateAdditionalOrganizationBasicTrialLocation;
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -104,7 +110,7 @@ export async function createCustomerLocation(input: {
         organizationId: input.organizationId,
         name,
         timezone,
-      }, limit, slugFactory, recordEvent));
+      }, limit, slugFactory, recordEvent, allocateTrialSlot));
     } catch (error) {
       if (!isLocationSlugConflict(error)) throw error;
       if (attempt === 2) throw new CustomerLocationError("slug_conflict", "Could not assign a unique Location address. Please try again.");

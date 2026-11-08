@@ -37,17 +37,25 @@ function fakeTransaction(options: { membershipRole?: string; noMembership?: bool
 
 type Dependencies = NonNullable<Parameters<typeof createCustomerLocation>[1]>;
 function dependencies(tx: ReturnType<typeof fakeTransaction>["tx"], events: unknown[], slugFactory = () => "hamam-north-abc12345"): Dependencies {
+  const allocateTrialSlot = async (_tx: never, organizationId: string, locationId: string) => {
+    trialSlotCalls.push({ organizationId, locationId });
+    return null;
+  };
   return {
     transaction: async (callback: (tx: never) => Promise<unknown>) => callback(tx as never),
     limit: 20,
     slugFactory,
     recordEvent: async (_tx: never, event: unknown) => { events.push(event); },
+    allocateTrialSlot: allocateTrialSlot as never,
   } as unknown as Dependencies;
 }
 
+const trialSlotCalls: { organizationId: string; locationId: string }[] = [];
+
 const input = { authenticatedUserId: "user-1", organizationId: "org-1", name: "Hamam North", timezone: "Europe/Moscow" };
 
-test("Owner creation locks the Organization and writes only a Location plus an audit event", async () => {
+test("Owner creation locks the Organization, requests a trial slot, and writes a Location plus audit event", async () => {
+  trialSlotCalls.length = 0;
   const fake = fakeTransaction();
   const events: unknown[] = [];
   const created = await createCustomerLocation(input, dependencies(fake.tx, events));
@@ -57,6 +65,7 @@ test("Owner creation locks the Organization and writes only a Location plus an a
   assert.deepEqual(fake.inserted[0], { organizationId: "org-1", name: "Hamam North", slug: "hamam-north-abc12345", timezone: "Europe/Moscow" });
   assert.equal(events.length, 1);
   assert.equal((events[0] as { eventType: string }).eventType, "location_created");
+  assert.deepEqual(trialSlotCalls, [{ organizationId: "org-1", locationId: "location-new" }]);
 });
 
 test("non-Owners, archived Organizations, duplicate names, and Location cap reject before insert", async () => {
@@ -98,15 +107,16 @@ test("unique slug conflicts retry the complete transaction with a new server-gen
   assert.equal(transactionCount, 2);
 });
 
-test("creation service contains no trial, subscription, entitlement, order, or payment writes", async () => {
+test("additional Location creation delegates lifetime trial-slot allocation and creates no billing records", async () => {
   const source = await readFile(new URL("./customerLocations.ts", import.meta.url), "utf8");
   const onboarding = await readFile(new URL("./customerOnboarding.ts", import.meta.url), "utf8");
   const stagingCompose = await readFile(new URL("../../../docker-compose.staging.yml", import.meta.url), "utf8");
+  assert.match(source, /allocateAdditionalOrganizationBasicTrialLocation/);
   assert.doesNotMatch(source, /startSoundSpaTrial|locationSubscriptions|billingOrders|payments|entitlements/);
   assert.match(source, /for\("update"\)/);
   assert.match(source, /lower\(btrim\(\$\{locations\.name\}\)\)/);
   assert.match(stagingCompose, /V2_MAX_LOCATIONS_PER_ORGANIZATION: \$\{V2_MAX_LOCATIONS_PER_ORGANIZATION:-20\}/);
-  assert.match(onboarding, /const trial = await createTrial\(location\.id, tx\)/, "first-Location signup keeps its existing trial creation path");
+  assert.match(onboarding, /createCustomerWithFirstLocationInTransaction/);
 });
 
 test("disposable PostgreSQL verifies tenant authorization, cap, slug retry, side effects, and concurrent creation", {
@@ -130,11 +140,12 @@ test("disposable PostgreSQL verifies tenant authorization, cap, slug retry, side
   assert.equal(target?.role, decodeURIComponent(targetUrl.username));
   assert.notEqual(target?.role, "postgres", "must not use the PostgreSQL superuser");
   assert(isIP(address) > 0 && new Set(["127.0.0.1", "::1"]).has(address));
-  assert.equal(target?.migrations, 20);
-  assert.equal(target?.latest, "1791986317531");
+  assert.equal(target?.migrations, 36);
+  assert.equal(target?.latest, "1794145936847");
   const empty = await v2Pool.query<{ count: string }>(
     `SELECT (SELECT count(*) FROM organizations) + (SELECT count(*) FROM users) + (SELECT count(*) FROM locations) +
       (SELECT count(*) FROM monitoring_lifecycle_events) + (SELECT count(*) FROM location_core_trials) +
+      (SELECT count(*) FROM organization_core_trials) + (SELECT count(*) FROM organization_core_trial_locations) +
       (SELECT count(*) FROM location_subscriptions) + (SELECT count(*) FROM commercial_billing_orders) +
       (SELECT count(*) FROM commercial_payments) AS count`,
   );
@@ -208,7 +219,8 @@ test("disposable PostgreSQL verifies tenant authorization, cap, slug retry, side
       (error: { code?: string }) => error.code === "organization_unavailable");
 
     const billingRows = await v2Pool.query<{ count: string }>(
-      `SELECT (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM location_subscriptions) +
+      `SELECT (SELECT count(*) FROM location_core_trials) + (SELECT count(*) FROM organization_core_trials) +
+        (SELECT count(*) FROM organization_core_trial_locations) + (SELECT count(*) FROM location_subscriptions) +
         (SELECT count(*) FROM commercial_billing_orders) + (SELECT count(*) FROM commercial_payments) AS count`,
     );
     assert.equal(billingRows.rows[0]?.count, "0", "Location creation must not add trials, subscriptions, orders, or payments");

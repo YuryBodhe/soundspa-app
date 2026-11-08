@@ -28,7 +28,9 @@ const blockerQuery = (where: ReturnType<typeof sql>) => sql`
     CASE WHEN EXISTS (SELECT 1 FROM commercial_billing_orders bo WHERE bo.organization_id = o.id) THEN 'orders' END,
     CASE WHEN EXISTS (SELECT 1 FROM commercial_payments p LEFT JOIN commercial_billing_orders bo ON bo.id = p.billing_order_id WHERE bo.organization_id = o.id OR p.location_id IN (SELECT l.id FROM locations l WHERE l.organization_id = o.id)) THEN 'payments' END,
     CASE WHEN EXISTS (SELECT 1 FROM location_subscriptions s JOIN locations l ON l.id = s.location_id WHERE l.organization_id = o.id) THEN 'subscriptions' END,
-    CASE WHEN EXISTS (SELECT 1 FROM location_core_trials t JOIN locations l ON l.id = t.location_id WHERE l.organization_id = o.id) THEN 'trials' END,
+    CASE WHEN EXISTS (SELECT 1 FROM location_core_trials t JOIN locations l ON l.id = t.location_id WHERE l.organization_id = o.id)
+      OR EXISTS (SELECT 1 FROM organization_core_trials t WHERE t.organization_id = o.id)
+      OR EXISTS (SELECT 1 FROM organization_core_trial_locations s WHERE s.organization_id = o.id) THEN 'trials' END,
     CASE WHEN EXISTS (SELECT 1 FROM commercial_partner_benefits b JOIN locations l ON l.id = b.location_id WHERE l.organization_id = o.id) THEN 'partner_benefits' END,
     CASE WHEN EXISTS (SELECT 1 FROM commercial_spaquatoria_promo_redemptions r WHERE r.organization_id = o.id) THEN 'promo_redemptions' END,
     CASE WHEN EXISTS (SELECT 1 FROM commercial_registration_link_redemptions r WHERE r.organization_id = o.id)

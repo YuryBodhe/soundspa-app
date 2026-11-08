@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { v2Db, v2Pool } from "../../db/v2/client";
 import { resolveEffectiveChannelAccess } from "../../db/v2/queries/effectiveAccess";
-import { endSoundSpaTrial, startSoundSpaTrial } from "../../db/v2/queries/coreTrials";
+import { endSoundSpaTrial } from "../../db/v2/queries/coreTrials";
+import { provisionFirstOrganizationBasicTrial } from "../../db/v2/services/organizationBasicTrial";
 import { SOUNDSPA_BASIC_TRIAL_DAYS } from "../../db/v2/queries/trialPolicy";
 import { SOUNDSPA_PRODUCT_CODE } from "../../db/v2/queries/commercialProducts";
 import {
@@ -16,6 +17,8 @@ import {
   locationChannelGrants,
   locationCoreTrials,
   locationSubscriptions,
+  organizationCoreTrialLocations,
+  organizationCoreTrials,
   locations,
   organizations,
 } from "../../db/v2/schema";
@@ -82,7 +85,7 @@ async function main() {
         assert.deepEqual(accessMap.get(channelId)?.tracks, []);
       }
 
-      const trial = await startSoundSpaTrial(locationId, tx);
+      const { trial } = await provisionFirstOrganizationBasicTrial(tx, organizationId, locationId);
       trialId = trial.id;
       assert.equal(trial.endsAt.getTime() - trial.startsAt.getTime(), SOUNDSPA_BASIC_TRIAL_DAYS * 24 * 60 * 60 * 1000);
       const withTrial = asMap(await resolveEffectiveChannelAccess(locationId, new Date(Date.now() + 10), tx));
@@ -92,15 +95,17 @@ async function main() {
       }
       assert.deepEqual(withTrial.get(spaChannel.id)?.accessSources, ["trial", "partner_benefit"]);
 
-      await endSoundSpaTrial(locationId, tx);
+      const endResult = await endSoundSpaTrial(locationId, tx);
+      assert.equal(endResult.status, "unsupported_shared_trial_operation", "a per-Location operator action cannot end the shared Organization trial");
       const afterTrial = asMap(await resolveEffectiveChannelAccess(locationId, new Date(Date.now() + 10), tx));
-      for (const channelId of basicOnlyChannelIds) assert.equal(afterTrial.get(channelId)?.playable, false);
+      for (const channelId of basicOnlyChannelIds) assert.equal(afterTrial.get(channelId)?.playable, true, "refusing early termination preserves existing Basic access");
       assert.equal(afterTrial.get(spaChannel.id)?.playable, true);
-      assert.deepEqual(afterTrial.get(spaChannel.id)?.accessSources, ["partner_benefit"]);
+      assert.deepEqual(afterTrial.get(spaChannel.id)?.accessSources, ["trial", "partner_benefit"]);
 
-      await tx.update(commercialPartnerBenefits).set({ endsAt: new Date(), updatedAt: new Date() }).where(eq(commercialPartnerBenefits.id, benefitId));
-      const afterBenefit = asMap(await resolveEffectiveChannelAccess(locationId, new Date(Date.now() + 10), tx));
-      assert.equal(afterBenefit.get(spaChannel.id)?.playable, false);
+      await tx.update(commercialPartnerBenefits).set({ endsAt: trial.endsAt, updatedAt: new Date() }).where(eq(commercialPartnerBenefits.id, benefitId));
+      const afterBenefit = asMap(await resolveEffectiveChannelAccess(locationId, trial.endsAt, tx));
+      for (const channelId of basicOnlyChannelIds) assert.equal(afterBenefit.get(channelId)?.playable, false, "Basic trial ends at its immutable shared boundary");
+      assert.equal(afterBenefit.get(spaChannel.id)?.playable, false, "Spaquatoria Benefit stops at its own half-open boundary");
       assert.deepEqual(afterBenefit.get(spaChannel.id)?.accessSources, []);
       assert.deepEqual(afterBenefit.get(spaChannel.id)?.tracks, []);
 
@@ -113,8 +118,9 @@ async function main() {
   assert.equal((await v2Db.select().from(organizations).where(eq(organizations.id, organizationId))).length, 0);
   assert.equal((await v2Db.select().from(locations).where(eq(locations.id, locationId))).length, 0);
   assert.equal((await v2Db.select().from(commercialPartnerBenefits).where(eq(commercialPartnerBenefits.id, benefitId))).length, 0);
-  assert.equal((await v2Db.select().from(locationCoreTrials).where(eq(locationCoreTrials.id, trialId))).length, 0);
-  console.info("Spaquatoria Partner Product access proof PASS: permanent benefit, Basic trial union/expiry, benefit end, no Base/Device grant, and transaction rollback.");
+  assert.equal((await v2Db.select().from(organizationCoreTrials).where(eq(organizationCoreTrials.id, trialId))).length, 0);
+  assert.equal((await v2Db.select().from(organizationCoreTrialLocations).where(eq(organizationCoreTrialLocations.locationId, locationId))).length, 0);
+  console.info("Spaquatoria Partner Product access proof PASS: independent Benefit, canonical Basic union/expiry, immutable trial end refusal, no Base/Device grant, and transaction rollback.");
   await v2Pool.end();
 }
 

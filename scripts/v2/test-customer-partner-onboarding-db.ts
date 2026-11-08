@@ -8,6 +8,7 @@ assert(["localhost", "127.0.0.1", "::1"].includes(parsedUrl.hostname), "Partner 
 assert.equal(decodeURIComponent(parsedUrl.pathname), "/soundspa_v2", "The test database must use the V2 database name.");
 process.env.V2_DATABASE_URL = testUrl;
 
+async function main() {
 const [{ v2Db }, schema, { completePartnerCustomerOnboarding, PartnerOnboardingError }] = await Promise.all([
   import("../../db/v2/client"),
   import("../../db/v2/schema"),
@@ -42,6 +43,7 @@ try {
     const [invite] = await outer.insert(schema.commercialPartnerInvites).values({ offerId: offer.id, tokenHash: inviteHash }).returning();
     const [basicProduct] = await outer.select().from(schema.commercialProducts).where(eq(schema.commercialProducts.code, "soundspa"));
     assert(basicProduct, "SoundSpa Basic fixture prerequisite must be provisioned.");
+    await outer.insert(schema.commercialOfferGrants).values({ offerId: offer.id, productId: basicProduct.id, grantType: "trial", durationDays: 30 });
 
     const input = {
       authenticatedUserId: user.id, signupIntentId: intent.id,
@@ -49,7 +51,7 @@ try {
     };
     const completed = await completePartnerCustomerOnboarding(input, { runInTransaction });
     assert.equal(completed.status, "completed");
-    assert.equal(completed.account.trial, null, "Partner onboarding itself does not create the ordinary Basic trial.");
+    assert(completed.account.trial, "Partner onboarding still receives the ordinary canonical Organization Basic trial.");
     const locationId = completed.account.location!.id;
     const [createdOrganization] = await outer.select().from(schema.organizations).where(eq(schema.organizations.id, completed.account.organization!.id));
     assert.equal(createdOrganization.contactEmail, user.email, "partner onboarding uses the verified database user email as the Organization contact");
@@ -71,7 +73,13 @@ try {
     ))).length, 1, "An Offer-defined trial must be created by canonical P3.");
     assert.equal((await outer.select().from(schema.locationCoreTrials).where(and(
       eq(schema.locationCoreTrials.locationId, locationId), eq(schema.locationCoreTrials.productId, basicProduct.id),
-    ))).length, 0, "No independent SoundSpa Basic trial may be added.");
+    ))).length, 0, "No independent legacy SoundSpa Basic trial may be added.");
+    const basicPromotions = await outer.select().from(schema.locationProductPromotionalAccess).where(and(
+      eq(schema.locationProductPromotionalAccess.locationId, locationId), eq(schema.locationProductPromotionalAccess.productId, basicProduct.id),
+    ));
+    assert.equal(basicPromotions.length, 1, "Basic invite duration is preserved as separate Promotional Access.");
+    assert.equal(basicPromotions[0]!.startsAt.getTime(), completed.account.trial.endsAt.getTime(), "Basic invite promotion starts after the shared trial window.");
+    assert.equal((await outer.select().from(schema.organizationCoreTrialLocations).where(eq(schema.organizationCoreTrialLocations.locationId, locationId))).length, 1);
     assert.equal((await outer.select().from(schema.locationChannelGrants).where(eq(schema.locationChannelGrants.locationId, locationId))).length, 0);
     assert.equal((await outer.select().from(schema.locationChannelEntitlements).where(eq(schema.locationChannelEntitlements.locationId, locationId))).length, 0);
     const [consumedIntent] = await outer.select().from(schema.customerSignupIntents).where(eq(schema.customerSignupIntents.id, intent.id));
@@ -131,3 +139,6 @@ try {
 } finally {
   await v2Db.$client.end();
 }
+}
+
+void main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

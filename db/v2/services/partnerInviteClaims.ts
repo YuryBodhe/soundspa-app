@@ -14,6 +14,8 @@ import {
   locations,
   organizations,
 } from "../schema";
+import { createPartnerInvitePromotionalAccess, PromotionalAccessError } from "./promotionalAccess";
+import { SOUNDSPA_PRODUCT_CODE } from "../queries/commercialProducts";
 
 type V2Transaction = Parameters<Parameters<typeof v2Db.transaction>[0]>[0];
 type TransactionRunner = <T>(operation: (tx: V2Transaction) => Promise<T>) => Promise<T>;
@@ -25,7 +27,8 @@ export type PartnerInviteClaimErrorCode =
   | "PARTNER_INACTIVE"
   | "PRODUCT_INACTIVE"
   | "MAX_CLAIMS_EXHAUSTED"
-  | "INVALID_OFFER_CONFIGURATION";
+  | "INVALID_OFFER_CONFIGURATION"
+  | "PROMOTIONAL_ACCESS_CONFLICT";
 
 export class PartnerInviteClaimError extends Error {
   constructor(readonly code: PartnerInviteClaimErrorCode) {
@@ -35,11 +38,12 @@ export class PartnerInviteClaimError extends Error {
 }
 
 export type PartnerInviteClaimResult =
-  | { status: "already_claimed"; benefits: []; trials: [] }
+  | { status: "already_claimed"; benefits: []; trials: []; promotionalAccess: [] }
   | {
       status: "claimed";
       benefits: { productId: string; startsAt: Date; endsAt: Date | null }[];
       trials: { productId: string; result: "created" | "skipped_active" | "skipped_already_used" | "skipped_paid_access" }[];
+      promotionalAccess: { productId: string; startsAt: Date; endsAt: Date }[];
     };
 
 export type ClaimPartnerInviteInput = { token: string; locationId: string };
@@ -88,7 +92,7 @@ async function claimPartnerInviteWithLookup(
 
     const [priorClaim] = await tx.select({ id: commercialPartnerInviteClaims.id }).from(commercialPartnerInviteClaims)
       .where(and(eq(commercialPartnerInviteClaims.inviteId, resolved.invite.id), eq(commercialPartnerInviteClaims.locationId, locationId)));
-    if (priorClaim) return { status: "already_claimed", benefits: [], trials: [] };
+    if (priorClaim) return { status: "already_claimed", benefits: [], trials: [], promotionalAccess: [] };
 
     const now = new Date();
     if (resolved.invite.revokedAt || (resolved.invite.expiresAt && resolved.invite.expiresAt <= now)) {
@@ -135,8 +139,15 @@ async function claimPartnerInviteWithLookup(
       if (claimed.total >= resolved.invite.maxClaims) throw new PartnerInviteClaimError("MAX_CLAIMS_EXHAUSTED");
     }
 
+    const [claim] = await tx.insert(commercialPartnerInviteClaims).values({
+      inviteId: resolved.invite.id,
+      locationId,
+      claimedAt: now,
+    }).returning({ id: commercialPartnerInviteClaims.id });
+
     const benefits: Extract<PartnerInviteClaimResult, { status: "claimed" }>["benefits"] = [];
     const trials: Extract<PartnerInviteClaimResult, { status: "claimed" }>["trials"] = [];
+    const promotionalAccess: Extract<PartnerInviteClaimResult, { status: "claimed" }>["promotionalAccess"] = [];
 
     for (const { grant, product } of grants) {
       if (grant.grantType === "partner_benefit") {
@@ -149,6 +160,22 @@ async function claimPartnerInviteWithLookup(
           endsAt,
         });
         benefits.push({ productId: product.id, startsAt: now, endsAt });
+        continue;
+      }
+
+      if (product.code === SOUNDSPA_PRODUCT_CODE) {
+        try {
+          const created = await createPartnerInvitePromotionalAccess(
+            { locationId, productId: product.id, partnerInviteClaimId: claim.id },
+            { runInTransaction: (operation) => operation(tx) },
+          );
+          promotionalAccess.push({ productId: product.id, startsAt: created.grant.startsAt, endsAt: created.grant.endsAt });
+        } catch (error) {
+          // Never consume the invite claim when Basic promotional scheduling is
+          // ambiguous or conflicts with paid/previous rights.
+          if (error instanceof PromotionalAccessError) throw new PartnerInviteClaimError("PROMOTIONAL_ACCESS_CONFLICT");
+          throw error;
+        }
         continue;
       }
 
@@ -191,13 +218,7 @@ async function claimPartnerInviteWithLookup(
       trials.push({ productId: product.id, result: createdTrial ? "created" : "skipped_already_used" });
     }
 
-    await tx.insert(commercialPartnerInviteClaims).values({
-      inviteId: resolved.invite.id,
-      locationId,
-      claimedAt: now,
-    });
-
-    return { status: "claimed", benefits, trials };
+    return { status: "claimed", benefits, trials, promotionalAccess };
   });
 }
 
