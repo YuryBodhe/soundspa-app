@@ -16,7 +16,7 @@ ENV NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_DECKS=${NEXT_PUBLIC_V2_AMBIENT_PERSISTENT_
 
 # Устанавливаем зависимости
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Копируем исходники и собираем Next.js
 COPY . .
