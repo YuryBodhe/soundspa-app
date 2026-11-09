@@ -11,11 +11,13 @@ const channel = (id: string, productAccessSources: Record<string, string[]> = {}
 const policy = (input: {
   products?: Array<{ id: string; name?: string; visibility: "public" | "assigned"; channels: string[] }>;
   assigned?: string[];
+  activeDevice?: string[];
 } = {}): CustomerCatalogProductPolicy => ({
   productChannelIds: new Map((input.products ?? []).map((product) => [product.id, new Set(product.channels)])),
   productDisplayNames: new Map((input.products ?? []).map((product) => [product.id, product.name ?? product.id])),
   publicProductIds: new Set((input.products ?? []).filter((product) => product.visibility === "public").map(({ id }) => id)),
   assignedProductIds: new Set(input.assigned ?? []),
+  activeDeviceProductIds: input.activeDevice === undefined ? null : new Set(input.activeDevice),
 });
 const ids = (items: CatalogItem[]) => items.map(({ id }) => id);
 
@@ -134,4 +136,74 @@ test("Product-bound channel requires Product-specific active access even when ge
   const result = filterCustomerCatalogChannels([channel("channel", {}, ["included", "admin"])], new Set(), policy({ products: [product] }));
   assert.equal(result[0].playable, false);
   assert.deepEqual(result[0].tracks, []);
+});
+
+test("device catalog requires both an active Product assignment and current Product entitlement", () => {
+  const basic = { id: "basic", name: "SoundSpa Basic", visibility: "public" as const, channels: ["basic-channel"] };
+  const activeEntitlement = [channel("basic-channel", { basic: ["trial"] })];
+  assert.deepEqual(
+    filterCustomerCatalogChannels(activeEntitlement, new Set(), policy({ products: [basic], activeDevice: [] })),
+    [],
+    "an entitlement cannot assign a Product to a Device",
+  );
+  assert.deepEqual(
+    filterCustomerCatalogChannels([channel("basic-channel")], new Set(), policy({ products: [basic], activeDevice: [basic.id] })),
+    [],
+    "an assignment cannot create a commercial entitlement",
+  );
+  const authorized = filterCustomerCatalogChannels(activeEntitlement, new Set(), policy({ products: [basic], activeDevice: [basic.id] }));
+  assert.deepEqual(ids(authorized), ["basic-channel"]);
+  assert.equal(authorized[0]?.playable, true);
+  assert.deepEqual(authorized[0]?.catalogProducts, [{ id: basic.id, name: basic.name }]);
+});
+
+test("device catalog omits expired, revoked, or otherwise ineffective Product access", () => {
+  const basic = { id: "basic", name: "SoundSpa Basic", visibility: "public" as const, channels: ["basic-channel"] };
+  const result = filterCustomerCatalogChannels(
+    [channel("basic-channel")],
+    new Set(),
+    policy({ products: [basic], activeDevice: [basic.id] }),
+  );
+  assert.deepEqual(result, []);
+});
+
+test("Basic and Spaquatoria assignments and entitlements remain independent on shared channels", () => {
+  const products = [
+    { id: "basic", name: "SoundSpa Basic", visibility: "public" as const, channels: ["shared", "basic-only"] },
+    { id: "spa", name: "Spaquatoria", visibility: "assigned" as const, channels: ["shared", "spa-only"] },
+  ];
+  const catalog = [
+    channel("shared", { basic: ["trial"], spa: ["partner_benefit"] }),
+    channel("basic-only", { basic: ["trial"] }),
+    channel("spa-only", { spa: ["partner_benefit"] }),
+  ];
+  const basicOnly = filterCustomerCatalogChannels(catalog, new Set(), policy({ products, activeDevice: ["basic"] }));
+  assert.deepEqual(ids(basicOnly), ["shared", "basic-only"]);
+  assert.deepEqual(basicOnly[0]?.catalogProducts, [{ id: "basic", name: "SoundSpa Basic" }]);
+  assert.deepEqual(basicOnly[0]?.accessSources, ["trial"]);
+  assert.deepEqual(basicOnly.find(({ id }) => id === "shared")?.tracks, ["track-shared"]);
+
+  const both = filterCustomerCatalogChannels(catalog, new Set(), policy({ products, activeDevice: ["basic", "spa"] }));
+  assert.deepEqual(ids(both), ["shared", "basic-only", "spa-only"]);
+  assert.deepEqual(both[0]?.catalogProducts, [
+    { id: "basic", name: "SoundSpa Basic" },
+    { id: "spa", name: "Spaquatoria" },
+  ]);
+});
+
+test("device enforcement does not change non-Product legacy channels or operator preview mode", () => {
+  const nonProduct = channel("legacy", {}, ["admin"]);
+  const basic = { id: "basic", visibility: "public" as const, channels: ["basic-channel"] };
+  const deviceResult = filterCustomerCatalogChannels(
+    [nonProduct, channel("basic-channel", { basic: ["trial"] })],
+    new Set(),
+    policy({ products: [basic], activeDevice: [] }),
+  );
+  assert.deepEqual(ids(deviceResult), ["legacy"]);
+  const previewResult = filterCustomerCatalogChannels(
+    [channel("basic-channel", { basic: ["trial"] })],
+    new Set(),
+    policy({ products: [basic] }),
+  );
+  assert.deepEqual(ids(previewResult), ["basic-channel"]);
 });

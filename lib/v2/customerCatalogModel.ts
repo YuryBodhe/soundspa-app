@@ -32,11 +32,16 @@ export function filterCustomerCatalogChannels<T extends CustomerCatalogChannel>(
       continue;
     }
 
-    const visibleProductIds = productIds.filter((productId) =>
-      policy.publicProductIds.has(productId) || policy.assignedProductIds.has(productId));
+    const deviceProducts = policy.activeDeviceProductIds;
+    const visibleProductIds = productIds.filter((productId) => deviceProducts !== null
+      ? deviceProducts.has(productId) && (channel.productAccessSources[productId]?.length ?? 0) > 0
+      : policy.publicProductIds.has(productId) || policy.assignedProductIds.has(productId));
     if (visibleProductIds.length === 0) continue;
 
-    const productSources = [...new Set(productIds.flatMap((productId) => channel.productAccessSources[productId] ?? []))];
+    const authorizedProductIds = deviceProducts === null
+      ? productIds
+      : visibleProductIds;
+    const productSources = [...new Set(authorizedProductIds.flatMap((productId) => channel.productAccessSources[productId] ?? []))];
     const playable = channel.playable && productSources.length > 0;
     const catalogProducts = visibleProductIds
       .flatMap((id) => {

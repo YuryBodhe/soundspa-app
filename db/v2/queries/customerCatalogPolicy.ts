@@ -1,10 +1,12 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { v2Db } from "../client";
 import {
   commercialPartnerBenefits,
   commercialProductChannels,
   commercialProductOrganizationAuthorizations,
   commercialProducts,
+  deviceProductAssignments,
+  devices,
   commercialRegistrationLinkGrants,
   commercialRegistrationLinkRedemptions,
   locationCoreTrials,
@@ -23,6 +25,8 @@ export type CustomerCatalogProductPolicy = {
   productDisplayNames: Map<string, string>;
   publicProductIds: Set<string>;
   assignedProductIds: Set<string>;
+  /** null means the caller is a non-device preview; an empty set denies every Product. */
+  activeDeviceProductIds: Set<string> | null;
 };
 
 const emptyPolicy = (): CustomerCatalogProductPolicy => ({
@@ -30,6 +34,7 @@ const emptyPolicy = (): CustomerCatalogProductPolicy => ({
   productDisplayNames: new Map(),
   publicProductIds: new Set(),
   assignedProductIds: new Set(),
+  activeDeviceProductIds: null,
 });
 
 /**
@@ -37,7 +42,7 @@ const emptyPolicy = (): CustomerCatalogProductPolicy => ({
  * scoped to this Location; organization authorizations intentionally apply to
  * each Location in their Organization, including revoked rows as history.
  */
-export async function getCustomerCatalogProductPolicy(locationId: string, db: PolicyDb = v2Db): Promise<CustomerCatalogProductPolicy> {
+export async function getCustomerCatalogProductPolicy(locationId: string, db: PolicyDb = v2Db, deviceId?: string): Promise<CustomerCatalogProductPolicy> {
   const [location] = await db.select({ organizationId: locations.organizationId }).from(locations).where(eq(locations.id, locationId)).limit(1);
   if (!location) return emptyPolicy();
 
@@ -70,6 +75,25 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
   const organizationAuthorizations = await db.select({ productId: commercialProductOrganizationAuthorizations.productId }).from(commercialProductOrganizationAuthorizations)
     .where(and(eq(commercialProductOrganizationAuthorizations.organizationId, location.organizationId), inArray(commercialProductOrganizationAuthorizations.productId, productIds)));
 
+  let activeDeviceProductIds: Set<string> | null = null;
+  if (deviceId) {
+    const assignments = await db.select({ productId: deviceProductAssignments.productId })
+      .from(deviceProductAssignments)
+      .innerJoin(devices, and(
+        eq(devices.id, deviceProductAssignments.deviceId),
+        eq(devices.locationId, locationId),
+        eq(devices.status, "active"),
+        isNotNull(devices.credentialHash),
+        isNull(devices.revokedAt),
+      ))
+      .where(and(
+        eq(deviceProductAssignments.deviceId, deviceId),
+        isNull(deviceProductAssignments.revokedAt),
+        inArray(deviceProductAssignments.productId, productIds),
+      ));
+    activeDeviceProductIds = new Set(assignments.map(({ productId }) => productId));
+  }
+
   const productChannelIds = new Map<string, Set<string>>();
   for (const row of composition) {
     const channelIds = productChannelIds.get(row.productId) ?? new Set<string>();
@@ -87,5 +111,6 @@ export async function getCustomerCatalogProductPolicy(locationId: string, db: Po
     productDisplayNames: new Map(products.map(({ id, name }) => [id, name])),
     publicProductIds: new Set(products.filter((product) => product.catalogVisibility === "public").map(({ id }) => id)),
     assignedProductIds,
+    activeDeviceProductIds,
   };
 }

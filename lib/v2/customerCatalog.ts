@@ -23,11 +23,11 @@ export type CustomerCatalogChannel = {
   tracks: Array<{ id: string; url: string; sizeBytes: string; originalFilename?: string }>;
 };
 
-export async function getLocationCustomerCatalog(locationId: string, now = new Date()): Promise<CustomerCatalogChannel[]> {
+export async function getLocationCustomerCatalog(locationId: string, now = new Date(), deviceId?: string): Promise<CustomerCatalogChannel[]> {
   const [effectiveAccess, hiddenChannelIds, productPolicy] = await Promise.all([
     resolveEffectiveChannelAccess(locationId, now),
     getHiddenChannelIds(locationId),
-    getCustomerCatalogProductPolicy(locationId),
+    getCustomerCatalogProductPolicy(locationId, undefined, deviceId),
   ]);
   const visible = filterCustomerCatalogChannels(effectiveAccess, hiddenChannelIds, productPolicy); const titles = await getChannelLocalizedTitles(visible.map((channel) => channel.id));
   return visible.map((channel) => ({

@@ -24,10 +24,13 @@ test("invalid device credential cannot load a customer catalog", async () => {
 
 test("an authorized device loads only its Location catalog", async () => {
   const locations: string[] = [];
-  const result = await getCustomerCatalogForDevice("valid", async () => device, async (locationId) => { locations.push(locationId); return ["channel"]; });
+  const deviceIds: string[] = [];
+  const result = await getCustomerCatalogForDevice("valid", async () => device, async (locationId, deviceId) => { locations.push(locationId); deviceIds.push(deviceId); return ["channel"]; });
   assert.equal(result.status, 200);
   assert.deepEqual(locations, ["location-a"]);
+  assert.deepEqual(deviceIds, ["device-a"]);
   assert.equal(result.body.locationId, "location-a");
   assert.equal(result.body.deviceId, "device-a");
   assert.deepEqual(result.body.channels, ["channel"]);
+  assert.deepEqual(Object.keys(result.body).sort(), ["channels", "deviceId", "locationId", "locationName", "organizationName"]);
 });

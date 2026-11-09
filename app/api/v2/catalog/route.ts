@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const credential = (await cookies()).get(COOKIE)?.value;
   const { authenticateDeviceCredential } = await import("@/db/v2/queries/devices");
-  const result = await getCustomerCatalogForDevice(credential, authenticateDeviceCredential, async (locationId) => {
+  const result = await getCustomerCatalogForDevice(credential, authenticateDeviceCredential, async (locationId, deviceId) => {
     const { getLocationCustomerCatalog } = await import("@/lib/v2/customerCatalog");
-    return getLocationCustomerCatalog(locationId);
+    return getLocationCustomerCatalog(locationId, new Date(), deviceId);
   });
   if (result.failedDeviceId) {
     void import("@/db/v2/services/monitoringObservability")
