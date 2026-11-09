@@ -260,6 +260,13 @@
       "when": 1794157086456,
       "tag": "0036_device_product_assignments_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794209086331,
+      "tag": "0037_spaquatoria_legal_foundation",
+      "breakpoints": true
     }
   ]
 }
