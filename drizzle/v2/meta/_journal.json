@@ -267,6 +267,13 @@
       "when": 1794209086331,
       "tag": "0037_spaquatoria_legal_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794215416862,
+      "tag": "0038_spaquatoria_gift_drafts",
+      "breakpoints": true
     }
   ]
 }

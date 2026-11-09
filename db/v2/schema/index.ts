@@ -2,6 +2,7 @@
 export * from "./enums";
 export * from "./commercial";
 export * from "./legalFoundation";
+export * from "./spaquatoriaGiftDrafts";
 export * from "./promotionalAccess";
 export * from "./core/organizations";
 export * from "./core/organizationLifecycleEvents";

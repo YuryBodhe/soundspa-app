@@ -15,6 +15,7 @@
   "db:v2:migrate": "drizzle-kit migrate --config=drizzle.v2.config.ts",
   "db:v2:verify": "tsx scripts/v2/verify-core.ts",
   "test:v2:organization-trial-migration": "tsx scripts/v2/test-organization-trial-migration-db.ts",
+  "test:v2:spaquatoria-gift-drafts-db": "tsx scripts/v2/test-spaquatoria-gift-drafts-db.ts",
   "studio": "docker-compose exec app npx drizzle-kit studio --port 4983 --config drizzle.config.ts",
   "worker": "tsx scripts/worker.ts",
   "cleanup:logs": "tsx scripts/monitoring/cleanup-logs.ts",
