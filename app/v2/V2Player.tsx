@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AmbientEngine, type AmbientEngineState } from "../lib/audio/ambientEngine";
 import { Mp3Engine, type Mp3EngineState, type PlaybackMode } from "../lib/audio/mp3Engine";
 import s from "./v2.module.css";
@@ -20,6 +20,26 @@ import { playerStatusMessageKey } from "./playerStatusMessage";
 import { ambientChannelCardAction, mainPlayerAction, musicChannelCardAction, playerActionTranslationKey } from "./playerActionTooltip";
 import { ambientVolumePercent, ambientVolumeTooltipText, playbackModeTooltipKey } from "./playerControlTooltip";
 import { playerSubscriptionLines, type PlayerSubscriptionLine } from "./playerSubscription";
+
+function createExternalValueStore<T>(initialValue: T) {
+  let value = initialValue;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => value,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (nextValue: T) => {
+      if (Object.is(value, nextValue)) return;
+      value = nextValue;
+      listeners.forEach(listener => listener());
+    },
+  };
+}
+
+const initialPlaybackState: Mp3EngineState = { status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null };
+type EngineViewSnapshot = { channelId: string | null; playback: Mp3EngineState };
 
 function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
@@ -66,10 +86,9 @@ function PlayerManagementMenu() {
 }
 
 function MusicDiagnosticPanel({ capture }: { capture: () => void }) {
-  const [enabled, setEnabled] = useState(false);
+  const enabled = useSyncExternalStore(() => () => {}, musicDiagnosticsEnabled, () => false);
   const [trace, setTrace] = useState("");
   const [result, setResult] = useState("");
-  useEffect(() => { setEnabled(musicDiagnosticsEnabled()); }, []);
   if (!enabled) return null;
   const copy = async () => {
     capture();
@@ -138,20 +157,21 @@ function PlayerHeader({ organizationName, locationName }: { organizationName?: s
 
 export default function V2Player({ catalog, deviceId, locationId, organizationName, locationName, monitoringEnabled = false }: { catalog: PlayerChannel[]; deviceId?: string; locationId?: string; organizationName?: string; locationName?: string; monitoringEnabled?: boolean }) {
   const { t, locale } = useI18n();
-  const [subscriptionLines, setSubscriptionLines] = useState<PlayerSubscriptionLine[] | null>(null);
+  const billingLocationKey = deviceId && locationId ? `${deviceId}:${locationId}` : null;
+  const [subscriptionResult, setSubscriptionResult] = useState<{ key: string; lines: PlayerSubscriptionLine[] | null } | null>(null);
+  const subscriptionLines = billingLocationKey && subscriptionResult?.key === billingLocationKey ? subscriptionResult.lines : null;
   useEffect(() => {
-    if (!deviceId || !locationId) { setSubscriptionLines(null); return; }
+    if (!billingLocationKey || !locationId) return;
     let current = true;
-    setSubscriptionLines(null);
     fetch("/api/v2/customer/billing", { credentials: "same-origin", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("customer billing unavailable");
         return await response.json() as { locations?: unknown };
       })
-      .then((billing) => { if (current) setSubscriptionLines(playerSubscriptionLines(billing, locationId)); })
-      .catch(() => { if (current) setSubscriptionLines(null); });
+      .then((billing) => { if (current) setSubscriptionResult({ key: billingLocationKey, lines: playerSubscriptionLines(billing, locationId) }); })
+      .catch(() => { if (current) setSubscriptionResult({ key: billingLocationKey, lines: null }); });
     return () => { current = false; };
-  }, [deviceId, locationId]);
+  }, [billingLocationKey, locationId]);
   const dialogTitleId = useId();
   const dialogChannelNameId = useId();
   const dialogDescriptionId = useId();
@@ -160,6 +180,9 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const ambientChannels = useMemo(() => catalog.filter((c) => c.kind === "ambient"), [catalog]);
   const engineRef = useRef<Mp3Engine | null>(null);
   const engineChannelIdRef = useRef<string | null>(null);
+  const [engineViewStore] = useState(() => createExternalValueStore<EngineViewSnapshot>({ channelId: playableMusicChannels[0]?.id ?? null, playback: initialPlaybackState }));
+  const engineView = useSyncExternalStore(engineViewStore.subscribe, engineViewStore.getSnapshot, engineViewStore.getSnapshot);
+  const engineChannelId = engineView.channelId;
   const engineUnsubscribeRef = useRef<(() => void) | null>(null);
   const musicWantsPlaybackRef = useRef(new MusicPlaybackIntent());
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("normal");
@@ -179,7 +202,7 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const ambientProgressRef = useRef<ProgressTracker>({ key: null, position: null, sampledAt: null, progressedAt: -Infinity });
   const musicErrorEpisodeRef = useRef<string | null>(null);
   const ambientErrorEpisodeRef = useRef<string | null>(null);
-  const [playback, setPlayback] = useState<Mp3EngineState>({ status: "idle", currentTrackIndex: 0, preparedTrackIndex: null, sourceKind: null, currentTime: 0, error: null });
+  const playback = engineView.playback;
   const [ambientPlayback, setAmbientPlayback] = useState<AmbientEngineState>({ status: "idle", activeTrackId: null, sourceKind: null, volume: 0.4, currentTime: 0, error: null });
   const [activeChannelId, setActiveChannelId] = useState<string | null>(playableMusicChannels[0]?.id ?? null);
   const [lockedChannel, setLockedChannel] = useState<PlayerChannel | null>(null);
@@ -187,8 +210,8 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const lockedDialogCloseRef = useRef<HTMLButtonElement | null>(null);
   const lockedChannelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const activeChannel = useMemo(() => musicChannels.find((channel) => channel.id === activeChannelId && channel.playable !== false && channel.tracks.length) ?? playableMusicChannels[0], [activeChannelId, musicChannels, playableMusicChannels]);
-  const playing = engineChannelIdRef.current === activeChannelId && playback.status === "playing";
-  const buffering = engineChannelIdRef.current === activeChannelId && playback.status === "loading";
+  const playing = engineChannelId === activeChannelId && playback.status === "playing";
+  const buffering = engineChannelId === activeChannelId && playback.status === "loading";
   const ambientVolume = ambientVolumePercent(ambientPlayback.volume);
 
   useEffect(() => {
@@ -217,14 +240,16 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
   const subscriptionHref = playerUpgradeAccountHref(locationId, lockedProductNames.map((product) => product.id));
 
   const monitoringContextRef = useRef({ playback, ambientPlayback, activeChannelId, activeAmbientChannelId: null as string | null, musicChannelId: null as string | null, musicTrackId: null as string | null });
-  monitoringContextRef.current = {
-    playback,
-    ambientPlayback,
-    activeChannelId,
-    activeAmbientChannelId: activeAmbientChannelRef.current,
-    musicChannelId: activeChannel?.id ?? null,
-    musicTrackId: activeChannel?.tracks[playback.currentTrackIndex]?.id ?? null,
-  };
+  useLayoutEffect(() => {
+    monitoringContextRef.current = {
+      playback,
+      ambientPlayback,
+      activeChannelId,
+      activeAmbientChannelId: activeAmbientChannelRef.current,
+      musicChannelId: activeChannel?.id ?? null,
+      musicTrackId: activeChannel?.tracks[playback.currentTrackIndex]?.id ?? null,
+    };
+  }, [playback, ambientPlayback, activeChannelId, activeChannel]);
 
   const readMonitoringSnapshot = useCallback((): MonitoringSnapshot => {
     const context = monitoringContextRef.current;
@@ -343,10 +368,10 @@ export default function V2Player({ catalog, deviceId, locationId, organizationNa
     engine.setPlaybackMode(playbackModeRef.current);
     engineRef.current = engine;
     engineChannelIdRef.current = channelId;
-    setPlayback(engine.getSnapshot());
-    engineUnsubscribeRef.current = engine.subscribe(() => setPlayback(engine.getSnapshot()));
+    engineViewStore.set({ channelId, playback: engine.getSnapshot() });
+    engineUnsubscribeRef.current = engine.subscribe(() => engineViewStore.set({ channelId, playback: engine.getSnapshot() }));
     return engine;
-  }, []);
+  }, [engineViewStore]);
 
   useEffect(() => {
     const initial = playableMusicChannels[0];

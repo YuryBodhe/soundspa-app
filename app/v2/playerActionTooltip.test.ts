@@ -41,7 +41,7 @@ test("one-click channel selection plays a new channel through the existing engin
 
 test("initial player setup does not autoplay and card action matches the localized play label", async () => {
   const source = await readFile(new URL("./V2Player.tsx", import.meta.url), "utf8");
-  const setup = source.match(/useEffect\(\(\) => \{\s*const initial = playableMusicChannels\[0\];([\s\S]*?)\n  \}, \[replaceMusicEngine, playableMusicChannels\]\);/)?.[1] ?? "";
+  const setup = source.match(/useEffect\(\(\) => \{\s*const initial = playableMusicChannels\[0\];([\s\S]*?)\n  \}, \[replaceMusicEngine, playableMusicChannels, engineViewStore\]\);/)?.[1] ?? "";
   assert.ok(setup);
   assert.match(setup, /replaceMusicEngine\(initial\.id, initial\.tracks\)/);
   assert.doesNotMatch(setup, /\.play\(/);
@@ -49,6 +49,18 @@ test("initial player setup does not autoplay and card action matches the localiz
   assert.match(source, /const togglePlayback = \(\) => \{\s*if \(activeChannel\?\.tracks\.length && engineChannelIdRef\.current === activeChannelId\) toggleMusicPlayback\(\);/);
   assert.equal(ru[playerActionTranslationKey("play")], "Воспроизвести");
   for (const dictionary of [en, ru, vi, th]) assert.ok(dictionary[playerActionTranslationKey("play")].trim());
+});
+
+test("player render state uses React-safe snapshots and synchronizes monitoring context after commit", async () => {
+  const source = await readFile(new URL("./V2Player.tsx", import.meta.url), "utf8");
+  assert.match(source, /useSyncExternalStore\(\(\) => \(\) => \{\}, musicDiagnosticsEnabled, \(\) => false\)/);
+  assert.doesNotMatch(source, /useEffect\(\(\) => \{\s*setEnabled\(musicDiagnosticsEnabled\(\)\)/);
+  assert.match(source, /const playing = engineChannelId === activeChannelId && playback\.status === "playing"/);
+  assert.match(source, /const buffering = engineChannelId === activeChannelId && playback\.status === "loading"/);
+  assert.match(source, /engineViewStore\.set\(\{ channelId, playback: engine\.getSnapshot\(\) \}\)/);
+  assert.match(source, /useLayoutEffect\(\(\) => \{\s*monitoringContextRef\.current = \{/);
+  assert.doesNotMatch(source, /const playing = engineChannelIdRef\.current|const buffering = engineChannelIdRef\.current/);
+  assert.equal((source.match(/monitoringContextRef\.current = \{/g) ?? []).length, 1);
 });
 
 test("ambient card action toggles only available playable lanes", () => {
