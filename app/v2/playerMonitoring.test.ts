@@ -27,6 +27,106 @@ function clock() {
   };
 }
 
+async function withBrowserLikeDefaultTimers(run: (delays: number[]) => Promise<void>) {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const delays: number[] = [];
+  const pending = new Map<ReturnType<typeof globalThis.setTimeout>, number>();
+  const receiverErrors: string[] = [];
+  const isSidecarSchedule = (delay: number) =>
+    (delay >= 2_000 && delay <= 2_200) || (delay >= 120_000 && delay <= 135_000);
+  const browserSetTimeout = function (this: unknown, callback: (...args: unknown[]) => void, delay = 0) {
+    // Node's monitoring request helper also uses the global timer directly.
+    // Assert the receiver only for the Sidecar's heartbeat/retry schedules.
+    if (isSidecarSchedule(delay)) {
+      if (this !== globalThis) receiverErrors.push(`setTimeout receiver mismatch for ${delay}ms`);
+    }
+    delays.push(delay);
+    const timer = originalSetTimeout.call(globalThis, (...callbackArgs: unknown[]) => {
+      pending.delete(timer);
+      callback(...callbackArgs);
+    }, Math.min(delay, 5));
+    pending.set(timer, delay);
+    return timer;
+  };
+  const browserClearTimeout = function (this: unknown, timer?: ReturnType<typeof globalThis.setTimeout>) {
+    if (timer === undefined) return;
+    const delay = pending.get(timer);
+    if (delay !== undefined && isSidecarSchedule(delay) && this !== globalThis) {
+      receiverErrors.push(`clearTimeout receiver mismatch for ${delay}ms`);
+    }
+    pending.delete(timer);
+    return originalClearTimeout.call(globalThis, timer);
+  };
+  globalThis.setTimeout = browserSetTimeout as unknown as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = browserClearTimeout as unknown as typeof globalThis.clearTimeout;
+  try {
+    await run(delays);
+    assert.deepEqual(receiverErrors, [], "default scheduler preserves the browser global receiver");
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    for (const timer of pending.keys()) originalClearTimeout.call(globalThis, timer);
+  }
+}
+
+test("default browser scheduler connects, sends recurring heartbeats, and clears its timer on dispose", async () => {
+  await withBrowserLikeDefaultTimers(async delays => {
+    let sessions = 0;
+    let heartbeats = 0;
+    const sidecar = new PlayerMonitoringSidecar(() => playing, {
+      createSession: async () => { sessions++; return { sessionId: "default-scheduler", generation: 1 }; },
+      sendSignal: async () => { heartbeats++; return "accepted"; },
+    });
+
+    await sidecar.start();
+    const deadline = Date.now() + 1_000;
+    while (heartbeats < 2 && Date.now() < deadline) {
+      await new Promise<void>(resolve => globalThis.setTimeout(resolve, 2));
+    }
+    assert.equal(sessions, 1);
+    assert.ok(heartbeats >= 2, "the default timer must schedule a later heartbeat");
+    assert.equal(sidecar.connectionState, "connected");
+    assert.ok(delays.some(delay => delay >= 120_000 && delay <= 135_000), "healthy heartbeat cadence remains unchanged");
+
+    await sidecar.dispose();
+    const stoppedAt = heartbeats;
+    await new Promise<void>(resolve => globalThis.setTimeout(resolve, 15));
+    assert.equal(heartbeats, stoppedAt, "dispose cancels the recurring default timer");
+    assert.equal(sidecar.connectionState, "stopped");
+  });
+});
+
+test("default browser scheduler retries a network failure and recovers", async () => {
+  await withBrowserLikeDefaultTimers(async delays => {
+    let sessions = 0;
+    let attempts = 0;
+    const states: string[] = [];
+    const sidecar = new PlayerMonitoringSidecar(() => playing, {
+      createSession: async () => { sessions++; return { sessionId: "default-retry", generation: 1 }; },
+      sendSignal: async () => {
+        attempts++;
+        if (attempts === 2) throw new Error("temporary network failure");
+        return "accepted";
+      },
+      onConnectionStateChange: state => states.push(state),
+    });
+
+    await sidecar.start();
+    const deadline = Date.now() + 1_000;
+    while (attempts < 3 && Date.now() < deadline) {
+      await new Promise<void>(resolve => globalThis.setTimeout(resolve, 2));
+    }
+    assert.equal(sessions, 1, "a heartbeat retry reuses the valid monitoring session");
+    assert.ok(attempts >= 3, "the network failure is retried and followed by a successful heartbeat");
+    assert.ok(delays.some(delay => delay >= 2_000 && delay <= 2_200), "the first retry backoff remains unchanged");
+    assert.ok(states.includes("retrying"));
+    assert.equal(sidecar.connectionState, "connected");
+
+    await sidecar.dispose();
+  });
+});
+
 test("initial failure recovers with bounded backoff and repeated start never creates concurrent sessions", async () => {
   const timer = clock();
   let creates = 0;

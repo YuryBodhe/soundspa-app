@@ -152,8 +152,10 @@ export class PlayerMonitoringSidecar {
     this.sendSignal = options.sendSignal ?? sendSignalRequest;
     this.releaseSession = options.releaseSession ?? releaseSessionRequest;
     this.random = options.random ?? Math.random;
-    this.schedule = options.schedule ?? setTimeout;
-    this.cancel = options.cancel ?? clearTimeout;
+    // Browser timer methods require the Window receiver. Keep the default
+    // scheduler callable as a class field without changing that receiver.
+    this.schedule = options.schedule ?? globalThis.setTimeout.bind(globalThis);
+    this.cancel = options.cancel ?? globalThis.clearTimeout.bind(globalThis);
   }
 
   get connectionState(): MonitoringConnectionState { return this.state; }
